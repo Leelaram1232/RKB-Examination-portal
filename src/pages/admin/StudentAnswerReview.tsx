@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 
 interface Question {
@@ -212,10 +213,19 @@ export default function StudentAnswerReview() {
       const newMap = new Map(prev);
       const current = prev.get(questionId) || { option: null, text: null };
       if (value === 'none') {
-        newMap.delete(questionId);
+        newMap.set(questionId, { ...current, option: null });
       } else {
         newMap.set(questionId, { ...current, option: value });
       }
+      return newMap;
+    });
+  };
+
+  const handleTextAnswerChange = (questionId: string, value: string) => {
+    setAnswers(prev => {
+      const newMap = new Map(prev);
+      const current = prev.get(questionId) || { option: null, text: null };
+      newMap.set(questionId, { ...current, text: value });
       return newMap;
     });
   };
@@ -542,9 +552,12 @@ export default function StudentAnswerReview() {
                               </SelectContent>
                             </Select>
                           ) : (
-                            <div className="px-3 py-2 border rounded-md bg-muted/30 text-center font-mono">
-                              {ansData?.text || <span className="text-muted-foreground italic">No Answer</span>}
-                            </div>
+                            <Input 
+                              value={ansData?.text || ''} 
+                              onChange={(e) => handleTextAnswerChange(question.id, e.target.value)}
+                              placeholder="Enter answer"
+                              className="text-center font-mono"
+                            />
                           )}
                         </TableCell>
                         <TableCell className="text-center">
