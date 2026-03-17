@@ -261,9 +261,10 @@ export default function StudentAnswerReview() {
       if (proxyError || !data?.success) {
         console.warn('Proxy update failed, trying direct upsert...', proxyError);
         // Fallback to direct supabase (though often restricted by RLS)
+        // Note: We remove onConflict here because the table lacks the specific constraint
         const { error: upsertErr } = await supabase
           .from('student_answers')
-          .upsert(changedAnswers, { onConflict: 'session_id,question_id' });
+          .upsert(changedAnswers);
 
         if (upsertErr) throw upsertErr;
       }

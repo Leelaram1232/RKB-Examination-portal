@@ -125,14 +125,26 @@ Deno.serve(async (req) => {
 
     const now = new Date().toISOString();
     for (const ch of body.changes) {
-      await primaryClient.from('student_answers').upsert({
+      // Delete any existing answer for this question in this session to avoid duplicates
+      // This is safer than upsert which requires a unique constraint that might be missing
+      await primaryClient.from('student_answers')
+        .delete()
+        .eq('session_id', body.session_id)
+        .eq('question_id', ch.question_id);
+
+      // Insert the new/updated answer
+      const { error: insErr } = await primaryClient.from('student_answers').insert({
         session_id: body.session_id,
         question_id: ch.question_id,
         selected_option: ch.selected_option ?? null,
         text_answer: ch.text_answer ?? null,
         answered_at: now,
         is_marked_for_review: false,
-      }, { onConflict: 'session_id,question_id' });
+      });
+      
+      if (insErr) {
+        console.error(`[admin-update-answers] Insert error for Q:${ch.question_id}:`, insErr);
+      }
     }
 
     return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
