@@ -251,7 +251,8 @@ export default function StudentAnswerReview() {
 
     if (changedAnswers.length === 0) return 0;
 
-    // Try Edge function proxy first (safer for admin auth constraints)
+    // Recalculation MUST be done via backend function because it triggers complex DB changes
+    // AND it bypasses RLS policies that prevent direct browser-side updates by admins
     try {
       const { data, error: proxyError } = await invokeExternalFunction<any>('admin-update-answers', {
         session_id: sessionId,
@@ -259,18 +260,14 @@ export default function StudentAnswerReview() {
       });
 
       if (proxyError || !data?.success) {
-        console.warn('Proxy update failed, trying direct manual updates...', proxyError);
+        const errorMsg = proxyError?.message || data?.error || 'Unknown proxy error';
+        console.error('CRITICAL: Proxy update failed.', errorMsg);
         
-        // Loop through and delete then insert manually as fallback
-        for (const ans of changedAnswers) {
-          await supabase.from('student_answers')
-            .delete()
-            .eq('session_id', sessionId)
-            .eq('question_id', ans.question_id);
-            
-          const { error: insErr } = await supabase.from('student_answers').insert(ans);
-          if (insErr) throw insErr;
+        // If proxy fails, we show a specific error about deployment
+        if (errorMsg.includes('404')) {
+          throw new Error('Save function not found. Please run "supabase functions deploy admin-update-answers" in your terminal first.');
         }
+        throw new Error(`Failed to save via secure proxy: ${errorMsg}`);
       }
 
       setOriginalAnswers(new Map(answers));
