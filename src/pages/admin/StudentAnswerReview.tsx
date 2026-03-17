@@ -259,14 +259,18 @@ export default function StudentAnswerReview() {
       });
 
       if (proxyError || !data?.success) {
-        console.warn('Proxy update failed, trying direct upsert...', proxyError);
-        // Fallback to direct supabase (though often restricted by RLS)
-        // Note: We remove onConflict here because the table lacks the specific constraint
-        const { error: upsertErr } = await supabase
-          .from('student_answers')
-          .upsert(changedAnswers);
-
-        if (upsertErr) throw upsertErr;
+        console.warn('Proxy update failed, trying direct manual updates...', proxyError);
+        
+        // Loop through and delete then insert manually as fallback
+        for (const ans of changedAnswers) {
+          await supabase.from('student_answers')
+            .delete()
+            .eq('session_id', sessionId)
+            .eq('question_id', ans.question_id);
+            
+          const { error: insErr } = await supabase.from('student_answers').insert(ans);
+          if (insErr) throw insErr;
+        }
       }
 
       setOriginalAnswers(new Map(answers));
