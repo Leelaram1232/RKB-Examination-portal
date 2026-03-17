@@ -251,21 +251,21 @@ export default function StudentAnswerReview() {
 
     if (changedAnswers.length === 0) return 0;
 
-    // Try multiple update strategies
+    // Try Edge function proxy first (safer for admin auth constraints)
     try {
-      // 1. Direct via Supabase (if RLS allows admins)
-      const { error: upsertErr } = await supabase
-        .from('student_answers')
-        .upsert(changedAnswers, { onConflict: 'session_id,question_id' });
+      const { data, error: proxyError } = await invokeExternalFunction<any>('admin-update-answers', {
+        session_id: sessionId,
+        changes: changedAnswers,
+      });
 
-      if (upsertErr) {
-        console.warn('Direct upsert failed, trying proxy...', upsertErr);
-        // 2. Fallback to Edge function proxy
-        const { data, error: proxyError } = await invokeExternalFunction<any>('admin-update-answers', {
-          session_id: sessionId,
-          changes: changedAnswers,
-        });
-        if (proxyError || !data?.success) throw proxyError || new Error(data?.error);
+      if (proxyError || !data?.success) {
+        console.warn('Proxy update failed, trying direct upsert...', proxyError);
+        // Fallback to direct supabase (though often restricted by RLS)
+        const { error: upsertErr } = await supabase
+          .from('student_answers')
+          .upsert(changedAnswers, { onConflict: 'session_id,question_id' });
+
+        if (upsertErr) throw upsertErr;
       }
 
       setOriginalAnswers(new Map(answers));
@@ -378,7 +378,9 @@ export default function StudentAnswerReview() {
     correct: questions.filter(q => {
       const ans = answers.get(q.id);
       if (q.question_type === 'NUMERICAL') {
-        return ans?.text?.toString().trim().toLowerCase() === q.correct_option?.toString().trim().toLowerCase();
+        const student = ans?.text?.toString().trim().toLowerCase();
+        const correct = (q.correct_answer || q.correct_option)?.toString().trim().toLowerCase();
+        return student && student === correct;
       }
       return ans?.option === q.correct_option;
     }).length,
@@ -388,7 +390,9 @@ export default function StudentAnswerReview() {
       if (!hasAns) return false;
       
       if (q.question_type === 'NUMERICAL') {
-        return ans?.text?.toString().trim().toLowerCase() !== q.correct_option?.toString().trim().toLowerCase();
+        const student = ans?.text?.toString().trim().toLowerCase();
+        const correct = (q.correct_answer || q.correct_option)?.toString().trim().toLowerCase();
+        return student && student !== correct;
       }
       return ans?.option !== q.correct_option;
     }).length,
