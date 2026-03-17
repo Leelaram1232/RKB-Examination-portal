@@ -90,16 +90,10 @@ export default function StudentAnswerReview() {
 
         console.log(`[StudentAnswerReview] Step 2: Fetching registration ${sessionData.registration_id}`);
 
-        // 2. Fetch the Registration details separately
+        // 2. Fetch the Registration details (NO JOINS AT ALL)
         const { data: regData, error: regErr } = await supabase
           .from('registrations')
-          .select(`
-            id,
-            registration_number,
-            exam_id,
-            student_id,
-            profiles (full_name, id)
-          `)
+          .select('id, registration_number, exam_id, student_id')
           .eq('id', sessionData.registration_id)
           .maybeSingle();
 
@@ -108,8 +102,17 @@ export default function StudentAnswerReview() {
 
         const reg: any = regData;
         
-        // 3. Fetch Exam Name
-        console.log(`[StudentAnswerReview] Step 3: Fetching exam ${reg.exam_id}`);
+        // 3. Fetch Student Profile separately (NO JOINS)
+        console.log(`[StudentAnswerReview] Step 3: Fetching profile ${reg.student_id}`);
+        const { data: profileData, error: profileErr } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', reg.student_id)
+          .maybeSingle();
+        if (profileErr) console.warn('[StudentAnswerReview] Could not fetch student profile:', profileErr);
+
+        // 4. Fetch Exam Name separately (NO JOINS)
+        console.log(`[StudentAnswerReview] Step 4: Fetching exam ${reg.exam_id}`);
         const { data: examData, error: examErr } = await supabase
           .from('exams')
           .select('exam_name')
