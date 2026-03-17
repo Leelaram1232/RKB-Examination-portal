@@ -84,6 +84,7 @@ const examSchema = z.object({
   photo_required: z.boolean().default(false),
   signature_required: z.boolean().default(false),
   approval_required: z.boolean().default(true),
+  notify_on_approval: z.boolean().default(true),
 });
 
 type ExamFormData = z.infer<typeof examSchema>;
@@ -139,6 +140,7 @@ const ExamForm = () => {
       photo_required: false,
       signature_required: false,
       approval_required: true,
+      notify_on_approval: true,
     },
   });
 
@@ -258,6 +260,7 @@ const ExamForm = () => {
             photo_required: (data as any).photo_required || false,
             signature_required: (data as any).signature_required || false,
             approval_required: (data as any).approval_required ?? true,
+            notify_on_approval: (data as any).notify_on_approval ?? true,
           });
           
           // Fetch exam subjects
@@ -306,6 +309,7 @@ const ExamForm = () => {
       photo_required: data.photo_required,
       signature_required: data.signature_required,
       approval_required: data.approval_required,
+      notify_on_approval: data.notify_on_approval,
     };
 
     let error;
@@ -652,6 +656,27 @@ const ExamForm = () => {
                           <FormLabel className="text-base">Approval Required</FormLabel>
                           <FormDescription>
                             Admin approval needed
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="notify_on_approval"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Notify on Approval</FormLabel>
+                          <FormDescription>
+                            Send email to student
                           </FormDescription>
                         </div>
                         <FormControl>

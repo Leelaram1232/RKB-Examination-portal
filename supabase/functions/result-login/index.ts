@@ -12,18 +12,34 @@ interface LoginRequest {
 }
 
 Deno.serve(async (req) => {
+  console.log(`=== RESULT LOGIN: ${req.method} ${req.url} ===`);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    const data: LoginRequest = await req.json();
-    console.log('Result login request for exam:', data.exam_id);
+    // Create clients
+    const internalSupabase = createClient(internalUrl, internalKey);
+    let externalSupabase = null;
+    if (externalUrl && externalKey) {
+      externalSupabase = createClient(externalUrl, externalKey);
+    }
+
+    // Determine primary client (where registrations vive)
+    const primaryClient = externalSupabase || internalSupabase;
+    console.log('[result-login] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+
+    const rawBody = await req.text();
+    if (!rawBody) throw new Error('Empty request body');
+    const data: LoginRequest = JSON.parse(rawBody);
+    
+    console.log('[result-login] Request for exam:', data.exam_id, 'Email:', data.email);
 
     if (!data.email || !data.password || !data.exam_id) {
       return new Response(
@@ -41,7 +57,7 @@ Deno.serve(async (req) => {
     }
 
     // Check if exam exists and results are published
-    const { data: exam, error: examError } = await supabase
+    const { data: exam, error: examError } = await primaryClient
       .from('exams')
       .select('id, exam_name, exam_code, exam_date, total_marks, passing_marks, results_published')
       .eq('id', data.exam_id)
@@ -63,7 +79,7 @@ Deno.serve(async (req) => {
     }
 
     // Find student by email
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await primaryClient
       .from('profiles')
       .select('id, full_name, email, date_of_birth')
       .eq('email', data.email.toLowerCase())
@@ -100,7 +116,7 @@ Deno.serve(async (req) => {
     }
 
     // Get registration for this student and exam (include photo and signature)
-    const { data: registration, error: regError } = await supabase
+    const { data: registration, error: regError } = await primaryClient
       .from('registrations')
       .select('id, registration_number, photo_url, signature_url')
       .eq('student_id', profile.id)
@@ -116,7 +132,7 @@ Deno.serve(async (req) => {
     }
 
     // Get result for this student and exam
-    const { data: result, error: resultError } = await supabase
+    const { data: result, error: resultError } = await primaryClient
       .from('results')
       .select('id, obtained_marks, correct_count, wrong_count, unanswered_count, is_pass, section_wise_scores, calculated_at')
       .eq('student_id', profile.id)

@@ -14,41 +14,58 @@ interface SaveAnswerRequest {
 }
 
 Deno.serve(async (req) => {
-  console.log('=== SAVE ANSWER START ===');
-  console.log('Method:', req.method);
+  console.log(`=== SAVE ANSWER: ${req.method} ${req.url} ===`);
 
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+    // Create clients
+    const internalSupabase = createClient(internalUrl, internalKey);
+    let externalSupabase = null;
+    if (externalUrl && externalKey) {
+      externalSupabase = createClient(externalUrl, externalKey);
+    }
+
+    // Determine primary client (where registrations live)
+    const primaryClient = externalSupabase || internalSupabase;
+    console.log('[save-answer] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
 
     const body: SaveAnswerRequest = await req.json();
-    console.log('Request body:', JSON.stringify(body));
+    
+    console.log('[save-answer] Parsed Data:', { 
+      session_id: body?.session_id, 
+      question_id: body?.question_id,
+      selected: body?.selected_option 
+    });
 
-    if (!body.session_id || !body.question_id) {
-      console.error('ERROR: Missing session_id or question_id');
+    if (!body?.session_id || !body?.question_id) {
+      console.error('[save-answer] FAIL: Missing session_id or question_id');
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing session_id or question_id' }),
+        JSON.stringify({ 
+          success: false, 
+          error: `Missing required fields: ${!body?.session_id ? 'session_id ' : ''}${!body?.question_id ? 'question_id' : ''}` 
+        }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Use service role to bypass RLS
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     // Step 1: Verify session is active
-    console.log('Step 1: Verifying session:', body.session_id);
-    const { data: session, error: sessionError } = await supabase
+    console.log('[save-answer] Step 1: Verifying session:', body.session_id);
+    const { data: session, error: sessionError } = await primaryClient
       .from('exam_sessions')
       .select('id, is_completed, is_blocked')
       .eq('id', body.session_id)
-      .single();
+      .maybeSingle();
 
     if (sessionError) {
-      console.error('ERROR: Session query failed:', sessionError);
+      console.error('[save-answer] ERROR: Session query failed:', sessionError);
       return new Response(
         JSON.stringify({ success: false, error: 'Session query failed: ' + sessionError.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -56,14 +73,14 @@ Deno.serve(async (req) => {
     }
 
     if (!session) {
-      console.error('ERROR: Session not found');
+      console.error('[save-answer] ERROR: Session not found');
       return new Response(
-        JSON.stringify({ success: false, error: 'Session not found' }),
+        JSON.stringify({ success: false, error: 'Session not found. Please log in again.' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log('Session found:', JSON.stringify(session));
+    console.log('[save-answer] Session state:', JSON.stringify(session));
 
     if (session.is_completed) {
       console.error('ERROR: Exam already submitted');
@@ -82,8 +99,8 @@ Deno.serve(async (req) => {
     }
 
     // Step 2: Check if answer already exists
-    console.log('Step 2: Checking for existing answer...');
-    const { data: existingAnswer, error: existingError } = await supabase
+    console.log('[save-answer] Step 2: Checking for existing answer...');
+    const { data: existingAnswer, error: existingError } = await primaryClient
       .from('student_answers')
       .select('id')
       .eq('session_id', body.session_id)
@@ -102,8 +119,8 @@ Deno.serve(async (req) => {
 
     // Step 3: Insert or update answer
     if (existingAnswer) {
-      console.log('Step 3: Updating existing answer:', existingAnswer.id);
-      const { error: updateError } = await supabase
+      console.log('[save-answer] Step 3: Updating existing answer:', existingAnswer.id);
+      const { error: updateError } = await primaryClient
         .from('student_answers')
         .update({
           selected_option: body.selected_option,
@@ -122,8 +139,8 @@ Deno.serve(async (req) => {
       }
       console.log('Answer updated successfully');
     } else {
-      console.log('Step 3: Inserting new answer...');
-      const { error: insertError } = await supabase
+      console.log('[save-answer] Step 3: Inserting new answer...');
+      const { error: insertError } = await primaryClient
         .from('student_answers')
         .insert({
           session_id: body.session_id,

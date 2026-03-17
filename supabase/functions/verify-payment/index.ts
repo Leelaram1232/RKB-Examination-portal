@@ -27,9 +27,18 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const { order_id, registration_id } = await req.json();
+    let order_id, registration_id;
+    try {
+      const body = await req.json();
+      order_id = body.order_id;
+      registration_id = body.registration_id;
+    } catch {
+      // Body may be empty for some requests
+    }
+    
     console.log("verify-payment called:", { order_id, registration_id });
+
+    try {
 
     if (!order_id && !registration_id) {
       throw new Error("Either order_id or registration_id is required");
@@ -49,10 +58,20 @@ Deno.serve(async (req) => {
       ? "https://api.cashfree.com"
       : "https://sandbox.cashfree.com";
 
-    const supabase = createClient(
-      Deno.env.get("EXTERNAL_SUPABASE_URL")!,
-      Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const externalUrl = Deno.env.get("EXTERNAL_SUPABASE_URL");
+    const externalKey = Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY");
+    const internalUrl = Deno.env.get("SUPABASE_URL");
+    const internalKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    // Use external if available, otherwise fallback to internal
+    const supabaseUrl = externalUrl || internalUrl;
+    const supabaseKey = externalKey || internalKey;
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error("Supabase credentials not configured");
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     let orderId = order_id;
     let regId = registration_id;

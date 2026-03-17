@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { externalSupabase as supabase } from '@/lib/externalSupabase';
+import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { supabase as lovableSupabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
@@ -78,6 +78,7 @@ interface Registration {
     exam_name: string;
     exam_code: string;
     exam_date: string;
+    notify_on_approval: boolean;
   } | null;
 }
 
@@ -105,7 +106,7 @@ const RegistrationApproval = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [examFilter, setExamFilter] = useState<string>('all');
-  const [exams, setExams] = useState<{ id: string; exam_name: string }[]>([]);
+  const [exams, setExams] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkActionDialog, setShowBulkActionDialog] = useState(false);
   const [bulkActionType, setBulkActionType] = useState<'approve' | 'reject'>('approve');
@@ -115,7 +116,7 @@ const RegistrationApproval = () => {
       // Fetch exams for filter dropdown and for mapping exam details
       const { data: examsData } = await supabase
         .from('exams')
-        .select('id, exam_name, exam_code, exam_date')
+        .select('id, exam_name, exam_code, exam_date, notify_on_approval')
         .order('exam_name');
 
       if (examsData) {
@@ -246,26 +247,24 @@ const RegistrationApproval = () => {
       return;
     }
 
-    // Send approval email notification
-    if (actionType === 'approve') {
-      console.log('[APPROVAL] Sending approval email for registration:', selectedRegistration.id);
+    if (actionType === 'approve' && shouldNotify) {
+      console.log(`[APPROVAL] Triggering email for ${selectedRegistration.full_name} (${selectedRegistration.id})`);
       try {
-        const emailResponse = await lovableSupabase.functions.invoke('send-notification-email', {
-          body: {
-            type: 'registration_approved',
-            registration_id: selectedRegistration.id,
-          },
+        const { data: emailData, error: emailError } = await invokeExternalFunction('send-notification-email', {
+          type: 'registration_approved',
+          registration_id: selectedRegistration.id,
         });
-        console.log('[APPROVAL] Email response:', emailResponse);
-        if (emailResponse.error) {
-          console.error('[APPROVAL] Email failed:', emailResponse.error);
-          toast.warning('Approved but email notification failed');
+
+        if (emailError) {
+          console.error('[APPROVAL] Email invocation failed:', emailError);
+          toast.warning(`Approved, but notification failed: ${emailError.message}`);
         } else {
+          console.log('[APPROVAL] Email success:', emailData);
           toast.success('Registration approved and email sent!');
         }
-      } catch (emailError) {
-        console.error('[APPROVAL] Email error:', emailError);
-        toast.warning('Approved but email notification failed');
+      } catch (err) {
+        console.error('[APPROVAL] Critical error during email invocation:', err);
+        toast.warning('Approved, but an error occurred during notification');
       }
     } else {
       toast.success('Registration rejected');
@@ -303,31 +302,39 @@ const RegistrationApproval = () => {
       return;
     }
 
-    // Send approval emails for bulk approve
+    // Send approval emails for bulk approve if enabled for the exam
     if (bulkActionType === 'approve') {
-      console.log('[BULK_APPROVAL] Sending emails for', selectedIds.size, 'registrations');
+      console.log('[BULK_APPROVAL] Sending emails for selected registrations');
+      
       const emailPromises = Array.from(selectedIds).map(async (regId) => {
+        const registration = registrations.find(r => r.id === regId);
+        const shouldNotify = registration?.exams?.notify_on_approval ?? true;
+        
+        if (!shouldNotify) return { regId, success: true, skipped: true };
+        
         try {
-          const response = await lovableSupabase.functions.invoke('send-notification-email', {
-            body: {
-              type: 'registration_approved',
-              registration_id: regId,
-            },
+          const { data, error } = await invokeExternalFunction('send-notification-email', {
+            type: 'registration_approved',
+            registration_id: regId,
           });
-          return { regId, success: !response.error };
-        } catch {
-          return { regId, success: false };
+          return { regId, success: !error, error, skipped: false };
+        } catch (err) {
+          return { regId, success: false, error: err, skipped: false };
         }
       });
 
       const results = await Promise.all(emailPromises);
       const successCount = results.filter(r => r.success).length;
-      console.log('[BULK_APPROVAL] Email results:', successCount, '/', results.length, 'sent');
+      const skippedCount = results.filter(r => (r as any).skipped).length;
+      console.log('[BULK_APPROVAL] Results:', successCount, 'sent/skipped,', results.length, 'total');
       
       if (successCount < results.length) {
-        toast.warning(`${selectedIds.size} approved, ${successCount} emails sent`);
+        toast.warning(`${selectedIds.size} approved, ${successCount - skippedCount} emails sent`);
       } else {
-        toast.success(`${selectedIds.size} registration(s) approved and emails sent!`);
+        const message = skippedCount > 0 
+          ? `${selectedIds.size} approved (${skippedCount} emails disabled by exam settings)`
+          : `${selectedIds.size} registration(s) approved and emails sent!`;
+        toast.success(message);
       }
     } else {
       toast.success(`${selectedIds.size} registration(s) rejected`);

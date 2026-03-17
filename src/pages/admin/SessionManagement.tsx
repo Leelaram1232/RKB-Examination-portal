@@ -117,7 +117,7 @@ const SessionManagement = () => {
         violation_count,
         proctoring_violations,
         submitted_at,
-        registration:registrations!inner(
+        registration:registrations!registrations_exam_id_fkey(
           registration_number,
           exam_id,
           student:profiles!registrations_student_id_profiles_fkey(

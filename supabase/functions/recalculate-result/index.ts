@@ -10,18 +10,47 @@ interface RecalculateData {
 }
 
 Deno.serve(async (req) => {
+  // PANIC LOG: If you see this, the function is reaching the script!
+  console.log(`[RECALCULATE-RESULT] === Request Started: ${new Date().toISOString()} ===`);
+  console.log(`[RECALCULATE-RESULT] Method: ${req.method}, URL: ${req.url}`);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const internalUrl = Deno.env.get('SUPABASE_URL');
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
 
-    const data: RecalculateData = await req.json();
-    console.log('Recalculate result request:', data);
+    if (!internalUrl || !internalKey) {
+      console.error('[RECALCULATE-RESULT] CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing from Edge Function Secrets!');
+      return new Response(
+        JSON.stringify({ error: 'Backend secrets not configured. Please set SUPABASE_URL and Service Key.' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const internalSupabase = createClient(internalUrl, internalKey);
+    
+    // SMART CLIENT SELECTION:
+    const useExternal = !!(externalUrl && externalKey && externalUrl !== internalUrl);
+    const primaryClient = useExternal 
+      ? createClient(externalUrl, externalKey) 
+      : internalSupabase;
+
+    console.log('[RECALCULATE-RESULT] Target Project:', useExternal ? 'EXTERNAL' : 'INTERNAL/SAME');
+
+    const rawBody = await req.text();
+    console.log('[RECALCULATE-RESULT] Raw Body:', rawBody);
+    
+    if (!rawBody) {
+      throw new Error('Empty request body');
+    }
+
+    const data: RecalculateData = JSON.parse(rawBody);
+    console.log('[RECALCULATE-RESULT] Recalculating Session ID:', data.session_id);
 
     if (!data.session_id) {
       return new Response(
@@ -31,18 +60,18 @@ Deno.serve(async (req) => {
     }
 
     // Get session with registration and exam details
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await primaryClient
       .from('exam_sessions')
       .select(`
         id,
         registration_id,
         is_completed,
         start_time,
-        registrations (
+        registration:registrations!exam_sessions_registration_id_fkey (
           id,
           student_id,
           exam_id,
-          exams (
+          exam:exams!registrations_exam_id_fkey (
             id,
             total_marks,
             passing_marks,
@@ -56,29 +85,53 @@ Deno.serve(async (req) => {
       .eq('id', data.session_id)
       .single();
 
-    if (sessionError || !session) {
-      console.error('Session not found:', sessionError);
+    if (sessionError) {
+      console.error('[recalculate-result] Database error fetching session:', sessionError);
       return new Response(
-        JSON.stringify({ error: 'Session not found' }),
+        JSON.stringify({ error: `Database error: ${sessionError.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!session) {
+      console.error('[recalculate-result] Session ID not found in database:', data.session_id);
+      return new Response(
+        JSON.stringify({ error: 'Session not found. Please ensure the exam was started correctly.' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const registration = session.registrations as any;
-    const exam = registration.exams;
-    const defaultMarksPerQuestion = exam.marks_per_question || 4;
-    const negativeMarksValue = exam.marks_per_wrong || exam.negative_mark_value || 1;
+    const registration = (session as any).registration;
+    if (!registration) {
+      console.error('[recalculate-result] Registration record missing for session');
+      return new Response(
+        JSON.stringify({ error: 'Session lacks a valid registration. Scoring aborted.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-    console.log('Exam settings:', {
+    const exam = registration.exam;
+    if (!exam) {
+      console.error('[recalculate-result] Exam record missing for registration');
+      return new Response(
+        JSON.stringify({ error: 'Exam settings not found for this session.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const defaultMarksPerQuestion = exam.marks_per_question || 1; // Default to 1 instead of 4 if missing
+    const negativeMarksValue = exam.marks_per_wrong || exam.negative_mark_value || 0;
+
+    console.log('[recalculate-result] Evaluation Context:', {
       examId: exam.id,
       defaultMarks: defaultMarksPerQuestion,
-      negativeMarking: exam.negative_marking,
+      negativeMarking: !!exam.negative_marking,
       negativeValue: negativeMarksValue,
       passingMarks: exam.passing_marks
     });
 
     // Delete existing result for this session
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await primaryClient
       .from('results')
       .delete()
       .eq('session_id', data.session_id);
@@ -88,8 +141,8 @@ Deno.serve(async (req) => {
       // Continue anyway - result might not exist
     }
 
-    // Get all questions for this exam with section_name for section-wise scoring
-    const { data: questions, error: questionsError } = await supabase
+    // Get all questions for this exam - use external client if questions were uploaded there
+    const { data: questions, error: questionsError } = await primaryClient
       .from('questions')
       .select('id, correct_option, correct_answer, question_type, marks, section_name')
       .eq('exam_id', exam.id);
@@ -105,7 +158,7 @@ Deno.serve(async (req) => {
     console.log('Total questions found:', questions?.length || 0);
 
     // Get student answers
-    const { data: answers, error: answersError } = await supabase
+    const { data: answers, error: answersError } = await primaryClient
       .from('student_answers')
       .select('question_id, selected_option, text_answer')
       .eq('session_id', data.session_id);
@@ -254,7 +307,7 @@ Deno.serve(async (req) => {
     });
 
     // Create result record
-    const { data: result, error: resultError } = await supabase
+    const { data: result, error: resultError } = await primaryClient
       .from('results')
       .insert({
         exam_id: exam.id,

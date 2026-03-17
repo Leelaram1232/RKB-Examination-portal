@@ -239,9 +239,16 @@ export default function ExamResults() {
   };
 
   const handleRecalculate = async (sessionId: string) => {
+    console.warn(`[DEBUG] Recalculating session: ${sessionId}`);
+    if (!sessionId) {
+      toast.error('Session ID is missing for this result');
+      return;
+    }
+    
     setIsRecalculating(sessionId);
     
     try {
+      console.warn(`[DEBUG] Invoking recalculate-result for ${sessionId}...`);
       const { data: result, error } = await invokeExternalFunction<any>('recalculate-result', { session_id: sessionId });
 
       if (error) {

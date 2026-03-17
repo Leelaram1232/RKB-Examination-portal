@@ -13,6 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { PublicLayout } from '@/components/layout/PublicLayout';
+import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -115,22 +116,21 @@ export default function ExamLogin() {
     setError(null);
 
     try {
-      const response = await supabase.functions.invoke('exam-login', {
-        body: {
-          exam_id: examId,
-          email: data.email.toLowerCase(),
-          password: data.password,
-        },
+      console.log(`[ExamLogin] Attempting login for exam: ${examId} with email: ${data.email}`);
+      const { data: result, error: invocationError } = await invokeExternalFunction<any>('exam-login', {
+        exam_id: examId,
+        email: data.email.toLowerCase(),
+        password: data.password,
       });
 
-      if (response.error) {
-        throw new Error(response.error.message || 'Login failed');
+      if (invocationError) {
+        console.error('[ExamLogin] Function invocation error:', invocationError);
+        throw new Error(invocationError.message || 'Login failed');
       }
 
-      const result = response.data;
-
-      if (!result.success) {
-        throw new Error(result.error || 'Login failed');
+      if (!result || !result.success) {
+        console.log('[ExamLogin] Login rejected:', result?.error || 'Unknown error');
+        throw new Error(result?.error || 'Login failed. Please check your credentials or approval status.');
       }
 
       // Store session info in sessionStorage

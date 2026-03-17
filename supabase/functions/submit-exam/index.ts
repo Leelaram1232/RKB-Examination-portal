@@ -14,20 +14,36 @@ interface SubmitExamData {
 const SUBMITTABLE_STATUSES = ['in_progress', 'resumed'];
 
 Deno.serve(async (req) => {
+  console.log(`=== SUBMIT EXAM: ${req.method} ${req.url} ===`);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+    // Create clients
+    const internalSupabase = createClient(internalUrl, internalKey);
+    let externalSupabase = null;
+    if (externalUrl && externalKey) {
+      externalSupabase = createClient(externalUrl, externalKey);
+    }
+
+    // Determine primary client (where registrations live)
+    const primaryClient = externalSupabase || internalSupabase;
+    console.log('[submit-exam] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
 
     const data: SubmitExamData = await req.json();
-    console.log('Submit exam request:', data);
+    console.log('[submit-exam] Parsed Data:', { 
+      session_id: data?.session_id, 
+      is_auto: data?.is_auto_submit 
+    });
 
-    if (!data.session_id) {
+    if (!data?.session_id) {
       return new Response(
         JSON.stringify({ success: false, error: 'Missing session_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -35,7 +51,7 @@ Deno.serve(async (req) => {
     }
 
     // Get session with registration and exam details - now including exam_status
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await primaryClient
       .from('exam_sessions')
       .select(`
         id,
@@ -73,6 +89,7 @@ Deno.serve(async (req) => {
 
     // NEW: Check exam_status instead of just is_completed
     const currentStatus = session.exam_status || 'in_progress';
+    console.log('[submit-exam] Current session status:', currentStatus);
     
     // If already finally_submitted, reject
     if (currentStatus === 'finally_submitted') {
@@ -117,7 +134,7 @@ Deno.serve(async (req) => {
     });
 
     // Check if result already exists
-    const { data: existingResult } = await supabase
+    const { data: existingResult } = await primaryClient
       .from('results')
       .select('id')
       .eq('session_id', data.session_id)
@@ -126,7 +143,7 @@ Deno.serve(async (req) => {
     // For resumed sessions, delete old result before creating new one
     if (existingResult && currentStatus === 'resumed') {
       console.log('Deleting old result for resumed session:', existingResult.id);
-      await supabase.from('results').delete().eq('id', existingResult.id);
+      await primaryClient.from('results').delete().eq('id', existingResult.id);
     } else if (existingResult && currentStatus !== 'resumed') {
       // If result exists and not resumed, this is already evaluated
       return new Response(
@@ -136,9 +153,10 @@ Deno.serve(async (req) => {
     }
 
     // Get all questions for this exam with section_name for section-wise scoring
-    const { data: questions, error: questionsError } = await supabase
+    const questionsClient = externalSupabase || primaryClient;
+    const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
-      .select('id, correct_option, marks, section_name')
+      .select('id, correct_option, marks, section_name, question_type')
       .eq('exam_id', exam.id);
 
     if (questionsError) {
@@ -152,9 +170,9 @@ Deno.serve(async (req) => {
     console.log('Total questions for exam:', questions?.length || 0);
 
     // Get student answers
-    const { data: answers, error: answersError } = await supabase
+    const { data: answers, error: answersError } = await primaryClient
       .from('student_answers')
-      .select('question_id, selected_option')
+      .select('question_id, selected_option, text_answer')
       .eq('session_id', data.session_id);
 
     if (answersError) {
@@ -167,8 +185,14 @@ Deno.serve(async (req) => {
 
     console.log('Total student answers:', answers?.length || 0);
 
-    // Create answer map
-    const answerMap = new Map(answers?.map(a => [a.question_id, a.selected_option]) || []);
+    // Create answer map - stores both option and text answer
+    const answerMap = new Map();
+    answers?.forEach(a => {
+      answerMap.set(a.question_id, {
+        option: a.selected_option,
+        text: a.text_answer
+      });
+    });
 
     // Calculate results with section-wise breakdown
     let correctCount = 0;
@@ -187,8 +211,9 @@ Deno.serve(async (req) => {
 
     for (const question of questions || []) {
       const section = question.section_name || 'General';
-      const studentAnswer = answerMap.get(question.id);
+      const studentAnsData = answerMap.get(question.id);
       const questionMarks = question.marks || defaultMarksPerQuestion;
+      const type = question.question_type || 'MCQ';
       
       // Initialize section if not exists
       if (!sectionScores[section]) {
@@ -205,13 +230,28 @@ Deno.serve(async (req) => {
       sectionScores[section].total_marks += questionMarks;
       sectionScores[section].total_questions += 1;
 
+      // Logic for determining correctness
+      let isCorrect = false;
+      let hasResponded = false;
+
+      if (type === 'NUMERICAL') {
+        const studentText = studentAnsData?.text?.toString().trim().toLowerCase();
+        const correctText = question.correct_option?.toString().trim().toLowerCase();
+        hasResponded = !!studentText;
+        isCorrect = hasResponded && studentText === correctText;
+      } else {
+        // MCQ / Standard
+        hasResponded = !!studentAnsData?.option;
+        isCorrect = hasResponded && studentAnsData?.option === question.correct_option;
+      }
+
       // Log individual question evaluation
-      console.log(`Q[${question.id.substring(0, 8)}] section=${section} correct=${question.correct_option} student=${studentAnswer || 'N/A'} marks=${questionMarks}`);
+      console.log(`Q[${question.id.substring(0, 8)}] type=${type} correct=${question.correct_option} student=${type === 'NUMERICAL' ? studentAnsData?.text : studentAnsData?.option} isCorrect=${isCorrect}`);
       
-      if (!studentAnswer) {
+      if (!hasResponded) {
         unansweredCount++;
         sectionScores[section].unanswered += 1;
-      } else if (studentAnswer === question.correct_option) {
+      } else if (isCorrect) {
         correctCount++;
         obtainedMarks += questionMarks;
         sectionScores[section].correct += 1;
@@ -248,7 +288,7 @@ Deno.serve(async (req) => {
     });
 
     // Mark session as completed with new exam_status
-    const { error: updateSessionError } = await supabase
+    const { error: updateSessionError } = await primaryClient
       .from('exam_sessions')
       .update({
         is_completed: true,
@@ -269,7 +309,7 @@ Deno.serve(async (req) => {
     }
 
     // Disable exam login
-    const { error: disableLoginError } = await supabase
+    const { error: disableLoginError } = await primaryClient
       .from('registrations')
       .update({ exam_login_enabled: false })
       .eq('id', registration.id);
@@ -279,7 +319,7 @@ Deno.serve(async (req) => {
     }
 
     // Create result record
-    const { data: result, error: resultError } = await supabase
+    const { data: result, error: resultError } = await primaryClient
       .from('results')
       .insert({
         exam_id: exam.id,

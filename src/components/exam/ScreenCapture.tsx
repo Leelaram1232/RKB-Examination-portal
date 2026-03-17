@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase } from '@/lib/externalSupabase';
 
 interface ScreenCaptureProps {
   isEnabled: boolean;
@@ -75,7 +76,7 @@ export const ScreenCapture = ({
       const filePath = `screen/${sessionId}/${timestamp}.jpg`;
 
       // Upload to storage
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await externalSupabase.storage
         .from('proctoring-snapshots')
         .upload(filePath, blob, {
           contentType: 'image/jpeg',
@@ -88,7 +89,7 @@ export const ScreenCapture = ({
       }
 
       // Update session with latest screen URL
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           latest_screen_url: filePath

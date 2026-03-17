@@ -10,6 +10,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface CameraMonitorProps {
   onViolation: (type: string) => void;
@@ -86,7 +87,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       const timestamp = Date.now();
       const filePath = `${sessionId}/${timestamp}.jpg`;
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await externalSupabase.storage
         .from('proctoring-snapshots')
         .upload(filePath, blob, {
           contentType: 'image/jpeg',
@@ -99,7 +100,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       }
 
       // Update session with latest snapshot URL
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           latest_snapshot_url: filePath,
@@ -120,7 +121,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
     const isActive = stream && stream.active && stream.getVideoTracks().some(t => t.readyState === 'live');
     
     try {
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           camera_heartbeat_at: new Date().toISOString(),
@@ -146,8 +147,8 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       ctx.drawImage(videoRef.current, 0, 0, 320, 240);
       const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
 
-      const { data, error } = await supabase.functions.invoke('analyze-faces', {
-        body: { sessionId, imageBase64 }
+      const { data, error } = await invokeExternalFunction<any>('analyze-faces', {
+        sessionId, imageBase64
       });
 
       if (error) {

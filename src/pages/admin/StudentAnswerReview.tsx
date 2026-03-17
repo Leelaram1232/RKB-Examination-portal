@@ -74,63 +74,51 @@ export default function StudentAnswerReview() {
     const fetchData = async () => {
       if (!sessionId) return;
       setIsLoading(true);
-      window.alert(`[DEBUG] Attempting to load review for session: ${sessionId}`);
 
       try {
-        // 1. Check local session first
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-        console.log('[StudentAnswerReview] Auth state:', currentSession ? 'Loged in as ' + currentSession.user.email : 'No active session!');
+        console.log(`[StudentAnswerReview] Step 1: Fetching session ${sessionId}`);
         
-        if (!currentSession) {
-          toast.error("You are not logged in. Please login to the admin portal.");
-          return;
-        }
-
-        console.log(`[StudentAnswerReview] Fetching session details for: ${sessionId}`);
-        
-        // 1. Fetch Session + Registration data directly (Using EXACT working syntax from SessionManagement.tsx)
+        // 1. Fetch the Session first (minimal columns)
         const { data: sessionData, error: sessionErr } = await supabase
           .from('exam_sessions')
-          .select(`
-            id,
-            registration_id,
-            registration:registrations!registrations_exam_id_fkey(
-              id,
-              registration_number,
-              exam_id,
-              student:profiles!registrations_student_id_profiles_fkey(full_name, id)
-            )
-          `)
+          .select('id, registration_id')
           .eq('id', sessionId)
           .maybeSingle();
 
-        if (sessionErr) {
-          console.error('[StudentAnswerReview] Supabase Query Error:', sessionErr);
-          throw sessionErr;
-        }
+        if (sessionErr) throw new Error(`Session Fetch Error: ${sessionErr.message}`);
+        if (!sessionData) throw new Error('Session record not found in database.');
 
-        if (!sessionData) {
-          console.error('[StudentAnswerReview] No result for sessionID:', sessionId);
-          throw new Error('Session not found in master database');
-        }
+        console.log(`[StudentAnswerReview] Step 2: Fetching registration ${sessionData.registration_id}`);
 
-        // Extract registration correctly
-        const reg: any = Array.isArray(sessionData.registration) ? sessionData.registration[0] : sessionData.registration;
+        // 2. Fetch the Registration details separately
+        const { data: regData, error: regErr } = await supabase
+          .from('registrations')
+          .select(`
+            id,
+            registration_number,
+            exam_id,
+            student_id,
+            profiles (full_name, id)
+          `)
+          .eq('id', sessionData.registration_id)
+          .maybeSingle();
+
+        if (regErr) throw new Error(`Registration Fetch Error: ${regErr.message}`);
+        if (!regData) throw new Error('Registration record not found for this session.');
+
+        const reg: any = regData;
         
-        if (!reg) {
-          console.error('[StudentAnswerReview] Registration data is missing for session:', sessionData);
-          throw new Error('This session has no associated registration record.');
-        }
-
-        // Since we need exam_name, let's fetch exam info separately to be safe from nested ambiguity
+        // 3. Fetch Exam Name
+        console.log(`[StudentAnswerReview] Step 3: Fetching exam ${reg.exam_id}`);
         const { data: examData, error: examErr } = await supabase
           .from('exams')
           .select('exam_name')
           .eq('id', reg.exam_id)
           .single();
-        if (examErr) console.warn('[StudentAnswerReview] Could not fetch exam name:', examErr);
+        if (examErr) console.warn('Could not fetch exam name:', examErr);
 
-        // 2. Fetch Questions for this exam
+        // 4. Fetch Questions
+        console.log('[StudentAnswerReview] Step 4: Fetching questions');
         const { data: questionsData, error: qErr } = await supabase
           .from('questions')
           .select('*')
@@ -138,20 +126,21 @@ export default function StudentAnswerReview() {
           .order('question_number');
         if (qErr) throw qErr;
 
-        // 3. Fetch current answers for this session
+        // 5. Fetch Answers
+        console.log('[StudentAnswerReview] Step 5: Fetching answers');
         const { data: answersData, error: aErr } = await supabase
           .from('student_answers')
           .select('*')
           .eq('session_id', sessionId);
         if (aErr) throw aErr;
 
-        console.log('[StudentAnswerReview] Successfully loaded everything:', { reg, qCount: questionsData?.length, aCount: answersData?.length });
+        console.log('[StudentAnswerReview] SUCCESS: All data loaded separately');
 
         setSessionInfo({
           session_id: sessionData.id,
           registration_number: reg.registration_number,
           exam_name: examData?.exam_name || 'N/A',
-          student_name: reg.student?.full_name || 'Unknown',
+          student_name: reg.profiles?.full_name || 'Unknown',
           exam_id: reg.exam_id
         });
 
@@ -165,11 +154,11 @@ export default function StudentAnswerReview() {
         setOriginalAnswers(new Map(answersMap));
         
       } catch (error: any) {
-        console.error('[StudentAnswerReview] Direct fetch fail:', error);
-        toast.error(`Loading error: ${error.message}`);
+        console.error('[StudentAnswerReview] Load Trace Fail:', error);
+        toast.error(`Review Load Fail: ${error.message}`);
         
         // Fallback strategy: Proxy
-        console.warn('Direct fetch failed, trying proxy fallback...');
+        console.warn('Direct fetches failed, trying proxy fallback...');
         await fetchUsingProxy();
       } finally {
         setIsLoading(false);
