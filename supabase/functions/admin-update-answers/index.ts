@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
       // Fetch Questions
       const { data: questions, error: qErr } = await primaryClient
         .from('questions')
-        .select('id, question_number, question_text, option_a, option_b, option_c, option_d, correct_option, section_name, marks, question_type')
+        .select('id, question_number, question_text, option_a, option_b, option_c, option_d, correct_option, correct_answer, section_name, marks, question_type')
         .eq('exam_id', reg.exam_id)
         .order('question_number');
 

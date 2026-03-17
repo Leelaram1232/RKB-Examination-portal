@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
     const questionsClient = externalSupabase || primaryClient;
     const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
-      .select('id, correct_option, marks, section_name, question_type')
+      .select('id, correct_option, correct_answer, marks, section_name, question_type')
       .eq('exam_id', exam.id);
 
     if (questionsError) {
@@ -236,7 +236,8 @@ Deno.serve(async (req) => {
 
       if (type === 'NUMERICAL') {
         const studentText = studentAnsData?.text?.toString().trim().toLowerCase();
-        const correctText = question.correct_option?.toString().trim().toLowerCase();
+        // Use correct_answer if available, otherwise fallback to correct_option
+        const correctText = (question.correct_answer || question.correct_option)?.toString().trim().toLowerCase();
         hasResponded = !!studentText;
         isCorrect = hasResponded && studentText === correctText;
       } else {

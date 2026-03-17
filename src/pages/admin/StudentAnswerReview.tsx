@@ -38,6 +38,7 @@ interface Question {
   section_name: string;
   marks: number;
   question_type?: string;
+  correct_answer?: string;
 }
 
 interface StudentAnswer {
@@ -361,7 +362,8 @@ export default function StudentAnswerReview() {
 
     if (type === 'NUMERICAL') {
       const s = ansData.text?.toString().trim().toLowerCase();
-      const c = question.correct_option?.toString().trim().toLowerCase();
+      // Try correct_answer first, then fallback to correct_option
+      const c = (question.correct_answer || question.correct_option)?.toString().trim().toLowerCase();
       if (!s) return 'unanswered';
       return s === c ? 'correct' : 'wrong';
     }
@@ -532,7 +534,15 @@ export default function StudentAnswerReview() {
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
-                          <Badge className="bg-green-600">{question.correct_option}</Badge>
+                          {type === 'MCQ' ? (
+                            <Badge className="bg-green-600">{question.correct_option}</Badge>
+                          ) : (
+                            <div className="max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap">
+                              <Badge className="bg-green-600 border-none px-2 py-0.5 text-[10px]">
+                                {question.correct_answer || question.correct_option || '-'}
+                              </Badge>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           {type === 'MCQ' ? (

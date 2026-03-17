@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
       sectionScores[section].total_questions += 1;
       
       const questionType = (question as any).question_type || 'MCQ';
-      const correctAnswerText = (question as any).correct_answer as string | null;
+      const correctAnswerText = ((question as any).correct_answer || (question as any).correct_option) as string | null;
       const selectedOption = studentAns?.selected_option;
       const textAnswer = studentAns?.text_answer || null;
 
@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
       const hasMcqAnswer = !!selectedOption;
       const hasTextAnswer = !!normalizeText(textAnswer);
 
-      if (questionType === 'NUMERICAL' && correctAnswerText) {
+      if (questionType === 'NUMERICAL') {
         if (!hasTextAnswer) {
           unansweredCount++;
           sectionScores[section].unanswered += 1;
