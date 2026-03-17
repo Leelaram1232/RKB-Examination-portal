@@ -1,8 +1,9 @@
+console.log('DEBUG: StudentAnswerReview.tsx LOADED - VERSION 2');
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, CheckCircle, XCircle, Minus, RefreshCw, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,11 +36,13 @@ interface Question {
   correct_option: string;
   section_name: string;
   marks: number;
+  question_type?: string;
 }
 
 interface StudentAnswer {
   question_id: string;
   selected_option: string | null;
+  text_answer: string | null;
 }
 
 interface SessionInfo {
@@ -51,90 +54,161 @@ interface SessionInfo {
 }
 
 export default function StudentAnswerReview() {
+  console.error('[CRITICAL DEBUG] StudentAnswerReview.tsx v4 LOADED');
+  
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [answers, setAnswers] = useState<Map<string, string | null>>(new Map());
-  const [originalAnswers, setOriginalAnswers] = useState<Map<string, string | null>>(new Map());
+  const [answers, setAnswers] = useState<Map<string, { option: string | null, text: string | null }>>(new Map());
+  const [originalAnswers, setOriginalAnswers] = useState<Map<string, { option: string | null, text: string | null }>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [activeSection, setActiveSection] = useState<string>('all');
 
   useEffect(() => {
+    // Alert to confirm code is actually running on the client
+    console.error('[StudentAnswerReview] COMPONENT MOUNTED');
+    
     const fetchData = async () => {
       if (!sessionId) return;
+      setIsLoading(true);
+      window.alert(`[DEBUG] Attempting to load review for session: ${sessionId}`);
 
       try {
-        // Fetch session info
-        const { data: session, error: sessionError } = await supabase
+        // 1. Check local session first
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        console.log('[StudentAnswerReview] Auth state:', currentSession ? 'Loged in as ' + currentSession.user.email : 'No active session!');
+        
+        if (!currentSession) {
+          toast.error("You are not logged in. Please login to the admin portal.");
+          return;
+        }
+
+        console.log(`[StudentAnswerReview] Fetching session details for: ${sessionId}`);
+        
+        // 1. Fetch Session + Registration data directly (Using EXACT working syntax from SessionManagement.tsx)
+        const { data: sessionData, error: sessionErr } = await supabase
           .from('exam_sessions')
           .select(`
             id,
-            registrations (
+            registration_id,
+            registration:registrations!registrations_exam_id_fkey(
+              id,
               registration_number,
               exam_id,
-              student_id,
-              profiles (full_name),
-              exams (exam_name)
+              student:profiles!registrations_student_id_profiles_fkey(full_name, id)
             )
           `)
           .eq('id', sessionId)
-          .single();
+          .maybeSingle();
 
-        if (sessionError || !session) {
-          toast.error('Session not found');
-          navigate('/admin/results');
-          return;
+        if (sessionErr) {
+          console.error('[StudentAnswerReview] Supabase Query Error:', sessionErr);
+          throw sessionErr;
         }
 
-        const reg = session.registrations as any;
-        setSessionInfo({
-          session_id: session.id,
-          student_name: reg.profiles?.full_name || 'Unknown',
-          registration_number: reg.registration_number || 'N/A',
-          exam_name: reg.exams?.exam_name || 'Unknown Exam',
-          exam_id: reg.exam_id,
-        });
+        if (!sessionData) {
+          console.error('[StudentAnswerReview] No result for sessionID:', sessionId);
+          throw new Error('Session not found in master database');
+        }
 
-        // Fetch questions
-        const { data: questionsData, error: questionsError } = await supabase
+        // Extract registration correctly
+        const reg: any = Array.isArray(sessionData.registration) ? sessionData.registration[0] : sessionData.registration;
+        
+        if (!reg) {
+          console.error('[StudentAnswerReview] Registration data is missing for session:', sessionData);
+          throw new Error('This session has no associated registration record.');
+        }
+
+        // Since we need exam_name, let's fetch exam info separately to be safe from nested ambiguity
+        const { data: examData, error: examErr } = await supabase
+          .from('exams')
+          .select('exam_name')
+          .eq('id', reg.exam_id)
+          .single();
+        if (examErr) console.warn('[StudentAnswerReview] Could not fetch exam name:', examErr);
+
+        // 2. Fetch Questions for this exam
+        const { data: questionsData, error: qErr } = await supabase
           .from('questions')
-          .select('id, question_number, question_text, option_a, option_b, option_c, option_d, correct_option, section_name, marks')
+          .select('*')
           .eq('exam_id', reg.exam_id)
           .order('question_number');
+        if (qErr) throw qErr;
 
-        if (questionsError) {
-          console.error('Error fetching questions:', questionsError);
-          toast.error('Failed to load questions');
-          return;
-        }
+        // 3. Fetch current answers for this session
+        const { data: answersData, error: aErr } = await supabase
+          .from('student_answers')
+          .select('*')
+          .eq('session_id', sessionId);
+        if (aErr) throw aErr;
+
+        console.log('[StudentAnswerReview] Successfully loaded everything:', { reg, qCount: questionsData?.length, aCount: answersData?.length });
+
+        setSessionInfo({
+          session_id: sessionData.id,
+          registration_number: reg.registration_number,
+          exam_name: examData?.exam_name || 'N/A',
+          student_name: reg.student?.full_name || 'Unknown',
+          exam_id: reg.exam_id
+        });
 
         setQuestions(questionsData || []);
 
-        // Fetch existing answers
-        const { data: answersData, error: answersError } = await supabase
-          .from('student_answers')
-          .select('question_id, selected_option')
-          .eq('session_id', sessionId);
-
-        if (answersError) {
-          console.error('Error fetching answers:', answersError);
-        }
-
-        const answersMap = new Map<string, string | null>();
-        (answersData || []).forEach(a => {
-          answersMap.set(a.question_id, a.selected_option);
+        const answersMap = new Map<string, { option: string | null, text: string | null }>();
+        (answersData || []).forEach((a: any) => {
+          answersMap.set(a.question_id, { option: a.selected_option, text: a.text_answer });
         });
         setAnswers(answersMap);
         setOriginalAnswers(new Map(answersMap));
-
-      } catch (error) {
-        console.error('Unexpected error:', error);
-        toast.error('An error occurred');
+        
+      } catch (error: any) {
+        console.error('[StudentAnswerReview] Direct fetch fail:', error);
+        toast.error(`Loading error: ${error.message}`);
+        
+        // Fallback strategy: Proxy
+        console.warn('Direct fetch failed, trying proxy fallback...');
+        await fetchUsingProxy();
       } finally {
         setIsLoading(false);
+      }
+    };
+
+    const fetchUsingProxy = async () => {
+      try {
+        const { data: response, error: proxyError } = await invokeExternalFunction<any>(
+          'admin-update-answers', 
+          { session_id: sessionId }, 
+          { method: 'GET' }
+        );
+
+        if (proxyError || !response?.success) {
+          throw new Error(proxyError?.message || response?.error || 'Proxy loading failed too');
+        }
+
+        const { session, questions: questionsData, answers: answersData } = response;
+        const reg = session.registration;
+
+        setSessionInfo({
+          session_id: session.id,
+          registration_number: reg.registration_number,
+          exam_name: reg.exams?.[0]?.exam_name || reg.exams?.exam_name || 'N/A',
+          student_name: reg.profiles?.[0]?.full_name || reg.profiles?.full_name || 'Unknown',
+          exam_id: reg.exam_id
+        });
+
+        setQuestions(questionsData || []);
+        const answersMap = new Map<string, { option: string | null, text: string | null }>();
+        (answersData || []).forEach((a: any) => {
+          answersMap.set(a.question_id, { option: a.selected_option, text: a.text_answer });
+        });
+        setAnswers(answersMap);
+        setOriginalAnswers(new Map(answersMap));
+      } catch (err: any) {
+        console.error('[StudentAnswerReview] Fallback proxy error:', err);
+        // We already showing the main error toast, so we just log this
       }
     };
 
@@ -144,10 +218,11 @@ export default function StudentAnswerReview() {
   const handleAnswerChange = (questionId: string, value: string) => {
     setAnswers(prev => {
       const newMap = new Map(prev);
+      const current = prev.get(questionId) || { option: null, text: null };
       if (value === 'none') {
         newMap.delete(questionId);
       } else {
-        newMap.set(questionId, value);
+        newMap.set(questionId, { ...current, option: value });
       }
       return newMap;
     });
@@ -156,36 +231,46 @@ export default function StudentAnswerReview() {
   const persistChangedAnswers = async () => {
     if (!sessionId) return 0;
 
-    // Find changed answers
-    const changedAnswers: { question_id: string; selected_option: string | null }[] = [];
-
+    const changedAnswers: any[] = [];
     for (const question of questions) {
-      const newAnswer = answers.get(question.id) ?? null;
-      const oldAnswer = originalAnswers.get(question.id) ?? null;
+      const current = answers.get(question.id);
+      const original = originalAnswers.get(question.id);
 
-      if (newAnswer !== oldAnswer) {
+      if (current?.option !== original?.option || current?.text !== original?.text) {
         changedAnswers.push({
+          session_id: sessionId,
           question_id: question.id,
-          selected_option: newAnswer,
+          selected_option: current?.option || null,
+          text_answer: current?.text || null,
         });
       }
     }
 
     if (changedAnswers.length === 0) return 0;
 
-    // Admin corrections must go through backend function (RLS blocks direct writes)
-    const { data, error } = await supabase.functions.invoke('admin-update-answers', {
-      body: {
-        session_id: sessionId,
-        changes: changedAnswers,
-      },
-    });
+    // Try multiple update strategies
+    try {
+      // 1. Direct via Supabase (if RLS allows admins)
+      const { error: upsertErr } = await supabase
+        .from('student_answers')
+        .upsert(changedAnswers, { onConflict: 'session_id,question_id' });
 
-    if (error) throw error;
-    if (!data?.success) throw new Error(data?.error || 'Failed to save answers');
+      if (upsertErr) {
+        console.warn('Direct upsert failed, trying proxy...', upsertErr);
+        // 2. Fallback to Edge function proxy
+        const { data, error: proxyError } = await invokeExternalFunction<any>('admin-update-answers', {
+          session_id: sessionId,
+          changes: changedAnswers,
+        });
+        if (proxyError || !data?.success) throw proxyError || new Error(data?.error);
+      }
 
-    setOriginalAnswers(new Map(answers));
-    return changedAnswers.length;
+      setOriginalAnswers(new Map(answers));
+      return changedAnswers.length;
+    } catch (err: any) {
+      console.error('Final persist error:', err);
+      throw err;
+    }
   };
 
   const invokeRecalculate = async () => {
@@ -218,12 +303,18 @@ export default function StudentAnswerReview() {
       toast.success(`Saved ${savedCount} answer(s). Recalculating result...`);
 
       setIsRecalculating(true);
-      const result = await invokeRecalculate();
+      // Recalculation MUST be done via backend function because it triggers complex DB changes
+      const { data: result, error: recErr } = await invokeExternalFunction<any>('recalculate-result', { session_id: sessionId });
+
+      if (recErr || !result?.success) {
+        throw new Error(recErr?.message || result?.error || 'Recalculation failed but answers were saved.');
+      }
+
       toast.success(
         `Updated: ${result.obtained_marks}/${result.total_marks} marks (${result.correct_count} correct)`
       );
 
-      // Always go back to the exam results page (history back can fail if opened directly)
+      // Navigate back
       if (sessionInfo?.exam_id) {
         navigate(`/admin/results/${sessionInfo.exam_id}`, { replace: true });
       } else {
@@ -260,19 +351,42 @@ export default function StudentAnswerReview() {
     ? questions 
     : questions.filter(q => q.section_name === activeSection);
 
-  const getAnswerStatus = (question: Question) => {
-    const answer = answers.get(question.id);
-    if (!answer) return 'unanswered';
-    return answer === question.correct_option ? 'correct' : 'wrong';
+  const getAnswerStatus = (question: any) => {
+    const ansData = answers.get(question.id);
+    const type = question.question_type || 'MCQ';
+
+    if (!ansData) return 'unanswered';
+
+    if (type === 'NUMERICAL') {
+      const s = ansData.text?.toString().trim().toLowerCase();
+      const c = question.correct_option?.toString().trim().toLowerCase();
+      if (!s) return 'unanswered';
+      return s === c ? 'correct' : 'wrong';
+    }
+
+    if (!ansData.option) return 'unanswered';
+    return ansData.option === question.correct_option ? 'correct' : 'wrong';
   };
 
   const stats = {
     total: questions.length,
-    answered: Array.from(answers.values()).filter(a => a !== null).length,
-    correct: questions.filter(q => answers.get(q.id) === q.correct_option).length,
+    answered: Array.from(answers.values()).filter(a => a?.option || a?.text).length,
+    correct: questions.filter(q => {
+      const ans = answers.get(q.id);
+      if (q.question_type === 'NUMERICAL') {
+        return ans?.text?.toString().trim().toLowerCase() === q.correct_option?.toString().trim().toLowerCase();
+      }
+      return ans?.option === q.correct_option;
+    }).length,
     wrong: questions.filter(q => {
       const ans = answers.get(q.id);
-      return ans && ans !== q.correct_option;
+      const hasAns = q.question_type === 'NUMERICAL' ? !!ans?.text : !!ans?.option;
+      if (!hasAns) return false;
+      
+      if (q.question_type === 'NUMERICAL') {
+        return ans?.text?.toString().trim().toLowerCase() !== q.correct_option?.toString().trim().toLowerCase();
+      }
+      return ans?.option !== q.correct_option;
     }).length,
   };
 
@@ -310,6 +424,12 @@ export default function StudentAnswerReview() {
         <ArrowLeft className="w-4 h-4 mr-2" />
         Back
       </Button>
+
+      {/* DEBUG WARNING - Only visible if reloading worked */}
+      <div className="bg-yellow-100 border-l-4 border-yellow-500 p-4 mb-6">
+        <p className="font-bold text-yellow-700">DEBUG MODE ACTIVE (v4)</p>
+        <p className="text-sm text-yellow-600">If you see this, the latest code is loaded. We are now using the Edge Function Proxy.</p>
+      </div>
 
       {/* Student Info */}
       <Card className="mb-6">
@@ -378,66 +498,77 @@ export default function StudentAnswerReview() {
                   <TableHead className="w-24">Section</TableHead>
                   <TableHead>Question</TableHead>
                   <TableHead className="w-24 text-center">Correct</TableHead>
-                  <TableHead className="w-32 text-center">Student Answer</TableHead>
+                  <TableHead className="w-48 text-center">Student Answer</TableHead>
                   <TableHead className="w-24 text-center">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredQuestions.map(question => {
-                  const status = getAnswerStatus(question);
-                  const studentAnswer = answers.get(question.id) || null;
-                  
-                  return (
-                    <TableRow key={question.id}>
-                      <TableCell className="font-medium">{question.question_number}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{question.section_name}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="max-w-lg">
-                          <p className="text-sm line-clamp-2">{question.question_text}</p>
-                          <div className="mt-1 text-xs text-muted-foreground space-x-2">
-                            <span className={question.correct_option === 'A' ? 'font-bold text-green-600' : ''}>A: {question.option_a?.substring(0, 20)}{question.option_a?.length > 20 ? '...' : ''}</span>
-                            <span className={question.correct_option === 'B' ? 'font-bold text-green-600' : ''}>B: {question.option_b?.substring(0, 20)}{question.option_b?.length > 20 ? '...' : ''}</span>
-                            <span className={question.correct_option === 'C' ? 'font-bold text-green-600' : ''}>C: {question.option_c?.substring(0, 20)}{question.option_c?.length > 20 ? '...' : ''}</span>
-                            <span className={question.correct_option === 'D' ? 'font-bold text-green-600' : ''}>D: {question.option_d?.substring(0, 20)}{question.option_d?.length > 20 ? '...' : ''}</span>
+                  {filteredQuestions.map(question => {
+                    const status = getAnswerStatus(question);
+                    const ansData = answers.get(question.id) || null;
+                    const type = (question as any).question_type || 'MCQ';
+                    
+                    return (
+                      <TableRow key={question.id}>
+                        <TableCell className="font-medium">{question.question_number}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{question.section_name}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="max-w-lg">
+                            <p className="text-sm line-clamp-2">{question.question_text}</p>
+                            {type === 'MCQ' ? (
+                              <div className="mt-1 text-xs text-muted-foreground space-x-2">
+                                <span className={question.correct_option === 'A' ? 'font-bold text-green-600' : ''}>A: {question.option_a?.substring(0, 20)}</span>
+                                <span className={question.correct_option === 'B' ? 'font-bold text-green-600' : ''}>B: {question.option_b?.substring(0, 20)}</span>
+                                <span className={question.correct_option === 'C' ? 'font-bold text-green-600' : ''}>C: {question.option_c?.substring(0, 20)}</span>
+                                <span className={question.correct_option === 'D' ? 'font-bold text-green-600' : ''}>D: {question.option_d?.substring(0, 20)}</span>
+                              </div>
+                            ) : (
+                              <Badge variant="secondary" className="mt-1 text-[10px]">Numerical Type</Badge>
+                            )}
                           </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge className="bg-green-600">{question.correct_option}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={studentAnswer || 'none'}
-                          onValueChange={(value) => handleAnswerChange(question.id, value)}
-                        >
-                          <SelectTrigger className="w-24">
-                            <SelectValue placeholder="Select" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">—</SelectItem>
-                            <SelectItem value="A">A</SelectItem>
-                            <SelectItem value="B">B</SelectItem>
-                            <SelectItem value="C">C</SelectItem>
-                            <SelectItem value="D">D</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {status === 'correct' && (
-                          <CheckCircle className="w-5 h-5 text-green-600 inline" />
-                        )}
-                        {status === 'wrong' && (
-                          <XCircle className="w-5 h-5 text-red-600 inline" />
-                        )}
-                        {status === 'unanswered' && (
-                          <Minus className="w-5 h-5 text-muted-foreground inline" />
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge className="bg-green-600">{question.correct_option}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {type === 'MCQ' ? (
+                            <Select
+                              value={ansData?.option || 'none'}
+                              onValueChange={(value) => handleAnswerChange(question.id, value)}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">—</SelectItem>
+                                <SelectItem value="A">A</SelectItem>
+                                <SelectItem value="B">B</SelectItem>
+                                <SelectItem value="C">C</SelectItem>
+                                <SelectItem value="D">D</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="px-3 py-2 border rounded-md bg-muted/30 text-center font-mono">
+                              {ansData?.text || <span className="text-muted-foreground italic">No Answer</span>}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {status === 'correct' && (
+                            <CheckCircle className="w-5 h-5 text-green-600 inline" />
+                          )}
+                          {status === 'wrong' && (
+                            <XCircle className="w-5 h-5 text-red-600 inline" />
+                          )}
+                          {status === 'unanswered' && (
+                            <Minus className="w-5 h-5 text-muted-foreground inline" />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
