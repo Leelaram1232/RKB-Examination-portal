@@ -114,11 +114,11 @@ export default function StudentAnswerReview() {
           .from('exams')
           .select('exam_name')
           .eq('id', reg.exam_id)
-          .single();
-        if (examErr) console.warn('Could not fetch exam name:', examErr);
+          .maybeSingle();
+        if (examErr) console.warn('[StudentAnswerReview] Could not fetch exam name:', examErr);
 
-        // 4. Fetch Questions
-        console.log('[StudentAnswerReview] Step 4: Fetching questions');
+        // 5. Fetch Questions
+        console.log('[StudentAnswerReview] Step 5: Fetching questions');
         const { data: questionsData, error: qErr } = await supabase
           .from('questions')
           .select('*')
@@ -126,21 +126,21 @@ export default function StudentAnswerReview() {
           .order('question_number');
         if (qErr) throw qErr;
 
-        // 5. Fetch Answers
-        console.log('[StudentAnswerReview] Step 5: Fetching answers');
+        // 6. Fetch Answers
+        console.log('[StudentAnswerReview] Step 6: Fetching answers');
         const { data: answersData, error: aErr } = await supabase
           .from('student_answers')
           .select('*')
           .eq('session_id', sessionId);
         if (aErr) throw aErr;
 
-        console.log('[StudentAnswerReview] SUCCESS: All data loaded separately');
+        console.log('[StudentAnswerReview] SUCCESS: All steps completed successfully');
 
         setSessionInfo({
           session_id: sessionData.id,
           registration_number: reg.registration_number,
           exam_name: examData?.exam_name || 'N/A',
-          student_name: reg.profiles?.full_name || 'Unknown',
+          student_name: profileData?.full_name || 'Unknown',
           exam_id: reg.exam_id
         });
 
