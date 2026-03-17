@@ -84,15 +84,19 @@ export async function invokeExternalFunction<T = unknown>(
 
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}`;
-      if (response.status === 401) {
-        errorMessage = "Session Timeout or Unauthorized. Please log in again.";
-      } else {
-        try {
-          const errorData = JSON.parse(responseText);
+      try {
+        const errorData = JSON.parse(responseText);
+        if (response.status === 401) {
+          errorMessage = errorData.details || errorData.error || "Session Timeout or Unauthorized. Please log in again.";
+          if (errorData.debug_info) {
+             console.error('[ExternalSupabase] Auth Debug Details:', errorData.debug_info);
+             errorMessage += ` (Debug: ${JSON.stringify(errorData.debug_info)})`;
+          }
+        } else {
           errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch {
-          errorMessage = responseText || errorMessage;
         }
+      } catch {
+        errorMessage = responseText || errorMessage;
       }
       return { data: null, error: new Error(errorMessage) };
     }

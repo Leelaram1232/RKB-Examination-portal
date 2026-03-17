@@ -32,16 +32,27 @@ Deno.serve(async (req) => {
 
     // 1) Validate caller (Always use internal for auth)
     const authHeader = req.headers.get('Authorization') || '';
+    console.log(`[admin-update-answers] Auth Header present: ${!!authHeader}`);
+    
     const authClient = createClient(internalUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: authHeader } },
     });
 
     const { data: userData, error: userError } = await authClient.auth.getUser();
-    console.log(`[admin-update-answers] Auth Check:`, { user: userData?.user?.id, error: userError });
-
+    
     if (userError || !userData?.user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized', details: userError?.message }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      console.error(`[admin-update-answers] Auth failed:`, userError);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Unauthorized', 
+          details: userError?.message || 'No user found in session',
+          debug_info: { has_header: !!authHeader, url: internalUrl }
+        }), 
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+    
+    console.log(`[admin-update-answers] Authenticated user: ${userData.user.id}`);
 
     // 2) Check role
     const { data: isAdmin, error: roleErr } = await primaryClient.rpc('has_role', { _user_id: userData.user.id, _role: 'admin' });
