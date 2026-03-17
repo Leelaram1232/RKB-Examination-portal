@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
+
+# OCR Temporary files
+push_error.txt
+ocr/__pycache__/
