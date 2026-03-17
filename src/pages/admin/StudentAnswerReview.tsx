@@ -527,7 +527,7 @@ export default function StudentAnswerReview() {
                                 <span className={question.correct_option === 'D' ? 'font-bold text-green-600' : ''}>D: {question.option_d?.substring(0, 20)}</span>
                               </div>
                             ) : (
-                              <Badge variant="secondary" className="mt-1 text-[10px]">Numerical Type</Badge>
+                              <Badge variant="secondary" className="mt-1 text-[10px]">Text/Character Answer</Badge>
                             )}
                           </div>
                         </TableCell>
