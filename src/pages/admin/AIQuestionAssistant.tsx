@@ -63,6 +63,7 @@ export default function AIQuestionAssistant() {
   const [generatedQuestions, setGeneratedQuestions] = useState<ParsedQuestion[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [chatHistoryId, setChatHistoryId] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,12 +71,23 @@ export default function AIQuestionAssistant() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [examsRes, subjectsRes] = await Promise.all([
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        const [examsRes, subjectsRes, historyRes] = await Promise.all([
           supabase.from('exams').select('id, exam_name, exam_code').order('created_at', { ascending: false }),
           supabase.from('subjects').select('id, name').eq('is_active', true).order('name'),
+          user ? (supabase as any).from('ai_chat_history').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }).limit(1).single() : Promise.resolve({ data: null, error: null })
         ]);
+
         if (examsRes.data) setExams(examsRes.data);
         if (subjectsRes.data) setSubjects(subjectsRes.data);
+        
+        if (historyRes.data) {
+          setChatHistoryId(historyRes.data.id);
+          if (historyRes.data.messages && Array.isArray(historyRes.data.messages)) {
+            setMessages(historyRes.data.messages as Message[]);
+          }
+        }
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -139,8 +151,28 @@ export default function AIQuestionAssistant() {
       if (error) throw error;
       if (!data) throw new Error('No response from AI Assistant');
 
-      setMessages(prev => [...prev, { role: 'assistant', content: data.content }]);
-      
+      const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: data.content }];
+      setMessages(newMessages);
+
+      // Persist chat history
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: savedHistory, error: saveError } = await (supabase as any)
+          .from('ai_chat_history')
+          .upsert({
+            id: chatHistoryId || undefined,
+            user_id: user.id,
+            messages: newMessages,
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        
+        if (!saveError && savedHistory) {
+          setChatHistoryId(savedHistory.id);
+        }
+      }
+
       // Clear the file after it's been processed once to avoid redundant OCR on every message
       if (fileUrl) {
         setFileUrl(null);
@@ -157,11 +189,13 @@ export default function AIQuestionAssistant() {
           hasLatex: true,
           sectionName: q.section_name || 'General',
           questionText: q.question_text,
+          questionType: q.question_type || 'MCQ',
           optionA: q.option_a,
           optionB: q.option_b,
           optionC: q.option_c,
           optionD: q.option_d,
           correctOption: q.correct_option,
+          correctAnswer: q.correct_answer,
           marks: q.marks || 4,
         }));
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);

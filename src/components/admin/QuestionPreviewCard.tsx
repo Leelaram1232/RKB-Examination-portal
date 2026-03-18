@@ -405,55 +405,70 @@ export const QuestionPreviewCard = ({
           </div>
         )}
         
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div className={`p-2 rounded ${question.correctOption === 'A' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
-            <span className="font-medium">A)</span>{' '}
-            {question.hasLatex ? (
-              <MathRenderer content={question.optionA || '(Empty)'} />
-            ) : (
-              question.optionA || '(Empty)'
-            )}
-            {question.optionAImage && (
-              <img src={question.optionAImage} alt="Option A" className="max-h-16 mt-1 rounded" />
-            )}
+        {(question.questionType || 'MCQ') === 'MCQ' ? (
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className={`p-2 rounded ${question.correctOption === 'A' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
+              <span className="font-medium">A)</span>{' '}
+              {question.hasLatex ? (
+                <MathRenderer content={question.optionA || '(Empty)'} />
+              ) : (
+                question.optionA || '(Empty)'
+              )}
+              {question.optionAImage && (
+                <img src={question.optionAImage} alt="Option A" className="max-h-16 mt-1 rounded" />
+              )}
+            </div>
+            <div className={`p-2 rounded ${question.correctOption === 'B' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
+              <span className="font-medium">B)</span>{' '}
+              {question.hasLatex ? (
+                <MathRenderer content={question.optionB || '(Empty)'} />
+              ) : (
+                question.optionB || '(Empty)'
+              )}
+              {question.optionBImage && (
+                <img src={question.optionBImage} alt="Option B" className="max-h-16 mt-1 rounded" />
+              )}
+            </div>
+            <div className={`p-2 rounded ${question.correctOption === 'C' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
+              <span className="font-medium">C)</span>{' '}
+              {question.hasLatex ? (
+                <MathRenderer content={question.optionC || '(Empty)'} />
+              ) : (
+                question.optionC || '(Empty)'
+              )}
+              {question.optionCImage && (
+                <img src={question.optionCImage} alt="Option C" className="max-h-16 mt-1 rounded" />
+              )}
+            </div>
+            <div className={`p-2 rounded ${question.correctOption === 'D' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
+              <span className="font-medium">D)</span>{' '}
+              {question.hasLatex ? (
+                <MathRenderer content={question.optionD || '(Empty)'} />
+              ) : (
+                question.optionD || '(Empty)'
+              )}
+              {question.optionDImage && (
+                <img src={question.optionDImage} alt="Option D" className="max-h-16 mt-1 rounded" />
+              )}
+            </div>
           </div>
-          <div className={`p-2 rounded ${question.correctOption === 'B' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
-            <span className="font-medium">B)</span>{' '}
-            {question.hasLatex ? (
-              <MathRenderer content={question.optionB || '(Empty)'} />
-            ) : (
-              question.optionB || '(Empty)'
-            )}
-            {question.optionBImage && (
-              <img src={question.optionBImage} alt="Option B" className="max-h-16 mt-1 rounded" />
-            )}
+        ) : (
+          <div className="p-3 rounded-md bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800">
+            <span className="text-xs font-semibold text-green-700 dark:text-green-400 block mb-1">CORRECT ANSWER</span>
+            <div className="text-sm">
+              {question.hasLatex ? (
+                <MathRenderer content={question.correctAnswer || '(No answer set)'} />
+              ) : (
+                question.correctAnswer || '(No answer set)'
+              )}
+            </div>
           </div>
-          <div className={`p-2 rounded ${question.correctOption === 'C' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
-            <span className="font-medium">C)</span>{' '}
-            {question.hasLatex ? (
-              <MathRenderer content={question.optionC || '(Empty)'} />
-            ) : (
-              question.optionC || '(Empty)'
-            )}
-            {question.optionCImage && (
-              <img src={question.optionCImage} alt="Option C" className="max-h-16 mt-1 rounded" />
-            )}
-          </div>
-          <div className={`p-2 rounded ${question.correctOption === 'D' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'}`}>
-            <span className="font-medium">D)</span>{' '}
-            {question.hasLatex ? (
-              <MathRenderer content={question.optionD || '(Empty)'} />
-            ) : (
-              question.optionD || '(Empty)'
-            )}
-            {question.optionDImage && (
-              <img src={question.optionDImage} alt="Option D" className="max-h-16 mt-1 rounded" />
-            )}
-          </div>
-        </div>
+        )}
         
         <div className="text-sm text-muted-foreground">
-          Correct Answer: <span className="font-semibold text-foreground">{question.correctOption || 'Not set'}</span>
+          Correct Answer: <span className="font-semibold text-foreground">
+            {question.questionType === 'FILL_BLANK' ? question.correctAnswer : question.correctOption || 'Not set'}
+          </span>
         </div>
       </CardContent>
     </Card>
