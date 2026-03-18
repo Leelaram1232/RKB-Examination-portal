@@ -77,17 +77,38 @@ Deno.serve(async (req) => {
     }
 
     const { messages, file_url, exam_id, subject_id } = await req.json() as AssistantRequest;
-    
+    console.log('[Assistant] Request received:', { 
+      messageCount: messages?.length, 
+      hasFile: !!file_url,
+      exam_id,
+      subject_id 
+    });
+
+    if (!messages || messages.length === 0) {
+      throw new Error('No messages provided');
+    }
+
     let ocrContext = '';
-    if (file_url && mathpixId && mathpixKey) {
-      try {
-        ocrContext = await callMathpixPdf(file_url, mathpixId, mathpixKey);
-        console.log('[Assistant] OCR success, length:', ocrContext.length);
-      } catch (e) {
-        console.error('[Assistant] OCR failed:', e);
-        ocrContext = 'Error: Could not extract text from file.';
+    if (file_url) {
+      if (!mathpixId || !mathpixKey) {
+        console.warn('[Assistant] File uploaded but Mathpix keys are missing.');
+        ocrContext = 'Error: Mathpix OCR keys not configured on server.';
+      } else {
+        try {
+          ocrContext = await callMathpixPdf(file_url, mathpixId, mathpixKey);
+          console.log('[Assistant] OCR success, length:', ocrContext.length);
+        } catch (e: any) {
+          console.error('[Assistant] OCR failed:', e);
+          ocrContext = `Error: Could not extract text from file: ${e.message}`;
+        }
       }
     }
+
+    // Ensure we don't send empty user messages to Groq
+    const sanitizedMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content || (m.role === 'user' ? '[No text content provided]' : '')
+    }));
 
     const systemPrompt = `You are an expert Exam Question Assistant. 
 Your goal is to help administrators prepare questions for competitive exams like JEE/NEET.
@@ -114,10 +135,10 @@ Exam ID: ${exam_id || 'Not specified'}`;
 
     const groqMessages = [
       { role: 'system', content: systemPrompt },
-      ...messages
+      ...sanitizedMessages
     ];
 
-    console.log('[Assistant] Calling Groq...');
+    console.log('[Assistant] Calling Groq with model: llama-3.3-70b-versatile');
     const groqResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -132,8 +153,12 @@ Exam ID: ${exam_id || 'Not specified'}`;
     });
 
     if (!groqResp.ok) {
-      const err = await groqResp.text();
-      throw new Error(`Groq API error: ${err}`);
+      const errText = await groqResp.text();
+      let errJson;
+      try { errJson = JSON.parse(errText); } catch(e) {}
+      const errMsg = errJson?.error?.message || errText;
+      console.error('[Assistant] Groq API returned error:', errMsg);
+      throw new Error(`Groq API Error: ${errMsg}`);
     }
 
     const groqData = await groqResp.json();
@@ -145,7 +170,8 @@ Exam ID: ${exam_id || 'Not specified'}`;
     if (jsonMatch) {
       try {
         questions = JSON.parse(jsonMatch[1].trim());
-      } catch (e) {
+        console.log(`[Assistant] Successfully extracted ${questions.length} questions.`);
+      } catch (e: any) {
         console.error('[Assistant] Failed to parse JSON:', e);
       }
     }
@@ -157,9 +183,12 @@ Exam ID: ${exam_id || 'Not specified'}`;
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-  } catch (error) {
-    console.error('[Assistant] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+  } catch (error: any) {
+    console.error('[Assistant] Error:', error.message);
+    return new Response(JSON.stringify({ 
+      error: error.message,
+      details: error.stack 
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

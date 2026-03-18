@@ -161,10 +161,11 @@ export default function AIQuestionAssistant() {
         setFileUrl(null);
         setFileName(null);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('AI Error:', error);
       toast.error('AI Assistant failed to respond');
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
+      const errorMessage = error?.context?.error || error?.message || 'I encountered an error. Please try again.';
+      setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
     } finally {
       setIsSending(false);
     }
