@@ -168,15 +168,23 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
     } catch (error: any) {
-      console.error('AI Error Detailed:', error);
+      console.error('AI ERROR LOG:', error);
       toast.error('AI Assistant failed to respond');
       
       let errorMessage = 'I encountered an error. Please try again.';
       
-      if (error.context?.error) {
+      // Try to extract the most descriptive error possible
+      if (error?.context?.error) {
         errorMessage = error.context.error;
-      } else if (error.message) {
+      } else if (error?.error?.message) {
+        errorMessage = error.error.message;
+      } else if (error?.message) {
         errorMessage = error.message;
+      }
+      
+      // If it's a Fetch error or generic failure
+      if (errorMessage.includes('Failed to fetch')) {
+        errorMessage = 'Network error: Check your connection or if the Edge Function is deployed.';
       }
       
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
