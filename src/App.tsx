@@ -117,6 +117,14 @@ const App = () => (
               }
             />
             <Route
+              path="/admin/questions"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <QuestionManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/admin/questions/smart-paste"
               element={
                 <ProtectedRoute requiredRole="admin">
