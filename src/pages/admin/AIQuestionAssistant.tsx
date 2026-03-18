@@ -20,7 +20,8 @@ import {
   Trash2,
   CheckCircle2,
   AlertCircle,
-  BrainCircuit
+  BrainCircuit,
+  Pencil
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -66,6 +67,7 @@ export default function AIQuestionAssistant() {
   const [chatHistoryId, setChatHistoryId] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -98,9 +100,7 @@ export default function AIQuestionAssistant() {
   }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -244,6 +244,15 @@ export default function AIQuestionAssistant() {
     setGeneratedQuestions(prev => prev.map(q => q.id === updated.id ? updated : q));
   };
 
+  const handleEditMessage = (index: number) => {
+    const message = messages[index];
+    if (message.role !== 'user') return;
+    
+    setInput(message.content);
+    // Remove this message and all subsequent ones
+    setMessages(prev => prev.slice(0, index));
+  };
+
   const handleSaveAll = async () => {
     const validQuestions = generatedQuestions.filter(q => q.isValid);
     if (validQuestions.length === 0) {
@@ -303,7 +312,7 @@ export default function AIQuestionAssistant() {
 
   return (
     <AdminLayout title="AI Question Assistant" description="Generate and extract exam questions with AI">
-      <div className="flex flex-col h-[calc(100vh-140px)] min-h-[600px] space-y-4 overflow-hidden">
+      <div className="flex flex-col h-[calc(100vh-160px)] min-h-[500px] space-y-4 overflow-hidden">
         <div className="flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={() => navigate('/admin/questions')}>
             <ArrowLeft className="h-4 w-4 mr-2" />
@@ -343,24 +352,38 @@ export default function AIQuestionAssistant() {
               </CardTitle>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col p-0 overflow-hidden min-h-0">
-              <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-                {messages.map((m, i) => (
-                  <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] rounded-lg p-3 text-sm ${
-                      m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted border'
-                    }`}>
-                      {m.content}
+              <ScrollArea className="flex-1 px-4" ref={scrollRef}>
+                <div className="py-4 space-y-4">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
+                      <div className="flex items-start gap-2 max-w-[85%]">
+                        {m.role === 'user' && !isSending && (
+                          <button 
+                            onClick={() => handleEditMessage(i)}
+                            className="p-1 mt-1 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                            title="Edit message"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                        <div className={`rounded-lg p-3 text-sm ${
+                          m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted border'
+                        }`}>
+                          {m.content}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {isSending && (
-                  <div className="flex justify-start">
-                    <div className="bg-muted border rounded-lg p-3">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  ))}
+                  {isSending && (
+                    <div className="flex justify-start">
+                      <div className="bg-muted border rounded-lg p-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+              </ScrollArea>
               
               <div className="p-4 border-t bg-muted/30 space-y-2">
                 {fileName && (
