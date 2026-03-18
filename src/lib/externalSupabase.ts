@@ -14,8 +14,8 @@ import { supabase } from '@/integrations/supabase/client';
 
 // Hardcoded external Supabase credentials
 // These bypass Lovable Cloud's runtime injection
-const EXTERNAL_SUPABASE_URL = "https://hwhhgprivdgdbnlqruln.supabase.co";
-const EXTERNAL_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
+export const EXTERNAL_SUPABASE_URL = "https://hwhhgprivdgdbnlqruln.supabase.co";
+export const EXTERNAL_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
 
 // Create the external Supabase client
 export const externalSupabase: SupabaseClient<Database> = createClient<Database>(
@@ -58,11 +58,11 @@ export async function invokeExternalFunction<T = unknown>(
       url += `?${params.toString()}`;
     }
 
-    // Get current session for auth
-    const { data: { session } } = await supabase.auth.getSession();
+    // Get current session for auth - Use the same client we use for external calls
+    const { data: { session } } = await externalSupabase.auth.getSession();
     const token = session?.access_token || EXTERNAL_SUPABASE_ANON_KEY;
 
-    console.log(`[ExternalSupabase] Invoking ${functionName} via ${method} on ${url}... (Auth: ${!!session ? 'User JWT' : 'Anon'})`);
+    console.log(`[ExternalSupabase] Invoking ${functionName} via ${method} on ${url}... (Auth: ${!!session ? 'External JWT' : 'Anon/Default'})`);
     
     // Setup request init
     const init: RequestInit = {

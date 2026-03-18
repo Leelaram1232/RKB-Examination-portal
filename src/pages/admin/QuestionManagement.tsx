@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2 } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -429,12 +429,20 @@ const QuestionManagement = () => {
                   Upload Questions
                 </TabsTrigger>
               </TabsList>
-              <Button variant="outline" asChild>
-                <Link to="/admin/questions/smart-paste">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Smart Paste Questions
-                </Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" asChild>
+                  <Link to="/admin/questions/ai-assistant">
+                    <BrainCircuit className="w-4 h-4 mr-2 text-primary" />
+                    AI Assistant
+                  </Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/admin/questions/smart-paste">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Smart Paste
+                  </Link>
+                </Button>
+              </div>
             </div>
 
             <TabsContent value="upload">

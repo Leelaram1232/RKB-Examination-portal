@@ -153,15 +153,25 @@ Deno.serve(async (req) => {
     }
 
     const now = new Date().toISOString();
+    console.log(`[admin-update-answers] Processing ${body.changes.length} changes for session ${body.session_id}`);
+
     for (const ch of body.changes) {
-      // Delete any existing answer for this question in this session to avoid duplicates
+      // 1) Delete any existing answer for this question in this session to avoid duplicates
       // This is safer than upsert which requires a unique constraint that might be missing
-      await primaryClient.from('student_answers')
+      const { error: delErr } = await primaryClient.from('student_answers')
         .delete()
         .eq('session_id', body.session_id)
         .eq('question_id', ch.question_id);
 
-      // Insert the new/updated answer
+      if (delErr) {
+        console.error(`[admin-update-answers] Delete error for Q:${ch.question_id}:`, delErr);
+        return new Response(
+          JSON.stringify({ error: 'Failed to clear old answer', details: delErr.message }), 
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // 2) Insert the new/updated answer
       const { error: insErr } = await primaryClient.from('student_answers').insert({
         session_id: body.session_id,
         question_id: ch.question_id,
@@ -173,6 +183,14 @@ Deno.serve(async (req) => {
       
       if (insErr) {
         console.error(`[admin-update-answers] Insert error for Q:${ch.question_id}:`, insErr);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Database save failed', 
+            details: insErr.message, 
+            hint: 'This is often a Row-Level Security (RLS) violation. Ensure your Service Role Key is correct or add an Admin RLS policy.' 
+          }), 
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
     }
 
