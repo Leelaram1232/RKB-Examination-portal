@@ -26,7 +26,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
-import { EXTERNAL_SUPABASE_URL, EXTERNAL_SUPABASE_ANON_KEY } from '@/lib/externalSupabase';
+import { EXTERNAL_SUPABASE_URL, EXTERNAL_SUPABASE_ANON_KEY, invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -129,16 +129,15 @@ export default function AIQuestionAssistant() {
       const conversationHistory = messages.map(m => ({ role: m.role, content: m.content }));
       conversationHistory.push({ role: 'user', content: userMessage });
 
-      const { data, error } = await supabase.functions.invoke('ai-question-assistant', {
-        body: {
-          messages: conversationHistory,
-          file_url: fileUrl,
-          exam_id: selectedExam,
-          subject_id: selectedSubject,
-        }
+      const { data, error } = await invokeExternalFunction<any>('ai-question-assistant', {
+        messages: conversationHistory,
+        file_url: fileUrl || undefined,
+        exam_id: selectedExam,
+        subject_id: selectedSubject,
       });
 
       if (error) throw error;
+      if (!data) throw new Error('No response from AI Assistant');
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.content }]);
       if (data.questions && data.questions.length > 0) {
