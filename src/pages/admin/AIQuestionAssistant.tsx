@@ -182,9 +182,12 @@ export default function AIQuestionAssistant() {
         errorMessage = error.message;
       }
 
-      // Special handling for crashed functions to see if we can get the underlying JSON error
-      if (errorMessage.includes('non-2xx status code')) {
-         errorMessage = `Edge Function Error (500). Please check if GROQ_API_KEY is set in Supabase Secrets.`;
+      // If we have a context with a response, try to get more info
+      if (error?.context?.response) {
+        try {
+          // This is often not possible directly as context.response is a Response object
+          console.log('Error Context Response:', error.context.response);
+        } catch (e) {}
       }
       
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
