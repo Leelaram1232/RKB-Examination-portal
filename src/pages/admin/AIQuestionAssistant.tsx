@@ -189,7 +189,11 @@ export default function AIQuestionAssistant() {
           hasLatex: true,
           sectionName: q.section_name || 'General',
           questionText: q.question_text || '(No question text provided)',
-          questionType: (q.question_type || 'MCQ').toUpperCase().replace(/\s+/g, '_') as 'MCQ' | 'FILL_BLANK',
+          questionType: (() => {
+            const type = (q.question_type || 'MCQ').toUpperCase();
+            if (type.includes('FILL') || type.includes('NUMERICAL') || type.includes('BLANK') || type.includes('SHORT')) return 'FILL_BLANK';
+            return 'MCQ';
+          })() as 'MCQ' | 'FILL_BLANK',
           optionA: q.option_a,
           optionB: q.option_b,
           optionC: q.option_c,
@@ -299,7 +303,7 @@ export default function AIQuestionAssistant() {
 
   return (
     <AdminLayout title="AI Question Assistant" description="Generate and extract exam questions with AI">
-      <div className="flex flex-col h-[calc(100vh-180px)] space-y-4">
+      <div className="flex flex-col h-[calc(100vh-140px)] min-h-[600px] space-y-4 overflow-hidden">
         <div className="flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={() => navigate('/admin/questions')}>
             <ArrowLeft className="h-4 w-4 mr-2" />
@@ -338,7 +342,7 @@ export default function AIQuestionAssistant() {
                 AI Assistant (Groq Llama 3)
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 flex flex-col p-0 overflow-hidden">
+            <CardContent className="flex-1 flex flex-col p-0 overflow-hidden min-h-0">
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
                 {messages.map((m, i) => (
                   <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -407,7 +411,7 @@ export default function AIQuestionAssistant() {
           </Card>
 
           {/* Question Preview Area */}
-          <div className="lg:col-span-2 flex flex-col h-full overflow-hidden">
+          <div className="lg:col-span-2 flex flex-col h-full min-h-0 overflow-hidden">
             <Card className="flex flex-col h-full shadow-lg">
               <CardHeader className="flex flex-row items-center justify-between py-3 px-6 border-b">
                 <div>
@@ -421,7 +425,7 @@ export default function AIQuestionAssistant() {
                   </Button>
                 )}
               </CardHeader>
-              <CardContent className="flex-1 p-0 overflow-hidden">
+              <CardContent className="flex-1 p-0 overflow-hidden min-h-0">
                 {generatedQuestions.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-12 text-center">
                     <Sparkles className="h-12 w-12 mb-4 opacity-20" />
