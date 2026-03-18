@@ -151,6 +151,8 @@ export default function AIQuestionAssistant() {
       if (error) throw error;
       if (!data) throw new Error('No response from AI Assistant');
 
+      console.log('AI Response Data:', data);
+
       const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: data.content }];
       setMessages(newMessages);
 
@@ -179,8 +181,9 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
 
-      if (data.questions && data.questions.length > 0) {
-        const newQuestions = data.questions.map((q: any, idx: number) => ({
+      const questionsToProcess = Array.isArray(data.questions) ? data.questions : [];
+      if (questionsToProcess.length > 0) {
+        const newQuestions = questionsToProcess.map((q: any, idx: number) => ({
           ...q,
           id: Math.random().toString(36).substring(2, 11),
           questionNumber: generatedQuestions.length + idx + 1,
