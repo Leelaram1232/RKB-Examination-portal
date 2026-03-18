@@ -140,6 +140,13 @@ export default function AIQuestionAssistant() {
       if (!data) throw new Error('No response from AI Assistant');
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.content }]);
+      
+      // Clear the file after it's been processed once to avoid redundant OCR on every message
+      if (fileUrl) {
+        setFileUrl(null);
+        setFileName(null);
+      }
+
       if (data.questions && data.questions.length > 0) {
         const newQuestions = data.questions.map((q: any, idx: number) => ({
           ...q,

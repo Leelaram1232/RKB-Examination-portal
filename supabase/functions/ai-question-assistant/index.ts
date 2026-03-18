@@ -40,9 +40,9 @@ async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): P
 
   const { pdf_id } = await submitResp.json();
   
-  // Poll for completion
+  // Poll for completion (max 40s to leave room for Groq and network)
   let attempts = 0;
-  while (attempts < 60) {
+  while (attempts < 20) {
     const statusResp = await fetch(`https://api.mathpix.com/v3/pdf/${pdf_id}`, {
       headers: { 'app_id': appId, 'app_key': appKey },
     });
@@ -61,7 +61,7 @@ async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): P
     await new Promise(r => setTimeout(r, 2000));
     attempts++;
   }
-  throw new Error('Mathpix timed out');
+  throw new Error('OCR taking too long. Please wait a few seconds and try sending your message again.');
 }
 
 Deno.serve(async (req) => {
@@ -97,6 +97,12 @@ Deno.serve(async (req) => {
         try {
           ocrContext = await callMathpixPdf(file_url, mathpixId, mathpixKey);
           console.log('[Assistant] OCR success, length:', ocrContext.length);
+          
+          // Truncate extremely large OCR text to prevent memory crashes
+          if (ocrContext.length > 50000) {
+            console.log('[Assistant] Truncating OCR text from', ocrContext.length, 'to 50000');
+            ocrContext = ocrContext.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+          }
         } catch (e: any) {
           console.error('[Assistant] OCR failed:', e);
           ocrContext = `Error: Could not extract text from file: ${e.message}`;
@@ -105,10 +111,13 @@ Deno.serve(async (req) => {
     }
 
     // Ensure we don't send empty user messages to Groq
-    const sanitizedMessages = messages.map(m => ({
-      role: m.role,
-      content: m.content || (m.role === 'user' ? '[No text content provided]' : '')
-    }));
+    const sanitizedMessages = messages.map(m => {
+      // If a message is very long (e.g. from a previous OCR run), we might want to keep it but be careful
+      return {
+        role: m.role,
+        content: m.content || (m.role === 'user' ? '[No text content provided]' : '')
+      };
+    });
 
     const systemPrompt = `You are an expert Exam Question Assistant. 
 Your goal is to help administrators prepare questions for competitive exams like JEE/NEET.
