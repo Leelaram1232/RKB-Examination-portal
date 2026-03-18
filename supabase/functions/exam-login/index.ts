@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
         expected: expectedPassword,
       });
       return new Response(
-        JSON.stringify({ success: false, error: 'Invalid email or date of birth. Please check your credentials.' }),
+        JSON.stringify({ success: false, error: 'Invalid email or password. Please use your DOB (DDMMYY).' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

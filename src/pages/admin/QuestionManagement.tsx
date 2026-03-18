@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -66,6 +66,11 @@ interface Question {
   section_name: string;
   marks: number;
   subject_id: string | null;
+  image_url?: string | null;
+  option_a_image?: string | null;
+  option_b_image?: string | null;
+  option_c_image?: string | null;
+  option_d_image?: string | null;
 }
 
 interface Exam {
@@ -91,6 +96,11 @@ const defaultQuestion = {
   section_name: 'General',
   marks: 4,
   subject_id: null as string | null,
+  image_url: null as string | null,
+  option_a_image: null as string | null,
+  option_b_image: null as string | null,
+  option_c_image: null as string | null,
+  option_d_image: null as string | null,
 };
 
 const QuestionManagement = () => {
@@ -102,6 +112,7 @@ const QuestionManagement = () => {
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState<Partial<Question>>(defaultQuestion);
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>(examId || '');
@@ -150,7 +161,7 @@ const QuestionManagement = () => {
     
     if (!error && data) {
       const subs = data
-        .map((es: any) => es.subjects)
+        .map((es) => (es as { subjects: Subject | null }).subjects)
         .filter((s: Subject | null): s is Subject => s !== null);
       setExamSubjects(subs);
     } else {
@@ -206,6 +217,25 @@ const QuestionManagement = () => {
     }
   }, [selectedExamId]);
 
+  const uploadImageToQuestionUploads = async (file: File) => {
+    if (!selectedExamId) throw new Error('No exam selected');
+
+    const fileName = `${selectedExamId}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from('question-uploads')
+      .upload(fileName, file);
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data: publicData } = supabase.storage
+      .from('question-uploads')
+      .getPublicUrl(fileName);
+
+    return publicData.publicUrl as string;
+  };
+
   const handleSaveQuestion = async () => {
     if (!selectedExamId) {
       toast.error('Please select an exam first');
@@ -233,9 +263,11 @@ const QuestionManagement = () => {
       section_name: currentQuestion.section_name || 'General',
       marks: currentQuestion.marks || 4,
       subject_id: currentQuestion.subject_id || null,
+      image_url: currentQuestion.image_url || null,
     };
 
     let error;
+    let savedQuestionId: string | null = null;
 
     if (isEditing && currentQuestion.id) {
       const { error: updateError } = await supabase
@@ -243,19 +275,67 @@ const QuestionManagement = () => {
         .update(questionData)
         .eq('id', currentQuestion.id);
       error = updateError;
+      savedQuestionId = currentQuestion.id;
     } else {
-      const { error: insertError } = await supabase
+      const { error: insertError, data: inserted } = await supabase
         .from('questions')
-        .insert([questionData]);
+        .insert([questionData])
+        .select('id')
+        .single();
       error = insertError;
+      savedQuestionId = inserted?.id || null;
     }
 
-    setIsSaving(false);
-
     if (error) {
+      setIsSaving(false);
       toast.error(isEditing ? 'Failed to update question' : 'Failed to add question');
       console.error(error);
     } else {
+      // Save option images into `question_images`
+      if (savedQuestionId) {
+        const { error: deleteErr } = await supabase
+          .from('question_images')
+          .delete()
+          .eq('question_id', savedQuestionId)
+          .in('option_key', ['A', 'B', 'C', 'D']);
+
+        if (deleteErr) {
+          toast.error('Failed to clear existing option images');
+          console.error(deleteErr);
+          setIsSaving(false);
+          return;
+        }
+
+        const imageInserts: Array<{
+          question_id: string;
+          image_url: string;
+          image_type: string;
+          option_key: 'A' | 'B' | 'C' | 'D';
+          display_order: number;
+        }> = [];
+
+        const optA = currentQuestion.option_a_image || null;
+        const optB = currentQuestion.option_b_image || null;
+        const optC = currentQuestion.option_c_image || null;
+        const optD = currentQuestion.option_d_image || null;
+
+        if (optA) imageInserts.push({ question_id: savedQuestionId, image_url: optA, image_type: 'option', option_key: 'A', display_order: 1 });
+        if (optB) imageInserts.push({ question_id: savedQuestionId, image_url: optB, image_type: 'option', option_key: 'B', display_order: 1 });
+        if (optC) imageInserts.push({ question_id: savedQuestionId, image_url: optC, image_type: 'option', option_key: 'C', display_order: 1 });
+        if (optD) imageInserts.push({ question_id: savedQuestionId, image_url: optD, image_type: 'option', option_key: 'D', display_order: 1 });
+
+        if (imageInserts.length > 0) {
+          const { error: imageErr } = await supabase.from('question_images').insert(imageInserts);
+          if (imageErr) {
+            toast.error('Failed to save option images');
+            console.error(imageErr);
+            setIsSaving(false);
+            return;
+          }
+        }
+      }
+
+      setIsSaving(false);
       toast.success(isEditing ? 'Question updated' : 'Question added');
       setShowQuestionDialog(false);
       setCurrentQuestion(defaultQuestion);
@@ -265,9 +345,47 @@ const QuestionManagement = () => {
   };
 
   const handleEditQuestion = (question: Question) => {
-    setCurrentQuestion(question);
-    setIsEditing(true);
-    setShowQuestionDialog(true);
+    // Load existing option images so they can be edited/saved.
+    const loadImages = async () => {
+      setIsLoading(true);
+      try {
+        const { data: optImgs, error: imgsErr } = await supabase
+          .from('question_images')
+          .select('option_key, image_url')
+          .eq('question_id', question.id)
+          .in('option_key', ['A', 'B', 'C', 'D']);
+
+        if (imgsErr) {
+          toast.error('Failed to load option images for edit');
+          console.error(imgsErr);
+          setCurrentQuestion(question);
+          setIsEditing(true);
+          setShowQuestionDialog(true);
+          return;
+        }
+
+        const byKey: Record<string, string> = {};
+        (optImgs || []).forEach((img) => {
+          const key = (img as { option_key: string | null; image_url: string | null }).option_key;
+          const url = (img as { option_key: string | null; image_url: string | null }).image_url;
+          if (key && url) byKey[String(key).toUpperCase()] = url;
+        });
+
+        setCurrentQuestion({
+          ...question,
+          option_a_image: byKey['A'] || null,
+          option_b_image: byKey['B'] || null,
+          option_c_image: byKey['C'] || null,
+          option_d_image: byKey['D'] || null,
+        });
+      } finally {
+        setIsEditing(true);
+        setShowQuestionDialog(true);
+        setIsLoading(false);
+      }
+    };
+
+    void loadImages();
   };
 
   const handleDeleteQuestion = async (id: string) => {
@@ -323,7 +441,11 @@ const QuestionManagement = () => {
     setIsBulkUpdating(true);
 
     try {
-      const updateData: Record<string, any> = {};
+      const updateData: {
+        section_name?: string;
+        subject_id?: string | null;
+        marks?: number;
+      } = {};
       
       if (bulkEditField === 'section') {
         updateData.section_name = bulkEditValue;
@@ -733,8 +855,58 @@ const QuestionManagement = () => {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Image className="w-4 h-4 text-muted-foreground" />
+                  Question Image (optional)
+                </Label>
+                <Input
+                  type="file"
+                  accept="image/*"
+                  disabled={isSaving || isUploadingImage}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+
+                    setIsUploadingImage(true);
+                    try {
+                      const publicUrl = await uploadImageToQuestionUploads(file);
+                      setCurrentQuestion((curr) => ({ ...curr, image_url: publicUrl }));
+                      toast.success('Question image uploaded');
+                    } catch (err) {
+                      console.error(err);
+                      toast.error('Failed to upload question image');
+                    } finally {
+                      setIsUploadingImage(false);
+                    }
+                  }}
+                />
+
+                {currentQuestion.image_url && (
+                  <div className="space-y-2">
+                    <img
+                      src={currentQuestion.image_url}
+                      alt="Question diagram"
+                      className="max-h-40 w-full object-contain rounded border bg-white"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isSaving || isUploadingImage}
+                      onClick={() => setCurrentQuestion((curr) => ({ ...curr, image_url: null }))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label>Option A</Label>
                   <Input
                     value={currentQuestion.option_a || ''}
@@ -743,8 +915,51 @@ const QuestionManagement = () => {
                       option_a: e.target.value
                     })}
                   />
+                  <Label className="text-xs text-muted-foreground">Image (optional)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    disabled={isSaving || isUploadingImage}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingImage(true);
+                      try {
+                        const publicUrl = await uploadImageToQuestionUploads(file);
+                        setCurrentQuestion((curr) => ({ ...curr, option_a_image: publicUrl }));
+                        toast.success('Option A image uploaded');
+                      } catch (err) {
+                        console.error(err);
+                        toast.error('Failed to upload Option A image');
+                      } finally {
+                        setIsUploadingImage(false);
+                      }
+                    }}
+                  />
+                  {currentQuestion.option_a_image && (
+                    <div className="space-y-2">
+                      <img
+                        src={currentQuestion.option_a_image}
+                        alt="Option A diagram"
+                        className="max-h-32 w-full object-contain rounded border bg-white"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={isSaving || isUploadingImage}
+                        onClick={() => setCurrentQuestion((curr) => ({ ...curr, option_a_image: null }))}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div>
+
+                <div className="space-y-2">
                   <Label>Option B</Label>
                   <Input
                     value={currentQuestion.option_b || ''}
@@ -753,8 +968,51 @@ const QuestionManagement = () => {
                       option_b: e.target.value
                     })}
                   />
+                  <Label className="text-xs text-muted-foreground">Image (optional)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    disabled={isSaving || isUploadingImage}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingImage(true);
+                      try {
+                        const publicUrl = await uploadImageToQuestionUploads(file);
+                        setCurrentQuestion((curr) => ({ ...curr, option_b_image: publicUrl }));
+                        toast.success('Option B image uploaded');
+                      } catch (err) {
+                        console.error(err);
+                        toast.error('Failed to upload Option B image');
+                      } finally {
+                        setIsUploadingImage(false);
+                      }
+                    }}
+                  />
+                  {currentQuestion.option_b_image && (
+                    <div className="space-y-2">
+                      <img
+                        src={currentQuestion.option_b_image}
+                        alt="Option B diagram"
+                        className="max-h-32 w-full object-contain rounded border bg-white"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={isSaving || isUploadingImage}
+                        onClick={() => setCurrentQuestion((curr) => ({ ...curr, option_b_image: null }))}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div>
+
+                <div className="space-y-2">
                   <Label>Option C</Label>
                   <Input
                     value={currentQuestion.option_c || ''}
@@ -763,8 +1021,51 @@ const QuestionManagement = () => {
                       option_c: e.target.value
                     })}
                   />
+                  <Label className="text-xs text-muted-foreground">Image (optional)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    disabled={isSaving || isUploadingImage}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingImage(true);
+                      try {
+                        const publicUrl = await uploadImageToQuestionUploads(file);
+                        setCurrentQuestion((curr) => ({ ...curr, option_c_image: publicUrl }));
+                        toast.success('Option C image uploaded');
+                      } catch (err) {
+                        console.error(err);
+                        toast.error('Failed to upload Option C image');
+                      } finally {
+                        setIsUploadingImage(false);
+                      }
+                    }}
+                  />
+                  {currentQuestion.option_c_image && (
+                    <div className="space-y-2">
+                      <img
+                        src={currentQuestion.option_c_image}
+                        alt="Option C diagram"
+                        className="max-h-32 w-full object-contain rounded border bg-white"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={isSaving || isUploadingImage}
+                        onClick={() => setCurrentQuestion((curr) => ({ ...curr, option_c_image: null }))}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div>
+
+                <div className="space-y-2">
                   <Label>Option D</Label>
                   <Input
                     value={currentQuestion.option_d || ''}
@@ -773,6 +1074,48 @@ const QuestionManagement = () => {
                       option_d: e.target.value
                     })}
                   />
+                  <Label className="text-xs text-muted-foreground">Image (optional)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    disabled={isSaving || isUploadingImage}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingImage(true);
+                      try {
+                        const publicUrl = await uploadImageToQuestionUploads(file);
+                        setCurrentQuestion((curr) => ({ ...curr, option_d_image: publicUrl }));
+                        toast.success('Option D image uploaded');
+                      } catch (err) {
+                        console.error(err);
+                        toast.error('Failed to upload Option D image');
+                      } finally {
+                        setIsUploadingImage(false);
+                      }
+                    }}
+                  />
+                  {currentQuestion.option_d_image && (
+                    <div className="space-y-2">
+                      <img
+                        src={currentQuestion.option_d_image}
+                        alt="Option D diagram"
+                        className="max-h-32 w-full object-contain rounded border bg-white"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={isSaving || isUploadingImage}
+                        onClick={() => setCurrentQuestion((curr) => ({ ...curr, option_d_image: null }))}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 

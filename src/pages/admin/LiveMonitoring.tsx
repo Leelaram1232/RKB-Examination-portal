@@ -95,49 +95,78 @@ const LiveMonitoring = () => {
 
     setExam(resolvedExam);
 
-    const fetchLiveSessionsFrom = async (client: typeof supabase) => {
-      // Fetch registrations for this exam (so we can map sessions -> student info without fragile joins)
+    const fetchRegsAndProfiles = async (client: typeof supabase) => {
       const { data: regs, error: regErr } = await client
         .from('registrations')
         .select('id, registration_number, student_id')
         .eq('exam_id', examId);
 
-      if (regErr) return [];
+      if (regErr || !regs || regs.length === 0) {
+        return { regMap: new Map<string, any>(), profileMap: new Map<string, any>() };
+      }
 
-      const regIds = (regs || []).map((r: any) => r.id);
-      if (regIds.length === 0) return [];
+      const regMap = new Map<string, any>(regs.map((r: any) => [r.id, r]));
+      const studentIds = [...new Set(regs.map((r: any) => r.student_id).filter(Boolean))];
 
-      const studentIds = [...new Set((regs || []).map((r: any) => r.student_id).filter(Boolean))];
+      if (studentIds.length === 0) {
+        return { regMap, profileMap: new Map<string, any>() };
+      }
 
-      // Fetch student profiles
-      const { data: profiles } = await client
+      const { data: profiles, error: profilesErr } = await client
         .from('profiles')
         .select('id, full_name, email')
         .in('id', studentIds);
 
-      const regMap = new Map((regs || []).map((r: any) => [r.id, r]));
-      const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+      if (profilesErr || !profiles) {
+        return { regMap, profileMap: new Map<string, any>() };
+      }
 
-      // Fetch active sessions
+      const profileMap = new Map<string, any>(profiles.map((p: any) => [p.id, p]));
+      return { regMap, profileMap };
+    };
+
+    // Some deployments have sessions in one DB and registrations/profiles in another.
+    // Merge both sources so we can still load active sessions reliably.
+    const internalData = await fetchRegsAndProfiles(supabase);
+    const externalData = await fetchRegsAndProfiles(externalSupabase as any);
+
+    const regMapMerged = new Map<string, any>(internalData.regMap);
+    for (const [id, reg] of externalData.regMap.entries()) {
+      if (!regMapMerged.has(id)) regMapMerged.set(id, reg);
+    }
+
+    const profileMapMerged = new Map<string, any>(internalData.profileMap);
+    for (const [id, profile] of externalData.profileMap.entries()) {
+      if (!profileMapMerged.has(id)) profileMapMerged.set(id, profile);
+    }
+
+    const allRegIds = Array.from(regMapMerged.keys());
+    if (allRegIds.length === 0) {
+      setSessions([]);
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchActiveSessions = async (client: typeof supabase) => {
       const { data: sessionsData, error: sessionsError } = await client
         .from('exam_sessions')
         .select(
           'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
         )
-        .in('registration_id', regIds)
+        .in('registration_id', allRegIds)
         // Include running exams + auto-submitted sessions (even if completed=true)
         .or('is_completed.eq.false,is_auto_submitted.eq.true')
-        .not('start_time', 'is', null)
         .order('start_time', { ascending: false });
 
-      if (sessionsError) return [];
+      if (sessionsError || !sessionsData) return [];
 
       return await Promise.all(
-        (sessionsData || []).map(async (s: any) => {
-          const reg = regMap.get(s.registration_id);
-          const profile = reg?.student_id ? profileMap.get(reg.student_id) : null;
-          const snapshotUrl = await getSignedUrl(s.latest_snapshot_url || null);
-          const screenUrl = await getSignedUrl(s.latest_screen_url || null);
+        sessionsData.map(async (s: any) => {
+          const reg = regMapMerged.get(s.registration_id);
+          const profile = reg?.student_id ? profileMapMerged.get(reg.student_id) : null;
+          const snapshotUrl = await getSignedUrl(client, s.latest_snapshot_url || null);
+          const screenUrl = await getSignedUrl(client, s.latest_screen_url || null);
+
           return {
             ...s,
             registration: {
@@ -155,16 +184,21 @@ const LiveMonitoring = () => {
       );
     };
 
-    // Internal first, fallback external.
-    const internalSessions = await fetchLiveSessionsFrom(supabase);
-    if (internalSessions.length > 0) {
-      setSessions(internalSessions);
-      setIsLoading(false);
-      return;
-    }
+    const internalSessions = await fetchActiveSessions(supabase);
+    const externalSessions = await fetchActiveSessions(externalSupabase as any);
 
-    const externalSessions = await fetchLiveSessionsFrom(externalSupabase as any);
-    setSessions(externalSessions);
+    // Deduplicate by session id; prefer internal version if both exist.
+    const byId = new Map<string, ActiveSession>();
+    for (const s of internalSessions) byId.set(s.id, s);
+    for (const s of externalSessions) if (!byId.has(s.id)) byId.set(s.id, s);
+
+    const merged = Array.from(byId.values()).sort((a, b) => {
+      const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+      const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+      return bt - at;
+    });
+
+    setSessions(merged);
     setIsLoading(false);
   };
 
@@ -202,9 +236,9 @@ const LiveMonitoring = () => {
     };
   }, [examId]);
 
-  const getSignedUrl = async (path: string | null) => {
+  const getSignedUrl = async (client: typeof supabase, path: string | null) => {
     if (!path) return null;
-    const { data, error } = await supabase.storage
+    const { data, error } = await client.storage
       .from('proctoring-snapshots')
       .createSignedUrl(path, 60 * 5); // 5 minutes
     if (error) {

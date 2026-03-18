@@ -48,8 +48,10 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Normalize password (allow users to type DD-MM-YY etc)
+    const enteredDigits = String(data.password || '').replace(/\D/g, '');
     // Validate password format (should be 6 digits)
-    if (!/^\d{6}$/.test(data.password)) {
+    if (enteredDigits.length !== 6) {
       return new Response(
         JSON.stringify({ success: false, error: 'Invalid password format. Use DDMMYY (e.g., 150100)' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -108,9 +110,9 @@ Deno.serve(async (req) => {
       String(dob.getMonth() + 1).padStart(2, '0') +
       String(dob.getFullYear()).slice(-2);
 
-    if (data.password !== expectedPassword) {
+    if (enteredDigits !== expectedPassword) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Invalid password. Use your date of birth in DDMMYY format.' }),
+        JSON.stringify({ success: false, error: 'Invalid password. Please use your DOB (DDMMYY).' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
