@@ -703,13 +703,39 @@ export default function ExamInterface() {
 
   // Show blocked overlay if blocked
   if (isBlocked) {
+    const last = violations.length > 0 ? violations[violations.length - 1] : null;
     return (
       <ExamBlockedOverlay 
         violationCount={violationCount} 
         maxViolations={maxViolations} 
+        reason={last?.type || lastViolationType || 'Maximum violations exceeded'}
+        recentViolations={violations.map(v => ({ type: v.type, timestamp: v.timestamp }))}
       />
     );
   }
+
+  // If blocked, poll for admin unblock/resume so the student can continue without refresh.
+  useEffect(() => {
+    if (!session || !isBlocked) return;
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('exam_sessions')
+          .select('is_blocked, exam_status')
+          .eq('id', session.session_id)
+          .maybeSingle();
+
+        if (data && data.is_blocked === false && data.exam_status === 'resumed') {
+          setIsBlocked(false);
+          // Re-enter fullscreen and continue
+          enterFullscreen();
+        }
+      } catch {
+        // ignore
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [session, isBlocked, enterFullscreen]);
 
   if (isLoading || !session || !endTime) {
     return (

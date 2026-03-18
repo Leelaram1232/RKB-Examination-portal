@@ -487,7 +487,7 @@ const SessionManagement = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Allow Student to Continue Exam?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will reset the student's violation count and allow them to continue their exam.
+              This will unblock the session and allow the student to continue their exam.
               The student will need to log in again to resume.
               <br /><br />
               <strong>Student:</strong> {selectedSession?.registration.student.full_name}

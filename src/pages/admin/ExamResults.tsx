@@ -82,6 +82,7 @@ export default function ExamResults() {
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishing, setIsPublishing] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [showUnpublishDialog, setShowUnpublishDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [sections, setSections] = useState<string[]>([]);
   const [isRecalculating, setIsRecalculating] = useState<string | null>(null);
@@ -236,6 +237,33 @@ export default function ExamResults() {
 
     toast.success('Results published successfully!');
     setExamInfo((prev) => prev ? { ...prev, results_published: true, results_published_at: new Date().toISOString() } : null);
+  };
+
+  const handleUnpublishResults = async () => {
+    if (!examId) return;
+
+    setIsPublishing(true);
+
+    const { error } = await supabase
+      .from('exams')
+      .update({
+        results_published: false,
+        results_published_at: null,
+      })
+      .eq('id', examId);
+
+    setIsPublishing(false);
+    setShowUnpublishDialog(false);
+
+    if (error) {
+      toast.error('Failed to unpublish results');
+      return;
+    }
+
+    toast.success('Results unpublished. You can make changes and publish again.');
+    setExamInfo((prev) =>
+      prev ? { ...prev, results_published: false, results_published_at: null } : null
+    );
   };
 
   const handleRecalculate = async (sessionId: string) => {
@@ -792,11 +820,25 @@ export default function ExamResults() {
               </Button>
             </>
           )}
-          {!examInfo.results_published && results.length > 0 && (
-            <Button onClick={() => setShowPublishDialog(true)}>
-              <CheckCircle className="w-4 h-4 mr-2" />
-              Publish Results
-            </Button>
+          {results.length > 0 && (
+            <>
+              {examInfo.results_published ? (
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setShowUnpublishDialog(true)} disabled={isPublishing}>
+                    Unpublish
+                  </Button>
+                  <Button onClick={() => setShowPublishDialog(true)} disabled={isPublishing}>
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Publish Again
+                  </Button>
+                </div>
+              ) : (
+                <Button onClick={() => setShowPublishDialog(true)} disabled={isPublishing}>
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Publish Results
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -945,6 +987,29 @@ export default function ExamResults() {
             <AlertDialogCancel disabled={isPublishing}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handlePublishResults} disabled={isPublishing}>
               {isPublishing ? 'Publishing...' : 'Yes, Publish Results'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unpublish Confirmation Dialog */}
+      <AlertDialog open={showUnpublishDialog} onOpenChange={setShowUnpublishDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unpublish Results?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will hide the results from students immediately.
+              You can make changes (recalculate, delete incorrect entries, update rankings) and then publish again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPublishing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUnpublishResults}
+              disabled={isPublishing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isPublishing ? 'Unpublishing...' : 'Yes, Unpublish'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

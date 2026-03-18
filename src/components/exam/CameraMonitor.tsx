@@ -10,7 +10,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface CameraMonitorProps {
   onViolation: (type: string) => void;
@@ -33,6 +32,8 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const faceCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptRef = useRef(0);
+  const lastAiActionRef = useRef<{ key: string; at: number } | null>(null);
+  const [warningMessage, setWarningMessage] = useState<string>('Don\'t rotate your head. Focus on the exam.');
 
   // Request camera access with reconnection logic
   const requestCameraAccess = useCallback(async (retryCount = 0) => {
@@ -65,7 +66,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
     }
   }, []);
 
-  // Capture and upload snapshot
+  // Capture and upload snapshot (to internal Supabase so admin live monitoring can see it)
   const captureSnapshot = useCallback(async () => {
     if (!videoRef.current || !sessionId || videoRef.current.readyState !== 4) return;
 
@@ -87,7 +88,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       const timestamp = Date.now();
       const filePath = `${sessionId}/${timestamp}.jpg`;
 
-      const { error: uploadError } = await externalSupabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('proctoring-snapshots')
         .upload(filePath, blob, {
           contentType: 'image/jpeg',
@@ -100,7 +101,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       }
 
       // Update session with latest snapshot URL
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           latest_snapshot_url: filePath,
@@ -121,7 +122,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
     const isActive = stream && stream.active && stream.getVideoTracks().some(t => t.readyState === 'live');
     
     try {
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           camera_heartbeat_at: new Date().toISOString(),
@@ -145,10 +146,10 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
       if (!ctx) return;
 
       ctx.drawImage(videoRef.current, 0, 0, 320, 240);
-      const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
+      const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
-      const { data, error } = await invokeExternalFunction<any>('analyze-faces', {
-        sessionId, imageBase64
+      const { data, error } = await supabase.functions.invoke<any>('analyze-faces', {
+        body: { session_id: sessionId, image_data: imageData }
       });
 
       if (error) {
@@ -156,16 +157,62 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
         return;
       }
 
-      if (data?.multipleFaces) {
-        setShowMultiFaceWarning(true);
-        onViolation('Multiple Faces Detected');
-        
-        // Auto-submit after 3 seconds
-        setTimeout(() => {
-          if (onAutoSubmit) {
-            onAutoSubmit();
-          }
-        }, 3000);
+      const analysis = data?.analysis;
+      const violations: string[] = Array.isArray(data?.violations) ? data.violations : [];
+
+      // Light policy tuning:
+      // - slight head rotation => warning only (no violation count)
+      // - significant head rotation OR looking away => violation
+      // - multiple faces => critical + auto-submit
+      // - suspicious objects containing phone/mobile => critical + auto-submit
+
+      // Warning-only (no DB violation)
+      if (analysis?.head_rotation === 'slight' || analysis?.looking_at_screen === false) {
+        setWarningMessage('Please face the camera and focus on the exam.');
+        setShowWarningDialog(true);
+      }
+
+      const isMultipleFaces = !!data?.multiple_faces || violations.includes('Multiple Faces Detected');
+      const suspicious = Array.isArray(analysis?.suspicious_objects) ? analysis.suspicious_objects.join(', ').toLowerCase() : '';
+      const hasPhone = suspicious.includes('phone') || suspicious.includes('mobile');
+      const isSignificantRotation = analysis?.head_rotation === 'significant';
+
+      // Rate-limit AI triggered actions to avoid spamming counts
+      const now = Date.now();
+      const actionKey = isMultipleFaces
+        ? 'critical:multiple_faces'
+        : hasPhone
+          ? 'critical:phone'
+          : isSignificantRotation
+            ? 'violation:looking_away'
+            : '';
+
+      const recentlyTriggered =
+        lastAiActionRef.current &&
+        lastAiActionRef.current.key === actionKey &&
+        now - lastAiActionRef.current.at < 25_000;
+
+      if (actionKey && !recentlyTriggered) {
+        lastAiActionRef.current = { key: actionKey, at: now };
+
+        if (isMultipleFaces) {
+          setShowMultiFaceWarning(true);
+          onViolation('Multiple Faces Detected');
+          setTimeout(() => onAutoSubmit?.(), 3000);
+          return;
+        }
+
+        if (hasPhone) {
+          setWarningMessage('Phone detected. This is a critical violation.');
+          setShowWarningDialog(true);
+          onViolation('Phone Detected');
+          setTimeout(() => onAutoSubmit?.(), 3000);
+          return;
+        }
+
+        if (isSignificantRotation) {
+          onViolation('Looking Away Detected');
+        }
       }
     } catch (error) {
       console.error('Error in face analysis:', error);
@@ -421,7 +468,7 @@ export const CameraMonitor = ({ onViolation, onAutoSubmit, isEnabled, sessionId,
               Warning!
             </AlertDialogTitle>
             <AlertDialogDescription className="text-lg font-medium text-black">
-              Don't rotate your head. Focus on the exam.
+              {warningMessage}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

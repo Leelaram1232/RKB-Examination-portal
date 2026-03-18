@@ -31,6 +31,7 @@ interface ActiveSession {
   violation_count: number;
   latest_snapshot_url: string | null;
   snapshot_updated_at: string | null;
+  latest_screen_url?: string | null;
   camera_status: string | null;
   camera_heartbeat_at: string | null;
   registration: {
@@ -90,6 +91,7 @@ const LiveMonitoring = () => {
         violation_count,
         latest_snapshot_url,
         snapshot_updated_at,
+        latest_screen_url,
         camera_status,
         camera_heartbeat_at,
         registration:registrations!registrations_exam_id_fkey(
@@ -357,6 +359,28 @@ const LiveMonitoring = () => {
                       </div>
                     );
                   })()}
+                </div>
+
+                {/* Screen Capture Preview */}
+                <div className="relative aspect-video bg-muted border-t">
+                  {session.latest_screen_url ? (
+                    <img
+                      src={getSnapshotUrl(session.latest_screen_url) || ''}
+                      alt={`${session.registration.student.full_name}'s screen`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
+                      <VideoOff className="w-8 h-8 mb-2" />
+                      <span className="text-xs">No screen capture</span>
+                    </div>
+                  )}
+                  <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                    SCREEN
+                  </div>
                 </div>
 
                 <CardContent className="p-4">
