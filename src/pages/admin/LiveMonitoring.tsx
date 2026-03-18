@@ -22,16 +22,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { externalSupabase } from '@/lib/externalSupabase';
 
 interface ActiveSession {
   id: string;
   registration_id: string;
   start_time: string | null;
   is_completed: boolean;
+  is_auto_submitted: boolean | null;
   violation_count: number;
   latest_snapshot_url: string | null;
   snapshot_updated_at: string | null;
   latest_screen_url?: string | null;
+  snapshotUrl?: string | null;
+  screenUrl?: string | null;
   camera_status: string | null;
   camera_heartbeat_at: string | null;
   registration: {
@@ -72,59 +76,95 @@ const LiveMonitoring = () => {
       .eq('id', examId)
       .single();
 
+    let resolvedExam = examData;
     if (examError || !examData) {
+      // Fallback: some setups may have exams/sessions on external DB.
+      const { data: extExamData, error: extExamError } = await externalSupabase
+        .from('exams')
+        .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
+        .eq('id', examId)
+        .single();
+      if (!extExamError && extExamData) resolvedExam = extExamData;
+    }
+
+    if (!resolvedExam) {
       toast.error('Exam not found');
       navigate('/admin/exams');
       return;
     }
 
-    setExam(examData);
+    setExam(resolvedExam);
 
-    // Fetch active sessions with camera heartbeat info
-    const { data: sessionsData, error: sessionsError } = await supabase
-      .from('exam_sessions')
-      .select(`
-        id,
-        registration_id,
-        start_time,
-        is_completed,
-        violation_count,
-        latest_snapshot_url,
-        snapshot_updated_at,
-        latest_screen_url,
-        camera_status,
-        camera_heartbeat_at,
-        registration:registrations!registrations_exam_id_fkey(
-          registration_number,
-          exam_id,
-          student:profiles!registrations_student_id_profiles_fkey(
-            full_name,
-            email
-          )
+    const fetchLiveSessionsFrom = async (client: typeof supabase) => {
+      // Fetch registrations for this exam (so we can map sessions -> student info without fragile joins)
+      const { data: regs, error: regErr } = await client
+        .from('registrations')
+        .select('id, registration_number, student_id')
+        .eq('exam_id', examId);
+
+      if (regErr) return [];
+
+      const regIds = (regs || []).map((r: any) => r.id);
+      if (regIds.length === 0) return [];
+
+      const studentIds = [...new Set((regs || []).map((r: any) => r.student_id).filter(Boolean))];
+
+      // Fetch student profiles
+      const { data: profiles } = await client
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', studentIds);
+
+      const regMap = new Map((regs || []).map((r: any) => [r.id, r]));
+      const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+
+      // Fetch active sessions
+      const { data: sessionsData, error: sessionsError } = await client
+        .from('exam_sessions')
+        .select(
+          'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
         )
-      `)
-      .eq('registration.exam_id', examId)
-      .eq('is_completed', false)
-      .not('start_time', 'is', null)
-      .order('start_time', { ascending: false });
+        .in('registration_id', regIds)
+        // Include running exams + auto-submitted sessions (even if completed=true)
+        .or('is_completed.eq.false,is_auto_submitted.eq.true')
+        .not('start_time', 'is', null)
+        .order('start_time', { ascending: false });
 
-    if (sessionsError) {
-      console.error('Error fetching sessions:', sessionsError);
-    } else {
-      const transformedSessions = (sessionsData || []).map((s: any) => ({
-        ...s,
-        registration: {
-          registration_number: s.registration?.registration_number || 'N/A',
-          student: {
-            id: s.registration?.student?.id || '',
-            full_name: s.registration?.student?.full_name || 'Unknown',
-            email: s.registration?.student?.email || 'N/A',
-          },
-        },
-      }));
-      setSessions(transformedSessions);
+      if (sessionsError) return [];
+
+      return await Promise.all(
+        (sessionsData || []).map(async (s: any) => {
+          const reg = regMap.get(s.registration_id);
+          const profile = reg?.student_id ? profileMap.get(reg.student_id) : null;
+          const snapshotUrl = await getSignedUrl(s.latest_snapshot_url || null);
+          const screenUrl = await getSignedUrl(s.latest_screen_url || null);
+          return {
+            ...s,
+            registration: {
+              registration_number: reg?.registration_number || 'N/A',
+              student: {
+                id: reg?.student_id || '',
+                full_name: profile?.full_name || 'Unknown',
+                email: profile?.email || 'N/A',
+              },
+            },
+            snapshotUrl,
+            screenUrl,
+          };
+        })
+      );
+    };
+
+    // Internal first, fallback external.
+    const internalSessions = await fetchLiveSessionsFrom(supabase);
+    if (internalSessions.length > 0) {
+      setSessions(internalSessions);
+      setIsLoading(false);
+      return;
     }
 
+    const externalSessions = await fetchLiveSessionsFrom(externalSupabase as any);
+    setSessions(externalSessions);
     setIsLoading(false);
   };
 
@@ -162,10 +202,16 @@ const LiveMonitoring = () => {
     };
   }, [examId]);
 
-  const getSnapshotUrl = (path: string | null) => {
+  const getSignedUrl = async (path: string | null) => {
     if (!path) return null;
-    const { data } = supabase.storage.from('proctoring-snapshots').getPublicUrl(path);
-    return data?.publicUrl;
+    const { data, error } = await supabase.storage
+      .from('proctoring-snapshots')
+      .createSignedUrl(path, 60 * 5); // 5 minutes
+    if (error) {
+      console.error('Signed URL error:', error);
+      return null;
+    }
+    return data?.signedUrl || null;
   };
 
   const getViolationColor = (count: number, max: number) => {
@@ -313,10 +359,10 @@ const LiveMonitoring = () => {
               >
                 {/* Camera Preview */}
                 <div className="relative aspect-video bg-muted">
-                  {session.latest_snapshot_url ? (
+                  {session.snapshotUrl ? (
                     <>
                       <img
-                        src={getSnapshotUrl(session.latest_snapshot_url) || ''}
+                        src={session.snapshotUrl || ''}
                         alt={`${session.registration.student.full_name}'s camera`}
                         className="w-full h-full object-cover"
                         onError={(e) => {
@@ -327,7 +373,7 @@ const LiveMonitoring = () => {
                         size="sm"
                         variant="secondary"
                         className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                        onClick={() => setSelectedSnapshot(getSnapshotUrl(session.latest_snapshot_url))}
+                        onClick={() => setSelectedSnapshot(session.snapshotUrl || null)}
                       >
                         <Maximize2 className="w-3 h-3" />
                       </Button>
@@ -363,9 +409,9 @@ const LiveMonitoring = () => {
 
                 {/* Screen Capture Preview */}
                 <div className="relative aspect-video bg-muted border-t">
-                  {session.latest_screen_url ? (
+                  {session.screenUrl ? (
                     <img
-                      src={getSnapshotUrl(session.latest_screen_url) || ''}
+                      src={session.screenUrl || ''}
                       alt={`${session.registration.student.full_name}'s screen`}
                       className="w-full h-full object-cover"
                       onError={(e) => {

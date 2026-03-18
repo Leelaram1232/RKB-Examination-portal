@@ -17,9 +17,35 @@ interface AssistantRequest {
   subject_id?: string;
 }
 
-async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): Promise<string> {
+type GroqChatCompletion = {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+};
+
+async function callMathpixPdf(
+  fileUrl: string,
+  appId: string,
+  appKey: string,
+  pageRanges?: string
+): Promise<string> {
   console.log('[Mathpix] Submitting PDF for processing:', fileUrl);
-  
+
+  // Use polling (no SSE) to avoid Mathpix streaming 504s/compute limits.
+  // We request a lightweight text format (`md`) rather than `mmd` to reduce compute.
+  const submitBody: Record<string, unknown> = {
+    url: fileUrl,
+    conversion_formats: { md: true },
+    enable_tables_fallback: true,
+    include_diagram_text: true,
+  };
+
+  if (pageRanges) {
+    submitBody.page_ranges = pageRanges;
+  }
+
   const submitResp = await fetch('https://api.mathpix.com/v3/pdf', {
     method: 'POST',
     headers: {
@@ -27,10 +53,7 @@ async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): P
       'app_key': appKey,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      url: fileUrl,
-      conversion_formats: { mmd: true },
-    }),
+    body: JSON.stringify(submitBody),
   });
 
   if (!submitResp.ok) {
@@ -39,29 +62,132 @@ async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): P
   }
 
   const { pdf_id } = await submitResp.json();
-  
-  // Poll for completion (max 40s to leave room for Groq and network)
-  let attempts = 0;
-  while (attempts < 20) {
+
+  const maxAttempts = (() => {
+    const raw = Deno.env.get('MATHPIX_MAX_ATTEMPTS') || '40';
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 40;
+  })();
+
+  const pollIntervalMs = (() => {
+    const raw = Deno.env.get('MATHPIX_POLL_INTERVAL_MS') || '1500';
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1500;
+  })();
+
+  for (let attempts = 0; attempts < maxAttempts; attempts++) {
     const statusResp = await fetch(`https://api.mathpix.com/v3/pdf/${pdf_id}`, {
       headers: { 'app_id': appId, 'app_key': appKey },
     });
-    
+
     if (statusResp.ok) {
       const statusData = await statusResp.json();
+      if (attempts < 3 || attempts === maxAttempts - 1) {
+        console.log('[Mathpix] Status:', {
+          attempt: attempts + 1,
+          maxAttempts,
+          status: statusData?.status,
+        });
+      }
+
       if (statusData.status === 'completed') {
-        const mmdResp = await fetch(`https://api.mathpix.com/v3/pdf/${pdf_id}.mmd`, {
+        const mdResp = await fetch(`https://api.mathpix.com/v3/pdf/${pdf_id}.md`, {
           headers: { 'app_id': appId, 'app_key': appKey },
         });
-        return await mmdResp.text();
-      } else if (statusData.status === 'failed') {
-        throw new Error(`Mathpix processing failed`);
+        if (!mdResp.ok) {
+          throw new Error(`Mathpix md download failed (${mdResp.status})`);
+        }
+
+        const mdText = await mdResp.text();
+
+        // Diagram label OCR is stored inside `lines.json` (not always included in `md`/mmd),
+        // so we append it to the OCR context to improve question generation from diagrams/tables.
+        let linesText = '';
+        try {
+          const linesResp = await fetch(
+            `https://api.mathpix.com/v3/pdf/${pdf_id}.lines.json`,
+            { headers: { 'app_id': appId, 'app_key': appKey } }
+          );
+          if (linesResp.ok) {
+            const linesJson: any = await linesResp.json();
+            const pages = Array.isArray(linesJson?.pages) ? linesJson.pages : [];
+            const maxChars = 20000;
+            for (const page of pages) {
+              const lines = Array.isArray(page?.lines) ? page.lines : [];
+              for (const line of lines) {
+                const t =
+                  (typeof line?.text_display === 'string' && line.text_display.trim()
+                    ? line.text_display
+                    : typeof line?.text === 'string'
+                      ? line.text
+                      : '') || '';
+                if (t.trim()) linesText += t.trim() + '\n';
+                if (linesText.length > maxChars) break;
+              }
+              if (linesText.length > maxChars) break;
+            }
+          }
+        } catch (_e) {
+          // Non-fatal: continue with mdText only.
+        }
+
+        return linesText ? `${mdText}\n\n[LINES_JSON]\n${linesText}` : mdText;
       }
+
+      if (statusData.status === 'failed') {
+        throw new Error(
+          `Mathpix processing failed: ${statusData?.error || statusData?.message || 'unknown error'}`
+        );
+      }
+    } else if (statusResp.status === 504) {
+      console.warn('[Mathpix] Status check 504. Retrying...');
     }
-    await new Promise(r => setTimeout(r, 2000));
-    attempts++;
+
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  throw new Error('OCR taking too long. Please wait a few seconds and try sending your message again.');
+
+  throw new Error(
+    'OCR taking too long for the selected page range. Please resend with a smaller range like "pages 1-10" or "pages 1-5".'
+  );
+}
+
+function extractPageRangesFromPrompt(text: string): string | null {
+  const t = (text || '').toLowerCase().trim();
+  if (!t) return null;
+
+  // User intent shortcuts
+  if (
+    t.includes('everything') ||
+    t.includes('all pages') ||
+    t.includes('all page') ||
+    t.includes('entire pdf') ||
+    t.includes('whole pdf') ||
+    t.includes('whole document')
+  ) {
+    // Mathpix can hit compute limits for large ranges.
+    // Start with a larger-but-safe chunk first; user can request the next chunk later.
+    return '1-20';
+  }
+
+  // Examples:
+  // "page 1-10"
+  // "pages 1 to 5"
+  const rangeMatch = t.match(/pages?\s*(\d+)\s*(?:-|to)\s*(\d+)/i);
+  if (rangeMatch) {
+    const a = rangeMatch[1];
+    const b = rangeMatch[2];
+    return `${a}-${b}`;
+  }
+
+  // Example:
+  // "pages 1,2,3"
+  const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
+  if (listMatch) {
+    const cleaned = listMatch[1].replace(/\s+/g, '');
+    if (cleaned) return cleaned;
+  }
+
+  return null;
 }
 
 Deno.serve(async (req) => {
@@ -89,25 +215,53 @@ Deno.serve(async (req) => {
     }
 
     let ocrContext = '';
+    let ocrError: string | null = null;
+    const lastUserMessage =
+      [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+    const requestedPageRanges = extractPageRangesFromPrompt(lastUserMessage);
+    // Mathpix can time out on whole large PDFs, so default to a small chunk.
+    const pageRangesToUse = requestedPageRanges || '1-10';
     if (file_url) {
       if (!mathpixId || !mathpixKey) {
         console.warn('[Assistant] File uploaded but Mathpix keys are missing.');
-        ocrContext = 'Error: Mathpix OCR keys not configured on server.';
+        ocrError = 'Mathpix OCR keys not configured on server.';
       } else {
         try {
-          ocrContext = await callMathpixPdf(file_url, mathpixId, mathpixKey);
+          ocrContext = await callMathpixPdf(
+            file_url,
+            mathpixId,
+            mathpixKey,
+            pageRangesToUse
+          );
           console.log('[Assistant] OCR success, length:', ocrContext.length);
+
+          // Quick sanity log so we can confirm OCR text arrived.
+          console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
           
           // Truncate extremely large OCR text to prevent memory crashes
           if (ocrContext.length > 50000) {
             console.log('[Assistant] Truncating OCR text from', ocrContext.length, 'to 50000');
             ocrContext = ocrContext.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
           }
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error('[Assistant] OCR failed:', e);
-          ocrContext = `Error: Could not extract text from file: ${e.message}`;
+          const msg = e instanceof Error ? e.message : String(e);
+          ocrError = `Could not extract text from file: ${msg}`;
         }
       }
+    }
+
+    // If OCR fails, don't let the model hallucinate random questions.
+    if (file_url && ocrError) {
+      return new Response(
+        JSON.stringify({
+          content: `OCR failed for pages ${pageRangesToUse}. ${ocrError}`,
+          questions: [],
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
     }
 
     // Ensure we don't send empty user messages to Groq
@@ -127,10 +281,12 @@ Generate or extract high-quality questions based on the provided context or prom
 2. **FILL_BLANK**: Only if requested. No options required. Needs correct_answer.
 
 ### CRITICAL OUTPUT RULES
-- **JSON ONLY**: When generating questions, DO NOT list them in plain text. Only provide a brief introductory sentence, followed by the structured JSON block.
-- **TAGS**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags at the very end of your response.
+- **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output N question objects (never output only an intro sentence).
+- **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
+- **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
 - **MCQ IS DEFAULT**: Unless "numerical" or "fill in blank" is requested, always stick to MCQ.
 - **AVOID REPETITION**: Never repeat a question from the conversation history.
+- **USE OCR FIRST**: If OCR Extracted Content is provided (file uploaded), you MUST generate questions strictly from that OCR text. Do not invent unrelated questions.
 
 ### JSON SCHEMA
 [
@@ -155,62 +311,175 @@ Exam ID: ${exam_id || 'Not specified'}`;
       ...sanitizedMessages
     ];
 
-    console.log('[Assistant] Calling Groq with model: llama-3.3-70b-versatile');
-    const groqResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${groqKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: groqMessages,
-        temperature: 0.2,
-      }),
-    });
+    async function callGroq(
+      messages: { role: string; content: string }[],
+      temperature = 0.2
+    ): Promise<GroqChatCompletion> {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages,
+          temperature,
+        }),
+      });
 
-    if (!groqResp.ok) {
-      const errText = await groqResp.text();
-      let errJson;
-      try { errJson = JSON.parse(errText); } catch(e) {}
-      const errMsg = errJson?.error?.message || errText;
-      console.error('[Assistant] Groq API returned error:', errMsg);
-      throw new Error(`Groq API Error: ${errMsg}`);
+      const text = await resp.text();
+      if (!resp.ok) {
+        let errJson: unknown = undefined;
+        try {
+          errJson = JSON.parse(text) as unknown;
+        } catch (_e) {
+          void _e;
+        }
+        const errMsg = (() => {
+          if (typeof errJson !== 'object' || !errJson) return text;
+          const maybeError = (errJson as Record<string, unknown>).error;
+          if (typeof maybeError !== 'object' || !maybeError) return text;
+          const maybeMsg = (maybeError as Record<string, unknown>).message;
+          return typeof maybeMsg === 'string' && maybeMsg.trim() ? maybeMsg : text;
+        })();
+        throw new Error(`Groq API Error: ${errMsg}`);
+      }
+
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error('Invalid JSON response from Groq API');
+      }
+      return json as GroqChatCompletion;
     }
 
-    const groqData = await groqResp.json();
-    const assistantContent = groqData.choices[0].message.content;
+    console.log('[Assistant] Calling Groq with model: llama-3.3-70b-versatile');
+    const groqData = await callGroq(groqMessages, 0.2);
+
+    const assistantContent = groqData.choices?.[0]?.message?.content ?? '';
     console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
 
-    // Extract JSON if present
-    const jsonMatch = assistantContent.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
-    let questions = [];
-    if (jsonMatch) {
-      try {
-        const jsonStr = jsonMatch[1].trim();
-        questions = JSON.parse(jsonStr);
-        console.log(`[Assistant] Successfully extracted ${questions.length} questions.`);
-      } catch (e: any) {
-        console.error('[Assistant] Failed to parse JSON:', e.message);
+    const extractQuestionsFromText = (text: string) => {
+      const cleaned = (text || '')
+        .replace(/```(?:json)?/gi, '')
+        .replace(/```/g, '')
+        .trim();
+
+      const tryParseJson = (jsonText: string) => {
+        // Some models return LaTeX like \sqrt, \theta inside JSON strings without escaping.
+        // That breaks strict JSON parsing ("Bad escaped character"). We repair by escaping
+        // backslashes that are not valid JSON escape starters.
+        const repairInvalidBackslashes = (s: string) =>
+          s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+
+        try {
+          return JSON.parse(jsonText) as unknown;
+        } catch (e1) {
+          try {
+            const repaired = repairInvalidBackslashes(jsonText);
+            return JSON.parse(repaired) as unknown;
+          } catch (e2) {
+            const msg1 = e1 instanceof Error ? e1.message : String(e1);
+            const msg2 = e2 instanceof Error ? e2.message : String(e2);
+            console.error('[Assistant] JSON parse failed after repair:', { msg1, msg2 });
+            throw e2;
+          }
+        }
+      };
+
+      // 1) Preferred: <questions_json>...</questions_json>
+      const tagMatch = cleaned.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
+      if (tagMatch) {
+        try {
+          return tryParseJson(tagMatch[1].trim());
+        } catch (e) {
+          console.error('[Assistant] Tagged JSON parse failed:', (e as Error).message);
+        }
       }
-    } else {
-      console.warn('[Assistant] No <questions_json> tags found.');
+
+      // 2) Best-effort: first JSON array in the text
+      const arrMatch = cleaned.match(/(\[[\s\S]*\])/);
+      if (arrMatch) {
+        try {
+          return tryParseJson(arrMatch[1]);
+        } catch (e) {
+          console.error('[Assistant] Array JSON parse failed:', (e as Error).message);
+        }
+      }
+
+      return [];
+    };
+
+    const extracted = extractQuestionsFromText(assistantContent);
+    let questions: unknown[] = Array.isArray(extracted) ? extracted : [];
+
+    // If model didn't comply, run a fast "format fix" pass using the assistant output
+    if (!Array.isArray(questions) || questions.length === 0) {
+      console.warn('[Assistant] No questions parsed. Running format-fix call...');
+      const fixPrompt = `Return ONLY the JSON array wrapped in <questions_json> tags.
+No explanation. No intro line. No markdown. No code fences.
+
+Convert the following content into the exact JSON schema array. If questions are missing, generate the requested questions now.
+
+CONTENT TO CONVERT/COMPLETE:
+${assistantContent}`;
+
+      const fixMessages = [
+        { role: 'system', content: systemPrompt },
+        ...sanitizedMessages,
+        { role: 'user', content: fixPrompt },
+      ];
+
+      const fixed = await callGroq(fixMessages, 0.0);
+      const fixedText = fixed.choices?.[0]?.message?.content ?? '';
+      console.log('[Assistant] FIXED RAW CONTENT:', fixedText.substring(0, 500) + '...');
+      const fixedQuestions = extractQuestionsFromText(fixedText);
+      if (Array.isArray(fixedQuestions) && fixedQuestions.length > 0) {
+        questions = fixedQuestions;
+      }
     }
 
-    const cleanedContent = assistantContent.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim();
+    // Final guarantee: if still empty, force-generate from the last user prompt
+    if (!Array.isArray(questions) || questions.length === 0) {
+      console.warn('[Assistant] Still no questions after fix. Forcing generation...');
+      const lastUser = [...sanitizedMessages].reverse().find((m) => m.role === 'user')?.content ||
+        'Generate 6 JEE Mains level questions.';
+      const forcePrompt = `Generate questions for this request. Output ONLY <questions_json>...</questions_json>.
+REQUEST:
+${lastUser}`;
+      const forceMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: forcePrompt }];
+      const forced = await callGroq(forceMessages, 0.0);
+      const forcedText = forced.choices?.[0]?.message?.content ?? '';
+      const forcedQuestions = extractQuestionsFromText(forcedText);
+      if (Array.isArray(forcedQuestions) && forcedQuestions.length > 0) {
+        questions = forcedQuestions;
+      }
+    }
+
+    const cleanedContent = assistantContent
+      .replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '')
+      .trim();
+
+    const contentWithOcrNote =
+      file_url && pageRangesToUse
+        ? `OCR processed for pages ${pageRangesToUse}.\n\n${cleanedContent}`
+        : cleanedContent;
 
     return new Response(JSON.stringify({ 
-      content: cleanedContent,
+      content: contentWithOcrNote,
       questions 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-  } catch (error: any) {
-    console.error('[Assistant] Error:', error.message);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[Assistant] Error:', msg);
     return new Response(JSON.stringify({ 
-      error: error.message,
-      details: error.stack 
+      error: msg,
+      details: error instanceof Error ? error.stack : undefined
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

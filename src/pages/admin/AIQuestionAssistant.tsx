@@ -26,6 +26,7 @@ import {
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
+import { parseQuestionText } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
 import { EXTERNAL_SUPABASE_URL, EXTERNAL_SUPABASE_ANON_KEY, invokeExternalFunction } from '@/lib/externalSupabase';
 
@@ -70,6 +71,61 @@ export default function AIQuestionAssistant() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const parseAssistantContentFallback = (content: string): ParsedQuestion[] => {
+    const text = (content || '').trim();
+    if (!text) return [];
+
+    // First try the robust parser (works when AI returns numbered questions).
+    const parsed = parseQuestionText(text);
+    const fromParser = parsed.sections.flatMap((s) =>
+      s.questions.map((q, idx) => ({
+        ...q,
+        // re-number sequentially in this UI list
+        questionNumber: generatedQuestions.length + idx + 1,
+        sectionName: q.sectionName || s.name || 'General',
+      }))
+    );
+    if (fromParser.length > 0) return fromParser;
+
+    // Fallback: extract bullet/numbered blocks even if the AI reply is conversational.
+    const blocks = text
+      .replace(/\r\n/g, '\n')
+      .split(/\n(?=\s*(?:\d+[\.\)]|-)\s+)/g)
+      .map((b) => b.trim())
+      .filter(Boolean);
+
+    const toQuestion = (block: string, idx: number): ParsedQuestion => {
+      const m = block.match(/(?:^|\n)\s*(?:Answer|Ans|Correct)\s*[:\-]\s*(.+)$/im);
+      const rawAnswer = m?.[1]?.trim() ?? null;
+      const cleanedQuestion = block
+        .replace(/^\s*(?:\d+[\.\)]|-)\s*/g, '')
+        .replace(/(?:^|\n)\s*(?:Answer|Ans|Correct)\s*[:\-]\s*.+$/im, '')
+        .trim();
+
+      const isMcqKey = rawAnswer ? /^[A-Da-d1-4](?:\)|\.|$)?$/.test(rawAnswer.trim()) : false;
+      return {
+        id: Math.random().toString(36).substring(2, 11),
+        questionNumber: generatedQuestions.length + idx + 1,
+        questionText: cleanedQuestion || '(No question text provided)',
+        optionA: '',
+        optionB: '',
+        optionC: '',
+        optionD: '',
+        correctOption: isMcqKey ? rawAnswer!.trim().toUpperCase().replace(/[^A-D1-4]/g, '') : '',
+        questionType: !isMcqKey && rawAnswer ? 'FILL_BLANK' : 'MCQ',
+        correctAnswer: !isMcqKey ? rawAnswer : null,
+        marks: 4,
+        negativeMarks: 1,
+        isValid: Boolean(cleanedQuestion) && (rawAnswer ? true : false),
+        errors: [],
+        hasLatex: true,
+        sectionName: 'General',
+      };
+    };
+
+    return blocks.map(toQuestion).filter((q) => q.questionText && q.questionText !== '(No question text provided)');
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -113,8 +169,17 @@ export default function AIQuestionAssistant() {
       const { error } = await supabase.storage.from('question-uploads').upload(path, file);
       if (error) throw error;
 
-      const { data: { publicUrl } } = supabase.storage.from('question-uploads').getPublicUrl(path);
-      setFileUrl(publicUrl);
+      // Prefer signed URL (works even if bucket is private).
+      // Mathpix fetches this URL from a remote server, so public buckets-only will fail.
+      const { data: signed, error: signedErr } =
+        await supabase.storage.from('question-uploads').createSignedUrl(path, 60 * 30);
+
+      if (!signedErr && signed?.signedUrl) {
+        setFileUrl(signed.signedUrl);
+      } else {
+        const { data: { publicUrl } } = supabase.storage.from('question-uploads').getPublicUrl(path);
+        setFileUrl(publicUrl);
+      }
       setFileName(file.name);
       toast.success('File uploaded successfully. You can now ask questions about it.');
     } catch (error) {
@@ -159,20 +224,31 @@ export default function AIQuestionAssistant() {
       // Persist chat history
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        const payload: Record<string, unknown> = {
+          user_id: user.id,
+          messages: newMessages,
+          updated_at: new Date().toISOString(),
+        };
+        // Only include `id` when we already have a history row. Otherwise let DB default generate it.
+        if (chatHistoryId) payload.id = chatHistoryId;
+
         const { data: savedHistory, error: saveError } = await (supabase as any)
           .from('ai_chat_history')
-          .upsert({
-            id: chatHistoryId || undefined,
-            user_id: user.id,
-            messages: newMessages,
-            updated_at: new Date().toISOString()
-          })
-          .select()
-          .single();
-        
-        if (!saveError && savedHistory) {
-          setChatHistoryId(savedHistory.id);
+          .upsert(payload)
+          .select();
+
+        if (saveError) {
+          console.error('Failed to save AI chat history:', saveError);
+          toast.error('Chat not saved (DB error). Check console logs.');
+        } else if (Array.isArray(savedHistory) && savedHistory[0]?.id) {
+          setChatHistoryId(savedHistory[0].id);
+        } else if (savedHistory && (savedHistory as any).id) {
+          setChatHistoryId((savedHistory as any).id);
         }
+      }
+      // If there's no authenticated user, chat history can't be persisted.
+      else {
+        console.warn('[AI Assistant] No user session found; chat history will not be saved.');
       }
 
       // Clear the file after it's been processed once to avoid redundant OCR on every message
@@ -207,6 +283,12 @@ export default function AIQuestionAssistant() {
         }));
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);
         toast.success(`Generated ${newQuestions.length} questions!`);
+      } else if (typeof data.content === 'string' && data.content.trim()) {
+        const fallbackQuestions = parseAssistantContentFallback(data.content);
+        if (fallbackQuestions.length > 0) {
+          setGeneratedQuestions(prev => [...prev, ...fallbackQuestions]);
+          toast.success(`Generated ${fallbackQuestions.length} questions!`);
+        }
       }
       
       // Clear file after processing if it was just uploaded
@@ -275,23 +357,108 @@ export default function AIQuestionAssistant() {
       
       let nextNum = (existing?.[0]?.question_number || 0) + 1;
 
-      const questionsToInsert = validQuestions.map((q, idx) => ({
-        exam_id: selectedExam,
-        subject_id: selectedSubject || null,
-        question_number: nextNum + idx,
-        section_name: q.sectionName || 'General',
-        question_text: q.questionText,
-        option_a: q.optionA,
-        option_b: q.optionB,
-        option_c: q.optionC,
-        option_d: q.optionD,
-        correct_option: q.correctOption,
-        marks: q.marks || 4,
-        question_type: 'MCQ',
-      }));
+      const questionsToInsert = validQuestions.map((q, idx) => {
+        const isFillBlank = (q.questionType || 'MCQ') === 'FILL_BLANK';
 
-      const { error } = await supabase.from('questions').insert(questionsToInsert);
-      if (error) throw error;
+        return {
+          exam_id: selectedExam,
+          subject_id: selectedSubject || null,
+          question_number: nextNum + idx,
+          section_name: q.sectionName || 'General',
+          question_text: q.questionText,
+          option_a: isFillBlank ? null : q.optionA,
+          option_b: isFillBlank ? null : q.optionB,
+          option_c: isFillBlank ? null : q.optionC,
+          option_d: isFillBlank ? null : q.optionD,
+          correct_option: isFillBlank ? null : q.correctOption,
+          correct_answer: isFillBlank ? (q.correctAnswer || null) : null,
+          question_type: isFillBlank ? 'NUMERICAL' : 'MCQ',
+          marks: q.marks || 4,
+          image_url: q.imageUrl || null, // question-level diagram
+        };
+      });
+
+      const {
+        data: insertedQuestions,
+        error: insertErr,
+      } = await supabase
+        .from('questions')
+        .insert(questionsToInsert)
+        .select('id, question_number');
+
+      if (insertErr) throw insertErr;
+
+      const insertedSorted = (insertedQuestions || []).sort(
+        (a, b) => (a.question_number || 0) - (b.question_number || 0)
+      );
+
+      // Persist option/question images into `question_images` table.
+      const imageInserts: Array<{
+        question_id: string;
+        image_url: string;
+        image_type: string;
+        option_key?: string | null;
+        display_order: number;
+      }> = [];
+
+      validQuestions.forEach((q, idx) => {
+        const questionId = insertedSorted[idx]?.id;
+        if (!questionId) return;
+
+        if (q.imageUrl) {
+          imageInserts.push({
+            question_id: questionId,
+            image_url: q.imageUrl,
+            image_type: 'question',
+            option_key: null,
+            display_order: 1,
+          });
+        }
+
+        if (q.optionAImage) {
+          imageInserts.push({
+            question_id: questionId,
+            image_url: q.optionAImage,
+            image_type: 'option',
+            option_key: 'A',
+            display_order: 1,
+          });
+        }
+        if (q.optionBImage) {
+          imageInserts.push({
+            question_id: questionId,
+            image_url: q.optionBImage,
+            image_type: 'option',
+            option_key: 'B',
+            display_order: 1,
+          });
+        }
+        if (q.optionCImage) {
+          imageInserts.push({
+            question_id: questionId,
+            image_url: q.optionCImage,
+            image_type: 'option',
+            option_key: 'C',
+            display_order: 1,
+          });
+        }
+        if (q.optionDImage) {
+          imageInserts.push({
+            question_id: questionId,
+            image_url: q.optionDImage,
+            image_type: 'option',
+            option_key: 'D',
+            display_order: 1,
+          });
+        }
+      });
+
+      if (imageInserts.length > 0) {
+        const { error: imageErr } = await supabase
+          .from('question_images')
+          .insert(imageInserts);
+        if (imageErr) throw imageErr;
+      }
 
       toast.success(`Successfully saved ${questionsToInsert.length} questions!`);
       setGeneratedQuestions([]);

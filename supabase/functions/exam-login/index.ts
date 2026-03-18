@@ -302,6 +302,73 @@ Deno.serve(async (req) => {
       };
     });
 
+    // If image URLs are not publicly accessible (common for protected buckets),
+    // create signed URLs on-demand so ExamInterface can render images.
+    const IMAGE_BUCKET = 'question-uploads';
+    const SIGN_EXPIRES_IN_SECONDS = 60 * 60 * 6; // 6 hours
+
+    const extractObjectPath = (imageUrl: string | null | undefined): string | null => {
+      if (!imageUrl) return null;
+      const cleaned = String(imageUrl).split('?')[0];
+      const re = new RegExp(`/storage/v1/object/(?:public|authenticated)/${IMAGE_BUCKET}/(.+)$`);
+      const m = cleaned.match(re);
+      if (m?.[1]) return m[1];
+
+      // Fallback: last occurrence of `${bucket}/...`
+      const idx = cleaned.lastIndexOf(`${IMAGE_BUCKET}/`);
+      if (idx >= 0) return cleaned.slice(idx + IMAGE_BUCKET.length + 1);
+
+      return null;
+    };
+
+    const allImageUrls: Array<string | null> = [];
+    for (const q of transformedQuestions) {
+      allImageUrls.push(q.image_url);
+      allImageUrls.push(q.option_a_image);
+      allImageUrls.push(q.option_b_image);
+      allImageUrls.push(q.option_c_image);
+      allImageUrls.push(q.option_d_image);
+    }
+
+    const uniquePaths = new Set<string>();
+    for (const url of allImageUrls) {
+      const path = extractObjectPath(url);
+      if (path) uniquePaths.add(path);
+    }
+
+    const signedByPath: Record<string, string> = {};
+    if (uniquePaths.size > 0) {
+      const paths = Array.from(uniquePaths);
+      const signedPairs = await Promise.all(
+        paths.map(async (path) => {
+          const { data, error } = await questionsClient.storage
+            .from(IMAGE_BUCKET)
+            .createSignedUrl(path, SIGN_EXPIRES_IN_SECONDS);
+          if (error || !data?.signedUrl) return [path, null] as const;
+          return [path, data.signedUrl] as const;
+        })
+      );
+
+      for (const pair of signedPairs) {
+        const [path, signedUrl] = pair;
+        if (signedUrl) signedByPath[path] = signedUrl;
+      }
+    }
+
+    const signUrlOrKeep = (url: string | null | undefined) => {
+      const path = extractObjectPath(url);
+      if (!path) return url ?? null;
+      return signedByPath[path] ?? (url ?? null);
+    };
+
+    for (const q of transformedQuestions) {
+      q.image_url = signUrlOrKeep(q.image_url);
+      q.option_a_image = signUrlOrKeep(q.option_a_image);
+      q.option_b_image = signUrlOrKeep(q.option_b_image);
+      q.option_c_image = signUrlOrKeep(q.option_c_image);
+      q.option_d_image = signUrlOrKeep(q.option_d_image);
+    }
+
     if (existingSession) {
       // Check if exam was finally submitted
       if (existingSession.exam_status === 'finally_submitted' || (existingSession.is_completed && existingSession.exam_status !== 'resumed')) {

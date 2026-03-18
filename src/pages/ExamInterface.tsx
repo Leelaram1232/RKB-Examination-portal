@@ -145,7 +145,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           violation_count: count,
@@ -162,7 +162,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           is_blocked: true,
@@ -249,7 +249,7 @@ export default function ExamInterface() {
       }
 
       // Check if session is blocked
-      const { data: sessionStatus } = await externalSupabase
+      const { data: sessionStatus } = await supabase
         .from('exam_sessions')
         .select('is_blocked, violation_count, proctoring_violations')
         .eq('id', parsedSession.session_id)

@@ -113,7 +113,9 @@ const PaymentStatus = () => {
         console.error('Payment status fallback error:', fallbackError);
       }
 
-      setStatus('failed');
+      // If verification fails (network/env mismatch), do NOT show "failed" (it confuses users after success).
+      // Treat as pending and allow manual "Verify Again".
+      setStatus('pending');
     } finally {
       setIsVerifying(false);
     }

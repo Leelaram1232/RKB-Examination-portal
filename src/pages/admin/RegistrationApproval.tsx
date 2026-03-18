@@ -219,61 +219,77 @@ const RegistrationApproval = () => {
     if (!selectedRegistration) return;
     
     setIsProcessing(true);
+    try {
+      const updateData: Record<string, unknown> = {
+        approval_status: actionType === 'approve' ? 'approved' : 'rejected',
+        approval_remarks: remarks || null,
+        approved_at: actionType === 'approve' ? new Date().toISOString() : null,
+      };
 
-    const updateData: Record<string, unknown> = {
-      approval_status: actionType === 'approve' ? 'approved' : 'rejected',
-      approval_remarks: remarks || null,
-      approved_at: actionType === 'approve' ? new Date().toISOString() : null,
-    };
-
-    if (actionType === 'approve') {
-      updateData.exam_login_enabled = true;
-      // Generate password from DOB if available
-      if (selectedRegistration.date_of_birth) {
-        const dob = new Date(selectedRegistration.date_of_birth);
-        updateData.exam_password = format(dob, 'ddMMyy');
-      }
-    }
-
-    const { error } = await supabase
-      .from('registrations')
-      .update(updateData)
-      .eq('id', selectedRegistration.id);
-
-    if (error) {
-      setIsProcessing(false);
-      toast.error(`Failed to ${actionType} registration`);
-      console.error(error);
-      return;
-    }
-
-    if (actionType === 'approve' && shouldNotify) {
-      console.log(`[APPROVAL] Triggering email for ${selectedRegistration.full_name} (${selectedRegistration.id})`);
-      try {
-        const { data: emailData, error: emailError } = await invokeExternalFunction('send-notification-email', {
-          type: 'registration_approved',
-          registration_id: selectedRegistration.id,
-        });
-
-        if (emailError) {
-          console.error('[APPROVAL] Email invocation failed:', emailError);
-          toast.warning(`Approved, but notification failed: ${emailError.message}`);
-        } else {
-          console.log('[APPROVAL] Email success:', emailData);
-          toast.success('Registration approved and email sent!');
+      if (actionType === 'approve') {
+        updateData.exam_login_enabled = true;
+        // Generate password from DOB if available
+        if (selectedRegistration.date_of_birth) {
+          const dob = new Date(selectedRegistration.date_of_birth);
+          updateData.exam_password = format(dob, 'ddMMyy');
         }
-      } catch (err) {
-        console.error('[APPROVAL] Critical error during email invocation:', err);
-        toast.warning('Approved, but an error occurred during notification');
       }
-    } else {
-      toast.success('Registration rejected');
-    }
 
-    setIsProcessing(false);
-    setShowActionDialog(false);
-    setRemarks('');
-    fetchRegistrations();
+      const { error } = await supabase
+        .from('registrations')
+        .update(updateData)
+        .eq('id', selectedRegistration.id);
+
+      if (error) {
+        toast.error(`Failed to ${actionType} registration`);
+        console.error(error);
+        return;
+      }
+
+      const shouldNotify = selectedRegistration.exams?.notify_on_approval ?? true;
+
+      if (actionType === 'approve') {
+        toast.success('Registration approved');
+
+        // Fire email notification via INTERNAL Supabase (Lovable) with a timeout so UI never gets stuck.
+        if (shouldNotify) {
+          console.log(
+            `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
+          );
+
+          const emailPromise = lovableSupabase.functions.invoke('send-notification-email', {
+            body: {
+              type: 'registration_approved',
+              registration_id: selectedRegistration.id,
+            },
+          });
+
+          const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: new Error('Email send timed out') }), 8000)
+          );
+
+          const emailResp = await Promise.race([emailPromise, timeoutPromise]);
+
+          if ((emailResp as any)?.error) {
+            console.error('[APPROVAL] Email failed:', (emailResp as any).error);
+            toast.warning('Approved, but email notification failed');
+          } else {
+            toast.success('Approval email sent');
+          }
+        }
+      } else {
+        toast.success('Registration rejected');
+      }
+
+      setShowActionDialog(false);
+      setRemarks('');
+      fetchRegistrations();
+    } catch (err) {
+      console.error('[RegistrationApproval] handleAction error:', err);
+      toast.error('Something went wrong while processing this action');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleBulkAction = async () => {
