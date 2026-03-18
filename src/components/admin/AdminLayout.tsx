@@ -2,7 +2,7 @@ import { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, BookOpen, Users, FileText, 
-  BarChart3, Shield, LogOut, ChevronLeft, MonitorPlay
+  BarChart3, Shield, LogOut, ChevronLeft, MonitorPlay, BrainCircuit
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,6 +19,7 @@ const navItems = [
   { title: 'Exams', url: '/admin/exams', icon: BookOpen },
   { title: 'Registrations', url: '/admin/registrations', icon: Users },
   { title: 'Questions', url: '/admin/questions', icon: FileText },
+  { title: 'AI Assistant', url: '/admin/questions/ai-assistant', icon: BrainCircuit },
   { title: 'Smart Paste', url: '/admin/questions/smart-paste', icon: FileText },
   { title: 'Results', url: '/admin/results', icon: BarChart3 },
 ];
