@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
@@ -415,6 +416,33 @@ Exam ID: ${exam_id || 'Not specified'}`;
     const extracted = extractQuestionsFromText(assistantContent);
     let questions: unknown[] = Array.isArray(extracted) ? extracted : [];
 
+    // Groq sometimes outputs LaTeX inside JSON strings using sequences like `\f`, `\r`, `\t`, etc.
+    // JSON.parse treats these as valid JSON escapes and converts them into control characters
+    // (form feed, carriage return, tab...). This breaks LaTeX rendering later.
+    // We reverse that by mapping these control characters back to `\f`, `\r`, `\t`, etc.
+    const sanitizeLatexControlEscapes = (value: unknown): unknown => {
+      if (typeof value === 'string') {
+        return value
+          .replace(/\u0008/g, '\\b') // backspace -> \b
+          .replace(/\u000c/g, '\\f') // form feed -> \f (fixes \frac -> \frac)
+          .replace(/\u000d/g, '\\r') // carriage return -> \r (fixes \rho, etc.)
+          .replace(/\u0009/g, '\\t') // tab -> \t (fixes \theta, etc.)
+          .replace(/\u000b/g, '\\v'); // vertical tab -> \v
+      }
+      if (Array.isArray(value)) {
+        return value.map(sanitizeLatexControlEscapes);
+      }
+      if (value && typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(obj)) {
+          out[k] = sanitizeLatexControlEscapes(v);
+        }
+        return out;
+      }
+      return value;
+    };
+
     // If model didn't comply, run a fast "format fix" pass using the assistant output
     if (!Array.isArray(questions) || questions.length === 0) {
       console.warn('[Assistant] No questions parsed. Running format-fix call...');
@@ -467,9 +495,11 @@ ${lastUser}`;
         ? `OCR processed for pages ${pageRangesToUse}.\n\n${cleanedContent}`
         : cleanedContent;
 
-    return new Response(JSON.stringify({ 
+    const sanitizedQuestions = sanitizeLatexControlEscapes(questions) as unknown[];
+
+    return new Response(JSON.stringify({
       content: contentWithOcrNote,
-      questions 
+      questions: sanitizedQuestions
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -236,16 +236,45 @@ const LiveMonitoring = () => {
     };
   }, [examId]);
 
+  const extractObjectPath = (imageUrl: string | null, bucket: string): string | null => {
+    if (!imageUrl) return null;
+    const cleaned = String(imageUrl).split('?')[0];
+
+    // Typical Supabase URL:
+    // /storage/v1/object/public/<bucket>/<path> OR /storage/v1/object/authenticated/<bucket>/<path>
+    const re = new RegExp(`/storage/v1/object/(?:public|authenticated)/${bucket}/(.+)$`);
+    const m = cleaned.match(re);
+    if (m?.[1]) return m[1];
+
+    // Fallback: last occurrence of `${bucket}/...`
+    const idx = cleaned.lastIndexOf(`${bucket}/`);
+    if (idx >= 0) return cleaned.slice(idx + bucket.length + 1);
+
+    // If it's already an object path, return as-is.
+    return cleaned;
+  };
+
   const getSignedUrl = async (client: typeof supabase, path: string | null) => {
     if (!path) return null;
+
+    const bucket = 'proctoring-snapshots';
+    const objectPath = extractObjectPath(path, bucket);
+    if (!objectPath) return null;
+
     const { data, error } = await client.storage
-      .from('proctoring-snapshots')
-      .createSignedUrl(path, 60 * 5); // 5 minutes
+      .from(bucket)
+      .createSignedUrl(objectPath, 60 * 5); // 5 minutes
+
+    if (!error && data?.signedUrl) return data.signedUrl;
+
+    // Fallback: if bucket is public or signed URLs fail for auth reasons.
     if (error) {
       console.error('Signed URL error:', error);
-      return null;
+      const { data: publicData } = client.storage.from(bucket).getPublicUrl(objectPath);
+      return publicData?.publicUrl || null;
     }
-    return data?.signedUrl || null;
+
+    return null;
   };
 
   const getViolationColor = (count: number, max: number) => {

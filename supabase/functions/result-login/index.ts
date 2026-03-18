@@ -11,6 +11,34 @@ interface LoginRequest {
   exam_id: string;
 }
 
+// Generate DOB-based password (DDMMYY format), without timezone day shifts.
+function generateDobPassword(dob: string): string {
+  const raw = String(dob || '').trim();
+  if (/^\d{6}$/.test(raw)) return raw;
+
+  const mIso = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (mIso) {
+    const year4 = mIso[1];
+    const month2 = mIso[2];
+    const day2 = mIso[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  const mDmy = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (mDmy) {
+    const day2 = mDmy[1];
+    const month2 = mDmy[2];
+    const year4 = mDmy[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  const date = new Date(raw);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = String(date.getUTCFullYear()).slice(-2);
+  return `${day}${month}${year}`;
+}
+
 Deno.serve(async (req) => {
   console.log(`=== RESULT LOGIN: ${req.method} ${req.url} ===`);
 
@@ -104,11 +132,7 @@ Deno.serve(async (req) => {
     }
 
     // Convert DOB to DDMMYY format
-    const dob = new Date(profile.date_of_birth);
-    const expectedPassword = 
-      String(dob.getDate()).padStart(2, '0') +
-      String(dob.getMonth() + 1).padStart(2, '0') +
-      String(dob.getFullYear()).slice(-2);
+    const expectedPassword = generateDobPassword(profile.date_of_birth);
 
     if (enteredDigits !== expectedPassword) {
       return new Response(

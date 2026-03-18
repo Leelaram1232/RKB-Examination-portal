@@ -19,9 +19,18 @@ export function containsLatex(text: string): boolean {
 
 // Parse and render text with LaTeX
 export function MathRenderer({ content, className = '' }: MathRendererProps) {
+  // If LaTeX came through JSON, some commands like `\frac` (`\f`) or `\rho` (`\r`)
+  // can be converted into control characters. Map them back so KaTeX can parse.
+  const normalizedContent = (content || '')
+    .replace(/\u0008/g, '\\b')
+    .replace(/\u000c/g, '\\f')
+    .replace(/\u000d/g, '\\r')
+    .replace(/\u0009/g, '\\t')
+    .replace(/\u000b/g, '\\v');
+
   // Check for block math first
-  if (content.includes('$$')) {
-    const parts = content.split(/(\$\$[^$]+\$\$)/g);
+  if (normalizedContent.includes('$$')) {
+    const parts = normalizedContent.split(/(\$\$[^$]+\$\$)/g);
     return (
       <span className={className}>
         {parts.map((part, index) => {
@@ -39,7 +48,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
     );
   }
 
-  return <InlineTextWithMath text={content} className={className} />;
+  return <InlineTextWithMath text={normalizedContent} className={className} />;
 }
 
 // Render inline math within text

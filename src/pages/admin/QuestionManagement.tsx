@@ -63,6 +63,8 @@ interface Question {
   option_c: string;
   option_d: string;
   correct_option: 'A' | 'B' | 'C' | 'D';
+  question_type?: 'MCQ' | 'NUMERICAL' | 'MATCH_COLUMN' | null;
+  correct_answer?: string | null;
   section_name: string;
   marks: number;
   subject_id: string | null;
@@ -93,6 +95,8 @@ const defaultQuestion = {
   option_c: '',
   option_d: '',
   correct_option: 'A' as const,
+  question_type: 'MCQ' as const,
+  correct_answer: null as string | null,
   section_name: 'General',
   marks: 4,
   subject_id: null as string | null,
@@ -118,6 +122,8 @@ const QuestionManagement = () => {
   const [selectedExamId, setSelectedExamId] = useState<string>(examId || '');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [examSubjects, setExamSubjects] = useState<Subject[]>([]);
+
+  const isFillBlankDialog = (currentQuestion.question_type || 'MCQ') === 'NUMERICAL';
   
   // Bulk selection state
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
@@ -242,28 +248,47 @@ const QuestionManagement = () => {
       return;
     }
 
-    if (!currentQuestion.question_text || !currentQuestion.option_a || 
-        !currentQuestion.option_b || !currentQuestion.option_c || 
-        !currentQuestion.option_d) {
-      toast.error('Please fill in all required fields');
+    const questionType = currentQuestion.question_type || 'MCQ';
+    const isFillBlank = questionType === 'NUMERICAL';
+
+    if (!currentQuestion.question_text) {
+      toast.error('Please enter question text');
       return;
+    }
+
+    if (isFillBlank) {
+      if (!currentQuestion.correct_answer) {
+        toast.error('Please enter the correct answer for this fill-in-the-blank question');
+        return;
+      }
+    } else {
+      // MCQ required fields
+      if (!currentQuestion.option_a || !currentQuestion.option_b || !currentQuestion.option_c || !currentQuestion.option_d) {
+        toast.error('Please fill in all required fields');
+        return;
+      }
     }
 
     setIsSaving(true);
 
-    const questionData = {
+    // Supabase types are generated for MCQ fields; for NUMERICAL we set options/correct_option to null.
+    // Cast to keep runtime behavior correct while allowing schema flexibility.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const questionData: any = {
       exam_id: selectedExamId,
       question_number: currentQuestion.question_number || questions.length + 1,
       question_text: currentQuestion.question_text,
-      option_a: currentQuestion.option_a,
-      option_b: currentQuestion.option_b,
-      option_c: currentQuestion.option_c,
-      option_d: currentQuestion.option_d,
-      correct_option: currentQuestion.correct_option || 'A',
       section_name: currentQuestion.section_name || 'General',
       marks: currentQuestion.marks || 4,
       subject_id: currentQuestion.subject_id || null,
       image_url: currentQuestion.image_url || null,
+      question_type: isFillBlank ? 'NUMERICAL' : (questionType || 'MCQ'),
+      correct_answer: isFillBlank ? (currentQuestion.correct_answer || null) : null,
+      correct_option: isFillBlank ? null : (currentQuestion.correct_option || 'A'),
+      option_a: isFillBlank ? null : currentQuestion.option_a,
+      option_b: isFillBlank ? null : currentQuestion.option_b,
+      option_c: isFillBlank ? null : currentQuestion.option_c,
+      option_d: isFillBlank ? null : currentQuestion.option_d,
     };
 
     let error;
@@ -699,7 +724,9 @@ const QuestionManagement = () => {
                               <TableCell>{question.section_name}</TableCell>
                               <TableCell>
                                 <span className="font-mono bg-primary/10 text-primary px-2 py-1 rounded">
-                                  {question.correct_option}
+                                  {question.question_type === 'NUMERICAL'
+                                    ? (question.correct_answer ?? '-')
+                                    : question.correct_option}
                                 </span>
                               </TableCell>
                               <TableCell>{question.marks}</TableCell>
@@ -1121,23 +1148,34 @@ const QuestionManagement = () => {
 
               <div>
                 <Label>Correct Answer</Label>
-                <Select
-                  value={currentQuestion.correct_option || 'A'}
-                  onValueChange={(value) => setCurrentQuestion({
-                    ...currentQuestion,
-                    correct_option: value as 'A' | 'B' | 'C' | 'D'
-                  })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="A">Option A</SelectItem>
-                    <SelectItem value="B">Option B</SelectItem>
-                    <SelectItem value="C">Option C</SelectItem>
-                    <SelectItem value="D">Option D</SelectItem>
-                  </SelectContent>
-                </Select>
+                {isFillBlankDialog ? (
+                  <Input
+                    value={currentQuestion.correct_answer || ''}
+                    onChange={(e) => setCurrentQuestion({
+                      ...currentQuestion,
+                      correct_answer: e.target.value
+                    })}
+                    placeholder="Enter the correct fill-in answer"
+                  />
+                ) : (
+                  <Select
+                    value={currentQuestion.correct_option || 'A'}
+                    onValueChange={(value) => setCurrentQuestion({
+                      ...currentQuestion,
+                      correct_option: value as 'A' | 'B' | 'C' | 'D'
+                    })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A">Option A</SelectItem>
+                      <SelectItem value="B">Option B</SelectItem>
+                      <SelectItem value="C">Option C</SelectItem>
+                      <SelectItem value="D">Option D</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </div>
             <DialogFooter>

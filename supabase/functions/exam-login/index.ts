@@ -22,10 +22,37 @@ interface RegistrationData {
 
 // Generate DOB-based password (DDMMYY format)
 function generateDobPassword(dob: string): string {
-  const date = new Date(dob);
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = String(date.getFullYear()).slice(-2);
+  const raw = String(dob || '').trim();
+  if (/^\d{6}$/.test(raw)) {
+    // Already in DDMMYY
+    return raw;
+  }
+
+  // Common DB formats:
+  // - YYYY-MM-DD
+  // - YYYY/MM/DD
+  const mIso = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (mIso) {
+    const year4 = mIso[1];
+    const month2 = mIso[2];
+    const day2 = mIso[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  // - DD-MM-YYYY or DD/MM/YYYY
+  const mDmy = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (mDmy) {
+    const day2 = mDmy[1];
+    const month2 = mDmy[2];
+    const year4 = mDmy[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  // Fallback: parse as date but use UTC getters to avoid timezone day shifts.
+  const date = new Date(raw);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = String(date.getUTCFullYear()).slice(-2);
   return `${day}${month}${year}`;
 }
 
