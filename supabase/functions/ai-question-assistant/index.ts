@@ -183,21 +183,27 @@ Exam ID: ${exam_id || 'Not specified'}`;
 
     const groqData = await groqResp.json();
     const assistantContent = groqData.choices[0].message.content;
+    console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
 
     // Extract JSON if present
-    const jsonMatch = assistantContent.match(/<questions_json>([\s\S]*?)<\/questions_json>/);
+    const jsonMatch = assistantContent.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
     let questions = [];
     if (jsonMatch) {
       try {
-        questions = JSON.parse(jsonMatch[1].trim());
+        const jsonStr = jsonMatch[1].trim();
+        questions = JSON.parse(jsonStr);
         console.log(`[Assistant] Successfully extracted ${questions.length} questions.`);
       } catch (e: any) {
-        console.error('[Assistant] Failed to parse JSON:', e);
+        console.error('[Assistant] Failed to parse JSON:', e.message);
       }
+    } else {
+      console.warn('[Assistant] No <questions_json> tags found.');
     }
 
+    const cleanedContent = assistantContent.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim();
+
     return new Response(JSON.stringify({ 
-      content: assistantContent.replace(/<questions_json>[\s\S]*?<\/questions_json>/, '').trim(),
+      content: cleanedContent,
       questions 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
