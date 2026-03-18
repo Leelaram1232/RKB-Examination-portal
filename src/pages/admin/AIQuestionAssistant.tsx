@@ -141,7 +141,6 @@ export default function AIQuestionAssistant() {
       if (error) throw error;
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.content }]);
-      
       if (data.questions && data.questions.length > 0) {
         const newQuestions = data.questions.map((q: any, idx: number) => ({
           ...q,
@@ -151,6 +150,13 @@ export default function AIQuestionAssistant() {
           errors: [],
           hasLatex: true,
           sectionName: q.section_name || 'General',
+          questionText: q.question_text,
+          optionA: q.option_a,
+          optionB: q.option_b,
+          optionC: q.option_c,
+          optionD: q.option_d,
+          correctOption: q.correct_option,
+          marks: q.marks || 4,
         }));
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);
         toast.success(`Generated ${newQuestions.length} questions!`);
@@ -162,9 +168,17 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
     } catch (error: any) {
-      console.error('AI Error:', error);
+      console.error('AI Error Detailed:', error);
       toast.error('AI Assistant failed to respond');
-      const errorMessage = error?.context?.error || error?.message || 'I encountered an error. Please try again.';
+      
+      let errorMessage = 'I encountered an error. Please try again.';
+      
+      if (error.context?.error) {
+        errorMessage = error.context.error;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
     } finally {
       setIsSending(false);
@@ -198,7 +212,7 @@ export default function AIQuestionAssistant() {
         exam_id: selectedExam,
         subject_id: selectedSubject || null,
         question_number: nextNum + idx,
-        section_name: q.section_name || 'General',
+        section_name: q.sectionName || 'General',
         question_text: q.questionText,
         option_a: q.optionA,
         option_b: q.optionB,
