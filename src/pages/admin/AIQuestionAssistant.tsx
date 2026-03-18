@@ -181,10 +181,15 @@ export default function AIQuestionAssistant() {
       } else if (error?.message) {
         errorMessage = error.message;
       }
+
+      // If it's a Supabase FunctionsHttpError, the body might be in text() or json()
+      // But we can't easily call .json() on a caught error in a catch-all block without more checks
       
       // If it's a Fetch error or generic failure
       if (errorMessage.includes('Failed to fetch')) {
         errorMessage = 'Network error: Check your connection or if the Edge Function is deployed.';
+      } else if (errorMessage.includes('non-2xx status code')) {
+        errorMessage = 'Edge Function crashed (500). This usually means an API Key is missing or the Groq API returned an error.';
       }
       
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
