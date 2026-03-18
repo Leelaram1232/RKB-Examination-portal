@@ -1148,6 +1148,29 @@ const QuestionManagement = () => {
 
               <div>
                 <Label>Correct Answer</Label>
+                <div className="mt-2">
+                  <Label className="text-xs text-muted-foreground">Question Type</Label>
+                  <Select
+                    value={isFillBlankDialog ? 'NUMERICAL' : 'MCQ'}
+                    onValueChange={(value) => {
+                      const nextType = value as 'MCQ' | 'NUMERICAL';
+                      setCurrentQuestion((curr) => ({
+                        ...curr,
+                        question_type: nextType,
+                        correct_option: nextType === 'NUMERICAL' ? curr.correct_option : (curr.correct_option || 'A'),
+                        correct_answer: nextType === 'NUMERICAL' ? (curr.correct_answer || '') : null,
+                      }));
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MCQ">MCQ</SelectItem>
+                      <SelectItem value="NUMERICAL">Fill in the blank</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 {isFillBlankDialog ? (
                   <Input
                     value={currentQuestion.correct_answer || ''}

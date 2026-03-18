@@ -269,8 +269,20 @@ export default function AIQuestionAssistant() {
           sectionName: q.section_name || 'General',
           questionText: q.question_text || '(No question text provided)',
           questionType: (() => {
-            const type = (q.question_type || 'MCQ').toUpperCase();
-            if (type.includes('FILL') || type.includes('NUMERICAL') || type.includes('BLANK') || type.includes('SHORT')) return 'FILL_BLANK';
+            const rawType = String(q.question_type || 'MCQ').toUpperCase();
+            const typeIndicatesFill =
+              rawType.includes('FILL') ||
+              rawType.includes('NUMERICAL') ||
+              rawType.includes('BLANK') ||
+              rawType.includes('SHORT');
+
+            const optionVals = [q.option_a, q.option_b, q.option_c, q.option_d];
+            const hasAnyOption = optionVals.some((v: any) => v !== null && v !== undefined && String(v).trim() !== '');
+
+            const hasCorrectAnswer = q.correct_answer !== null && q.correct_answer !== undefined && String(q.correct_answer).trim() !== '';
+
+            // Fallback detection: if model didn't label it, but it has correct_answer and no options -> it's fill-in-the-blank.
+            if (typeIndicatesFill || (hasCorrectAnswer && !hasAnyOption)) return 'FILL_BLANK';
             return 'MCQ';
           })() as 'MCQ' | 'FILL_BLANK',
           optionA: q.option_a,
@@ -358,7 +370,12 @@ export default function AIQuestionAssistant() {
       let nextNum = (existing?.[0]?.question_number || 0) + 1;
 
       const questionsToInsert = validQuestions.map((q, idx) => {
-        const isFillBlank = (q.questionType || 'MCQ') === 'FILL_BLANK';
+        const optionVals = [q.optionA, q.optionB, q.optionC, q.optionD];
+        const hasAnyOption = optionVals.some((v: any) => v !== null && v !== undefined && String(v).trim() !== '');
+        const hasCorrectAnswer = q.correctAnswer !== null && q.correctAnswer !== undefined && String(q.correctAnswer).trim() !== '';
+        const isFillBlank =
+          q.questionType === 'FILL_BLANK' ||
+          (hasCorrectAnswer && !hasAnyOption);
 
         return {
           exam_id: selectedExam,
