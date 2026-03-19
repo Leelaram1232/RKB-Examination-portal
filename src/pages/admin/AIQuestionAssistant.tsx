@@ -238,9 +238,36 @@ export default function AIQuestionAssistant() {
 
     const extractJsonArraySubstring = (s: string) => {
       const start = s.indexOf('[');
-      const end = s.lastIndexOf(']');
-      if (start >= 0 && end > start) return s.slice(start, end + 1);
-      return s;
+      if (start < 0) return s;
+
+      // Find matching closing ']' while respecting quoted strings/escapes.
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = start; i < s.length; i++) {
+        const ch = s[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === '\\\\') {
+          escape = true;
+          continue;
+        }
+        if (ch === '\"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        if (ch === '[') depth += 1;
+        else if (ch === ']') {
+          depth -= 1;
+          if (depth === 0) return s.slice(start, i + 1);
+        }
+      }
+
+      // No matching closing bracket found; return from '[' onward (best effort).
+      return s.slice(start);
     };
 
     try {
@@ -254,7 +281,7 @@ export default function AIQuestionAssistant() {
       } catch (e2) {
         const msg1 = e1 instanceof Error ? e1.message : String(e1);
         const msg2 = e2 instanceof Error ? e2.message : String(e2);
-        console.error('Tagged questions_json parse failed:', { msg1, msg2 });
+        console.error('Tagged questions_json parse failed:', msg1, msg2);
         return [];
       }
     }
