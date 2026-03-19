@@ -217,6 +217,21 @@ export default function AIQuestionAssistant() {
       .trim();
     if (!cleaned) return [];
 
+    const sanitizeControlChars = (s: string) => {
+      // Mirror backend sanitization for control characters that can break JSON or LaTeX rendering.
+      return s
+        .split(String.fromCharCode(8))
+        .join('\\b') // backspace -> \b
+        .split(String.fromCharCode(12))
+        .join('\\f') // form feed -> \f
+        .split(String.fromCharCode(13))
+        .join('\\r') // carriage return -> \r
+        .split(String.fromCharCode(9))
+        .join('\\t') // tab -> \t
+        .split(String.fromCharCode(11))
+        .join('\\v'); // vertical tab -> \v
+    };
+
     const repairInvalidBackslashes = (s: string) =>
       // Escape backslashes that are not valid JSON escape starters.
       s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
@@ -229,15 +244,17 @@ export default function AIQuestionAssistant() {
     };
 
     try {
-      const parsed = JSON.parse(extractJsonArraySubstring(cleaned));
+      const parsed = JSON.parse(extractJsonArraySubstring(sanitizeControlChars(cleaned)));
       return Array.isArray(parsed) ? parsed : [];
     } catch (e1) {
       try {
-        const repaired = repairInvalidBackslashes(extractJsonArraySubstring(cleaned));
+        const repaired = repairInvalidBackslashes(extractJsonArraySubstring(sanitizeControlChars(cleaned)));
         const parsed2 = JSON.parse(repaired);
         return Array.isArray(parsed2) ? parsed2 : [];
       } catch (e2) {
-        console.error('Tagged questions_json parse failed:', { e1, e2 });
+        const msg1 = e1 instanceof Error ? e1.message : String(e1);
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        console.error('Tagged questions_json parse failed:', { msg1, msg2 });
         return [];
       }
     }
