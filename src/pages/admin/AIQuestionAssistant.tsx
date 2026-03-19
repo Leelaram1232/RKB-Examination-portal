@@ -541,10 +541,30 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
 
-      // Some deployments can return `questions` as a JSON string or object-like array; normalize it.
-      const questionsToProcess = Array.isArray((responseData as any)?.questions)
+      // Primary source: structured questions array from the edge function.
+      let questionsToProcess: any[] = Array.isArray((responseData as any)?.questions)
         ? ((responseData as any).questions as any[])
         : [];
+
+      // Fallback: if array is empty but content includes a <questions_json> block, parse it on the client.
+      if (
+        (!questionsToProcess || questionsToProcess.length === 0) &&
+        typeof responseData.content === 'string' &&
+        /<questions_json>/i.test(responseData.content)
+      ) {
+        const text = responseData.content;
+        const tagMatch =
+          text.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i) ||
+          text.match(/<questions_json>\s*([\s\S]*)$/i);
+        const inner = tagMatch?.[1] ?? '';
+        const parsedFromTag = inner ? safeParseQuestionsJson(inner) : [];
+        if (Array.isArray(parsedFromTag) && parsedFromTag.length > 0) {
+          console.log('[AI Assistant] Parsed questions from questions_json block on client:', parsedFromTag.length);
+          questionsToProcess = parsedFromTag;
+        } else {
+          console.warn('[AI Assistant] questions_json present in content but client parse returned 0 items.');
+        }
+      }
       if (questionsToProcess.length > 0) {
         const newQuestions = questionsToProcess.map((q: any, idx: number) => ({
           ...q,
