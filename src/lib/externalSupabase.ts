@@ -62,7 +62,8 @@ export async function invokeExternalFunction<T = unknown>(
     const { data: { session } } = await externalSupabase.auth.getSession();
     const token = session?.access_token || EXTERNAL_SUPABASE_ANON_KEY;
 
-    console.log(`[ExternalSupabase] Invoking ${functionName} via ${method} on ${url}... (Auth: ${!!session ? 'External JWT' : 'Anon/Default'})`);
+    // Avoid logging auth/JWT-related details to the console.
+    console.log(`[ExternalSupabase] Invoking ${functionName} via ${method}...`);
     
     // Setup request init
     const init: RequestInit = {
@@ -88,10 +89,7 @@ export async function invokeExternalFunction<T = unknown>(
         const errorData = JSON.parse(responseText);
         if (response.status === 401) {
           errorMessage = errorData.details || errorData.error || "Session Timeout or Unauthorized. Please log in again.";
-          if (errorData.debug_info) {
-             console.error('[ExternalSupabase] Auth Debug Details:', errorData.debug_info);
-             errorMessage += ` (Debug: ${JSON.stringify(errorData.debug_info)})`;
-          }
+          // Don't log Supabase debug_info/auth details (may contain sensitive metadata).
         } else {
           errorMessage = errorData.error || errorData.message || errorMessage;
         }
