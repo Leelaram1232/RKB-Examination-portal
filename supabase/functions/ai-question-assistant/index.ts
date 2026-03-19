@@ -719,9 +719,16 @@ ${lastUser}${ocrSnippetForForce}`;
 
     const sanitizedQuestions = sanitizeLatexControlEscapes(questions) as unknown[];
 
+    const BUILD_MARKER = 'ai-question-assistant@2026-03-19.1';
     return new Response(JSON.stringify({
       content: contentWithOcrNote,
-      questions: sanitizedQuestions
+      questions: sanitizedQuestions,
+      meta: {
+        build: BUILD_MARKER,
+        questions_count: Array.isArray(sanitizedQuestions) ? sanitizedQuestions.length : 0,
+        processed_pages: processedPagesCount,
+        requested_pages: pageSpecToUse,
+      }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

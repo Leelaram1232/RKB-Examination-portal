@@ -332,6 +332,9 @@ export default function AIQuestionAssistant() {
       })();
 
       console.log('AI Response Data:', responseData);
+      if ((responseData as any)?.meta?.build) {
+        console.log('[AI Assistant] Edge build:', (responseData as any).meta);
+      }
 
       const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: responseData.content }];
       setMessages(newMessages);
@@ -372,7 +375,22 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
 
-      const questionsToProcess = Array.isArray(responseData.questions) ? responseData.questions : [];
+      // Some deployments can return `questions` as a JSON string or object-like array; normalize it.
+      const normalizedQuestionsRaw = (() => {
+        const q = (responseData as any)?.questions;
+        if (Array.isArray(q)) return q;
+        if (typeof q === 'string') {
+          try {
+            const parsed = JSON.parse(q);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })();
+
+      const questionsToProcess = normalizedQuestionsRaw;
       if (questionsToProcess.length > 0) {
         const newQuestions = questionsToProcess.map((q: any, idx: number) => ({
           ...q,
