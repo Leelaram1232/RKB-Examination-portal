@@ -220,7 +220,14 @@ export default function AIQuestionAssistant() {
     // Scroll inside the chat panel (not the whole page)
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+
+    // Only auto-scroll when user is already near the bottom.
+    // This prevents fighting the user's manual scroll (up/down).
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isNearBottom = distanceFromBottom < 120;
+    if (isNearBottom) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [messages]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
