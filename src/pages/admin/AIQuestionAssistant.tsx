@@ -242,6 +242,7 @@ export default function AIQuestionAssistant() {
       let out = '';
       let inString = false;
       let escape = false;
+      const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
       for (let i = 0; i < s.length; i++) {
         const ch = s[i];
 
@@ -261,9 +262,33 @@ export default function AIQuestionAssistant() {
 
         if (ch === '\\') {
           const next = s[i + 1] ?? '';
-          const isValidEscapeStarter = next && /["\\/bfnrtu]/.test(next);
-          // If it's not a valid JSON escape, insert an extra backslash so JSON.parse can succeed.
-          out += isValidEscapeStarter ? '\\' : '\\\\';
+          const next2 = s[i + 2] ?? '';
+
+          // Only treat as a true JSON escape when it really is one.
+          // This is important because LaTeX commands like \beta, \sqrt, \underset start with letters
+          // that overlap JSON escape starters (b, f, n, r, t, u).
+          const isDefinitelyJsonEscape = (() => {
+            if (!next) return false;
+            if (next === '"' || next === '\\' || next === '/') return true;
+            if (next === 'u') {
+              // Valid unicode escape must be \uXXXX (4 hex digits).
+              const h1 = s[i + 2] ?? '';
+              const h2 = s[i + 3] ?? '';
+              const h3 = s[i + 4] ?? '';
+              const h4 = s[i + 5] ?? '';
+              return Boolean(h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4));
+            }
+            if (/[bfnrt]/.test(next)) {
+              // If followed by a letter, it's almost certainly LaTeX (\beta, \frac, \tan, etc),
+              // not an intended JSON escape like \n.
+              if (next2 && /[A-Za-z]/.test(next2)) return false;
+              return true;
+            }
+            return false;
+          })();
+
+          // If it's not a real JSON escape, insert an extra backslash so JSON.parse can succeed.
+          out += isDefinitelyJsonEscape ? '\\' : '\\\\';
           escape = true;
           continue;
         }
