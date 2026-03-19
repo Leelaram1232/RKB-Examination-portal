@@ -274,10 +274,12 @@ Deno.serve(async (req) => {
       };
     });
 
-    // Groq on-demand tier has strict token/TPM limits; when OCR is large we must
-    // aggressively limit what we send back to Groq (OCR + chat history).
-    const MAX_OCR_CONTEXT_CHARS = 20000; // safe for this model tier
-    const MAX_MESSAGE_CHARS = 4000;
+    // Groq on-demand tier has strict token/TPM limits.
+    // When OCR is large, we must be very aggressive to stay below TPM.
+    // (Groq "Requested" in this error is still high even after truncation,
+    // so we reduce more.)
+    const MAX_OCR_CONTEXT_CHARS = 8000;
+    const MAX_MESSAGE_CHARS = 1200;
 
     const truncateText = (s: string, maxChars: number) => {
       if (!s) return s;
@@ -298,7 +300,7 @@ Deno.serve(async (req) => {
         content: truncateText(m.content || '', MAX_MESSAGE_CHARS),
       }))
       // Keep only the most recent part of the conversation (older messages add tokens but usually don't help extraction).
-      .slice(-(file_url ? 4 : 8));
+      .slice(-(file_url ? 2 : 6));
 
     const systemPrompt = `You are an expert Exam Question Assistant for JEE/NEET.
 Generate or extract high-quality questions based on the provided context or prompt.
