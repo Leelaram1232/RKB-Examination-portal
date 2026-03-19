@@ -120,9 +120,11 @@ const LiveMonitoring = () => {
         if (extRegsError || !extRegs) return [];
 
         const extRegMap = new Map<string, any>((extRegs || []).map((r: any) => [r.id, r]));
+        // Do NOT filter by completion flags here – show all sessions for this exam.
+        // Camera/screen tiles will naturally be empty for finished sessions.
         const filteredSessions = (externalSessionsData || []).filter((s: any) => {
           const reg = extRegMap.get(s.registration_id);
-          return reg?.exam_id === examId && (!s.is_completed || s.is_auto_submitted === true);
+          return reg?.exam_id === examId;
         });
 
         if (filteredSessions.length === 0) return [];
