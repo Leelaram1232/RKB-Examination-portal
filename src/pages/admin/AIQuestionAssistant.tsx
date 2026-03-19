@@ -693,7 +693,7 @@ export default function AIQuestionAssistant() {
               </div>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col p-0 min-h-0">
-              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 h-full">
+              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-scroll px-4 h-full">
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
@@ -799,7 +799,7 @@ export default function AIQuestionAssistant() {
                     </p>
                   </div>
                 ) : (
-                  <div className="h-full overflow-y-auto p-6">
+                  <div className="h-full overflow-y-scroll p-6">
                     <div className="space-y-6 pb-6">
                       {generatedQuestions.map((q) => (
                         <div key={q.id} className="relative group">
