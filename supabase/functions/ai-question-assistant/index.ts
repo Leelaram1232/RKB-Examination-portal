@@ -35,7 +35,7 @@ async function callMathpixPdf(
   appId: string,
   appKey: string,
   pageRanges?: string
-): Promise<string> {
+): Promise<{ ocrText: string; processedPages: number }> {
   console.log('[Mathpix] Submitting PDF for processing:', fileUrl);
 
   // Use polling (no SSE) to avoid Mathpix streaming 504s/compute limits.
@@ -103,30 +103,45 @@ async function callMathpixPdf(
           throw new Error(`Mathpix md download failed (${mdResp.status})`);
         }
 
-        const mdText = await mdResp.text();
+        let mdText = await mdResp.text();
+
+        // Mathpix sometimes returns embedded base64 SVG for some scanned PDFs.
+        // That text is not useful for question extraction, so strip it out.
+        mdText = mdText.replace(
+          /data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+/g,
+          '[EMBEDDED_SVG_OMITTED]'
+        );
 
         // Diagram label OCR is stored inside `lines.json` (not always included in `md`/mmd),
         // so we append it to the OCR context to improve question generation from diagrams/tables.
         let linesText = '';
+        let processedPages = 0;
         try {
           const linesResp = await fetch(
             `https://api.mathpix.com/v3/pdf/${pdf_id}.lines.json`,
             { headers: { 'app_id': appId, 'app_key': appKey } }
           );
           if (linesResp.ok) {
-          const linesJson = await linesResp.json() as unknown;
-          const maybePages = (linesJson as { pages?: unknown }).pages;
-          const pages = Array.isArray(maybePages) ? (maybePages as unknown[]) : [];
+            const linesJson = await linesResp.json() as unknown;
+            const maybePages = (linesJson as { pages?: unknown }).pages;
+            const pages = Array.isArray(maybePages) ? (maybePages as unknown[]) : [];
+            processedPages = pages.length;
+
             const maxChars = 20000;
-            for (const page of pages) {
-              const maybeLines = (page as { lines?: unknown }).lines;
+            for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+              const page = pages[pageIndex] as { lines?: unknown };
+              const maybeLines = page.lines;
               const lines = Array.isArray(maybeLines) ? maybeLines : [];
+
+              linesText += `\n\n[PAGE ${pageIndex + 1}]\n`;
+
               for (const line of lines) {
+                const lineObj = line as { text_display?: unknown; text?: unknown };
                 const t =
-                  (typeof line?.text_display === 'string' && line.text_display.trim()
-                    ? line.text_display
-                    : typeof line?.text === 'string'
-                      ? line.text
+                  (typeof lineObj.text_display === 'string' && lineObj.text_display.trim()
+                    ? lineObj.text_display
+                    : typeof lineObj.text === 'string'
+                      ? lineObj.text
                       : '') || '';
                 if (t.trim()) linesText += t.trim() + '\n';
                 if (linesText.length > maxChars) break;
@@ -138,7 +153,10 @@ async function callMathpixPdf(
           // Non-fatal: continue with mdText only.
         }
 
-        return linesText ? `${mdText}\n\n[LINES_JSON]\n${linesText}` : mdText;
+        const ocrText = linesText
+          ? `${mdText}\n\n[LINES_JSON]\n${linesText}`
+          : mdText;
+        return { ocrText, processedPages };
       }
 
       if (statusData.status === 'failed') {
@@ -186,6 +204,13 @@ function extractPageRangesFromPrompt(text: string): string | null {
     return `${a}-${b}`;
   }
 
+  // Single-page requests: "page 7" -> "7-7"
+  const singlePageMatch = t.match(/page\s*(\d+)/i);
+  if (singlePageMatch) {
+    const n = singlePageMatch[1];
+    return `${n}-${n}`;
+  }
+
   // Example:
   // "pages 1,2,3"
   const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
@@ -222,6 +247,7 @@ Deno.serve(async (req) => {
     }
 
     let ocrContext = '';
+    let processedPagesCount = 0;
     let ocrError: string | null = null;
     const lastUserMessage =
       [...messages].reverse().find((m) => m.role === 'user')?.content || '';
@@ -234,17 +260,26 @@ Deno.serve(async (req) => {
         ocrError = 'Mathpix OCR keys not configured on server.';
       } else {
         try {
-          ocrContext = await callMathpixPdf(
+          const ocrResult = await callMathpixPdf(
             file_url,
             mathpixId,
             mathpixKey,
             pageRangesToUse
           );
+          ocrContext = ocrResult.ocrText;
+          processedPagesCount = ocrResult.processedPages;
           console.log('[Assistant] OCR success, length:', ocrContext.length);
 
           // Quick sanity log so we can confirm OCR text arrived.
           console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
           
+          // Quality check: if we ended up with essentially no readable OCR text,
+          // avoid sending garbage like embedded SVG/base64 to Groq.
+          const usableChars = ocrContext.replace(/\s/g, '').length;
+          if (usableChars < 200) {
+            throw new Error(`OCR produced too little readable text (usableChars=${usableChars}). Try a smaller page range like "pages 1-10".`);
+          }
+
           // Truncate extremely large OCR text to prevent memory crashes
           if (ocrContext.length > 50000) {
             console.log('[Assistant] Truncating OCR text from', ocrContext.length, 'to 50000');
@@ -322,6 +357,14 @@ Generate or extract high-quality questions based on the provided context or prom
 - **MCQ IS DEFAULT**: Unless "numerical" or "fill in blank" is requested, always stick to MCQ.
 - **AVOID REPETITION**: Never repeat a question from the conversation history.
 - **USE OCR FIRST**: If OCR Extracted Content is provided (file uploaded), you MUST generate questions strictly from that OCR text. Do not invent unrelated questions.
+
+### ANSWER KEY / SOLUTIONS
+- If OCR Extracted Content contains an answer key, correct answer list, or solution table, you MUST use it to fill:
+-  'correct_option' for MCQ questions, and/or
+-  'correct_answer' for fill-in-the-blank/numerical questions.
+- Match by 'question_number' if present in the OCR.
+- If question numbers are not present, match by the order of appearance in the OCR (Q1 uses the first answer entry, etc.).
+- Do NOT guess correct answers when the answer key is present; derive them from the OCR.
 
 ### JSON SCHEMA
 [
@@ -557,7 +600,7 @@ ${lastUser}`;
 
     const contentWithOcrNote =
       file_url && pageRangesToUse
-        ? `OCR processed for pages ${pageRangesToUse}.\n\n${cleanedContent}`
+        ? `OCR processed: ${processedPagesCount} page(s) extracted by Mathpix (requested: ${pageRangesToUse}).\n\n${cleanedContent}`
         : cleanedContent;
 
     const sanitizedQuestions = sanitizeLatexControlEscapes(questions) as unknown[];
