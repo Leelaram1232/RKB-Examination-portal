@@ -223,6 +223,56 @@ function extractPageRangesFromPrompt(text: string): string | null {
   return null;
 }
 
+type PageRange = { a: number; b: number };
+
+function parsePageSpec(spec: string): PageRange[] {
+  const raw = String(spec || '').trim();
+  if (!raw) return [];
+
+  // Normalize common separators: "1 to 3" => "1-3"
+  const normalized = raw
+    .replace(/\s+/g, '')
+    .replace(/to/gi, '-')
+    .replace(/–/g, '-'); // en-dash
+
+  const parts = normalized.split(',').map((p) => p.trim()).filter(Boolean);
+  const ranges: PageRange[] = [];
+
+  for (const part of parts) {
+    const mRange = part.match(/^(\d+)-(\d+)$/);
+    if (mRange) {
+      const a = Number.parseInt(mRange[1], 10);
+      const b = Number.parseInt(mRange[2], 10);
+      if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+        ranges.push({ a: Math.min(a, b), b: Math.max(a, b) });
+      }
+      continue;
+    }
+    const mSingle = part.match(/^(\d+)$/);
+    if (mSingle) {
+      const n = Number.parseInt(mSingle[1], 10);
+      if (Number.isFinite(n) && n > 0) ranges.push({ a: n, b: n });
+    }
+  }
+
+  // Merge overlaps / adjacent ranges to reduce OCR calls
+  ranges.sort((x, y) => x.a - y.a || x.b - y.b);
+  const merged: PageRange[] = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...r });
+      continue;
+    }
+    if (r.a <= last.b + 1) {
+      last.b = Math.max(last.b, r.b);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  return merged;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -253,8 +303,11 @@ Deno.serve(async (req) => {
     const lastUserMessage =
       [...messages].reverse().find((m) => m.role === 'user')?.content || '';
     const requestedPageRanges = extractPageRangesFromPrompt(lastUserMessage);
-    // Mathpix can time out on whole large PDFs, so default to a small chunk.
-    const pageRangesToUse = requestedPageRanges || '1-10';
+    // Mathpix can time out on whole large PDFs, so default to a small chunk when user didn't specify.
+    const pageSpecToUse = requestedPageRanges || '1-10';
+    const requestedRanges = parsePageSpec(pageSpecToUse);
+    // Fallback safety: if parsing failed, keep the default chunk.
+    const rangesToUse = requestedRanges.length > 0 ? requestedRanges : [{ a: 1, b: 10 }];
 
     const parseRange = (range: string): { a: number; b: number } | null => {
       const m = String(range || '').trim().match(/^(\d+)\s*-\s*(\d+)$/);
@@ -273,96 +326,72 @@ Deno.serve(async (req) => {
       return `${start}-${end}`;
     };
 
-    const isSmallRange = (range: string, maxPages = 12) => {
-      const r = parseRange(range);
-      if (!r) return false;
-      return r.b >= r.a && (r.b - r.a + 1) <= maxPages;
-    };
+    const totalPagesRequested = rangesToUse.reduce((sum, r) => sum + (r.b - r.a + 1), 0);
     if (file_url) {
       if (!mathpixId || !mathpixKey) {
         console.warn('[Assistant] File uploaded but Mathpix keys are missing.');
         ocrError = 'Mathpix OCR keys not configured on server.';
       } else {
         try {
-          // For mid-range extraction (e.g. 6-10), OCR can fail if one page is mostly image/SVG.
-          // To make it robust, OCR each page individually and merge only the pages with readable text.
-          if (isSmallRange(pageRangesToUse, 12)) {
-            const r = parseRange(pageRangesToUse)!;
-            const collected: string[] = [];
-            let totalReadable = 0;
-            let pagesWithText = 0;
+          // Any range support:
+          // - If total pages requested is small, OCR page-by-page (robust vs image-only pages).
+          // - If total pages requested is large, OCR in safe chunks (reduces timeouts).
+          const collected: string[] = [];
+          let totalReadable = 0;
+          let pagesWithText = 0;
+          let processedTotal = 0;
 
-            for (let p = r.a; p <= r.b; p++) {
-              const pageRange = `${p}-${p}`;
-              try {
-                const per = await callMathpixPdf(file_url, mathpixId, mathpixKey, pageRange);
-                if (per.readableChars >= 250) {
-                  collected.push(`\n\n[REQUESTED_PAGE ${p}]\n` + per.ocrText);
-                  totalReadable += per.readableChars;
-                  pagesWithText += 1;
-                } else {
-                  console.warn('[Assistant] Low readable OCR for page', p, 'readableChars=', per.readableChars);
-                }
-              } catch (e) {
-                console.warn('[Assistant] OCR failed for page', p, 'err=', e instanceof Error ? e.message : String(e));
+          const OCR_CHUNK_SIZE = 10;
+
+          const ocrOneRangeChunked = async (start: number, end: number) => {
+            for (let s = start; s <= end; s += OCR_CHUNK_SIZE) {
+              const e = Math.min(end, s + OCR_CHUNK_SIZE - 1);
+              const chunkSpec = `${s}-${e}`;
+              const chunk = await callMathpixPdf(file_url, mathpixId, mathpixKey, chunkSpec);
+              processedTotal += (e - s + 1);
+              if (chunk.ocrText?.trim()) {
+                collected.push(`\n\n[REQUESTED_PAGES ${chunkSpec}]\n` + chunk.ocrText);
               }
+              totalReadable += chunk.readableChars || 0;
+              if ((chunk.readableChars || 0) >= 200) pagesWithText += 1;
             }
+          };
 
-            processedPagesCount = r.b - r.a + 1;
-            ocrContext = collected.join('\n');
-
-            console.log('[Assistant] OCR merged pages:', { requested: pageRangesToUse, pagesWithText, totalReadable });
-
-            // If very little text was found, still continue but log a warning.
-            // The LLM may still be able to generate/interpret questions from partial text.
-            if (totalReadable < 300) {
-              console.warn(
-                '[Assistant] Low total readable OCR text for requested pages',
-                pageRangesToUse,
-                'totalReadable=',
-                totalReadable
-              );
+          if (totalPagesRequested <= 12) {
+            for (const r of rangesToUse) {
+              for (let p = r.a; p <= r.b; p++) {
+                const pageRange = `${p}-${p}`;
+                try {
+                  const per = await callMathpixPdf(file_url, mathpixId, mathpixKey, pageRange);
+                  processedTotal += 1;
+                  if (per.ocrText?.trim()) {
+                    collected.push(`\n\n[REQUESTED_PAGE ${p}]\n` + per.ocrText);
+                  }
+                  totalReadable += per.readableChars || 0;
+                  if ((per.readableChars || 0) >= 200) pagesWithText += 1;
+                } catch (e) {
+                  console.warn('[Assistant] OCR failed for page', p, 'err=', e instanceof Error ? e.message : String(e));
+                }
+              }
             }
           } else {
-            const ocrResult = await callMathpixPdf(
-              file_url,
-              mathpixId,
-              mathpixKey,
-              pageRangesToUse
-            );
-            ocrContext = ocrResult.ocrText;
-            processedPagesCount = ocrResult.processedPages;
-            console.log('[Assistant] OCR success, length:', ocrContext.length);
-
-            // Quick sanity log so we can confirm OCR text arrived.
-            console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
-          
-            // If we ended up with very little readable OCR text, just log a warning
-            // but still let Groq see whatever text exists (better than blocking).
-            if (ocrResult.readableChars < 300) {
-              const expanded = expandRange(pageRangesToUse, 1);
-              if (expanded !== pageRangesToUse) {
-                console.warn('[Assistant] Low readable OCR. Optionally retrying with expanded range:', expanded);
-                try {
-                  const retry = await callMathpixPdf(file_url, mathpixId, mathpixKey, expanded);
-                  if (retry.readableChars >= 150) {
-                    ocrContext = retry.ocrText;
-                    processedPagesCount = retry.processedPages;
-                  }
-                } catch (retryErr) {
-                  console.warn(
-                    '[Assistant] Expanded-range OCR also low/failed; proceeding with original low-text OCR.',
-                    retryErr
-                  );
-                }
-              } else {
-                console.warn(
-                  '[Assistant] Very low readable OCR text for this page range (readableChars=',
-                  ocrResult.readableChars,
-                  '). Proceeding anyway so Groq can still try to generate questions.'
-                );
-              }
+            for (const r of rangesToUse) {
+              await ocrOneRangeChunked(r.a, r.b);
             }
+          }
+
+          processedPagesCount = processedTotal;
+          ocrContext = collected.join('\n');
+
+          console.log('[Assistant] OCR merged pages:', { requested: pageSpecToUse, pagesWithText, totalReadable, processedTotal });
+
+          if (totalReadable < 150) {
+            console.warn(
+              '[Assistant] Very low total readable OCR text for requested pages',
+              pageSpecToUse,
+              'totalReadable=',
+              totalReadable
+            );
           }
 
           // Truncate extremely large OCR text to prevent memory crashes
@@ -382,7 +411,7 @@ Deno.serve(async (req) => {
     if (file_url && ocrError) {
       return new Response(
         JSON.stringify({
-          content: `OCR failed for pages ${pageRangesToUse}. ${ocrError}`,
+          content: `OCR failed for pages ${pageSpecToUse}. ${ocrError}`,
           questions: [],
         }),
         {
@@ -680,8 +709,8 @@ ${lastUser}`;
       .trim();
 
     const contentWithOcrNote =
-      file_url && pageRangesToUse
-        ? `OCR processed: ${processedPagesCount} page(s) extracted by Mathpix (requested: ${pageRangesToUse}).\n\n${cleanedContent}`
+      file_url && pageSpecToUse
+        ? `OCR processed: ${processedPagesCount} page(s) extracted by Mathpix (requested: ${pageSpecToUse}).\n\n${cleanedContent}`
         : cleanedContent;
 
     const sanitizedQuestions = sanitizeLatexControlEscapes(questions) as unknown[];
