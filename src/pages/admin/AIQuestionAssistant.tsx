@@ -674,17 +674,19 @@ export default function AIQuestionAssistant() {
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
+                  size="sm"
                   onClick={handleDeleteChat}
                   disabled={isSending}
                   title="Delete chat"
+                  className="text-destructive"
                 >
-                  <Trash2 className="h-4 w-4 text-destructive" />
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete chat
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
-              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4">
+            <CardContent className="flex-1 flex flex-col p-0 min-h-0">
+              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 h-full">
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
