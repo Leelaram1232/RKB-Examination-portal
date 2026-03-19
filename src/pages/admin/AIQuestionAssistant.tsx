@@ -123,8 +123,23 @@ export default function AIQuestionAssistant() {
     const text = (content || '').trim();
     if (!text) return [];
 
+    // Normalize common AI formatting variants so the parser can pick them up.
+    // Examples we want to support:
+    // - "Question 1: ..." -> "Q1. ..."
+    // - "Option A)" / "Option A:" -> "A)"/"A."
+    // - "Correct Answer: B" / "Answer - B" -> "Answer: B"
+    const normalized = text
+      .replace(/\r\n/g, '\n')
+      .replace(/^\s*[-*]\s+/gm, '') // remove leading markdown bullets
+      .replace(/Question\s+(\d+)\s*[:\.)-]\s*/gi, 'Q$1. ')
+      .replace(/\bQ\s*\.?\s*(\d+)\s*[:\.)-]\s*/gi, 'Q$1. ')
+      .replace(/\bOption\s*([A-D])\s*[:\.)-]?\s*/gi, '$1) ')
+      .replace(/\bCorrect\s*Answer\b\s*[:\.)-]?\s*/gi, 'Answer: ')
+      .replace(/\bAnswer\s*[-]\s*/gi, 'Answer: ')
+      .replace(/\bAns\s*[:\.)-]?\s*/gi, 'Answer: ');
+
     // First try the robust parser (works when AI returns numbered questions).
-    const parsed = parseQuestionText(text);
+    const parsed = parseQuestionText(normalized);
     const fromParser = parsed.sections.flatMap((s) =>
       s.questions.map((q, idx) => ({
         ...q,
@@ -136,9 +151,9 @@ export default function AIQuestionAssistant() {
     if (fromParser.length > 0) return fromParser;
 
     // Fallback: extract bullet/numbered blocks even if the AI reply is conversational.
-    const blocks = text
-      .replace(/\r\n/g, '\n')
-      .split(/\n(?=\s*(?:\d+[\.\)]|-)\s+)/g)
+    const blocks = normalized
+      // Split where a new question block starts (beginning of string OR after newline)
+      .split(/(?:(?<=\n)|^)\s*(?=\d+[\.\)]\s+|\d+\s*[\.\)]\s+|-)\s*/g)
       .map((b) => b.trim())
       .filter(Boolean);
 
@@ -149,12 +164,21 @@ export default function AIQuestionAssistant() {
         .replace(/^\s*(?:\d+[\.\)]|-)\s*/g, '')
         .replace(/(?:^|\n)\s*(?:Answer|Ans|Correct)\s*[:\-]\s*.+$/im, '')
         .trim();
+      const firstNonAnswerLine =
+        block
+          .split('\n')
+          .map((l) => l.trim())
+          .find((l) => l && !/(?:Answer|Ans|Correct)\s*[:\-]/i.test(l)) ?? '';
+      const finalQuestionText =
+        cleanedQuestion && cleanedQuestion !== '(No question text provided)'
+          ? cleanedQuestion
+          : firstNonAnswerLine || '(No question text provided)';
 
       const isMcqKey = rawAnswer ? /^[A-Da-d1-4](?:\)|\.|$)?$/.test(rawAnswer.trim()) : false;
       return {
         id: Math.random().toString(36).substring(2, 11),
         questionNumber: generatedQuestions.length + idx + 1,
-        questionText: cleanedQuestion || '(No question text provided)',
+        questionText: finalQuestionText,
         optionA: '',
         optionB: '',
         optionC: '',
@@ -171,7 +195,16 @@ export default function AIQuestionAssistant() {
       };
     };
 
-    return blocks.map(toQuestion).filter((q) => q.questionText && q.questionText !== '(No question text provided)');
+    // Keep questions even if parsing the question text is imperfect,
+    // as long as we have an answer key we can still show in preview.
+    return blocks
+      .map(toQuestion)
+      .filter(
+        (q) =>
+          (q.questionText && q.questionText.trim() && q.questionText !== '(No question text provided)') ||
+          (q.correctOption && q.correctOption.trim()) ||
+          (q.correctAnswer && q.correctAnswer.trim())
+      );
   };
 
   useEffect(() => {
@@ -753,7 +786,7 @@ export default function AIQuestionAssistant() {
                 </div>
               </div>
               
-              <div className="sticky bottom-0 z-30 shrink-0 border-t bg-card p-3 shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.15)] sm:p-4">
+              <div className="relative z-30 mt-auto shrink-0 border-t bg-card p-3 shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.15)] sm:p-4">
                 <div className="flex gap-2">
                   <input 
                     type="file" 
