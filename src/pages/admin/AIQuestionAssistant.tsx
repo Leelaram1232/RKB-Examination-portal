@@ -506,11 +506,28 @@ export default function AIQuestionAssistant() {
 
         const fromTagged = Array.isArray(taggedQuestions) ? taggedQuestions : [];
 
+        // If tag exists but parsing failed, try a last-resort parse:
+        // 1) parse `[...]` from the whole content (in case tag extraction was weird)
+        // 2) strip the tagged block and parse remaining text as plain questions
+        const salvageTagged = (() => {
+          if (fromTagged.length > 0) return fromTagged;
+          if (!/<questions_json>/i.test(contentText)) return [];
+
+          const fromWhole = safeParseQuestionsJson(contentText);
+          if (fromWhole.length > 0) return fromWhole;
+
+          const withoutTagged = contentText
+            .replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '')
+            .replace(/<questions_json>[\s\S]*$/i, '')
+            .trim();
+          return withoutTagged ? parseAssistantContentFallback(withoutTagged) : [];
+        })();
+
         // Guardrail: don't "invent" preview questions from OCR status text.
         // Only attempt parsing when the content actually contains question-like markers.
         const derivedQuestions =
-          fromTagged.length > 0
-            ? fromTagged
+          (fromTagged.length > 0 || (Array.isArray(salvageTagged) && salvageTagged.length > 0))
+            ? (salvageTagged as any[])
             : hasQuestionSignals
               ? parseAssistantContentFallback(contentText)
               : [];
