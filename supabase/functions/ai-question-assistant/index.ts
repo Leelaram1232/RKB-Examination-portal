@@ -313,10 +313,14 @@ Deno.serve(async (req) => {
 
             console.log('[Assistant] OCR merged pages:', { requested: pageRangesToUse, pagesWithText, totalReadable });
 
+            // If very little text was found, still continue but log a warning.
+            // The LLM may still be able to generate/interpret questions from partial text.
             if (totalReadable < 300) {
-              throw new Error(
-                `OCR produced too little readable text for requested pages ${pageRangesToUse}. ` +
-                `Try a different range like "pages 1-10".`
+              console.warn(
+                '[Assistant] Low total readable OCR text for requested pages',
+                pageRangesToUse,
+                'totalReadable=',
+                totalReadable
               );
             }
           } else {
@@ -333,29 +337,29 @@ Deno.serve(async (req) => {
             // Quick sanity log so we can confirm OCR text arrived.
             console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
           
-            // Quality check: if we ended up with essentially no readable OCR text,
-            // avoid sending garbage like embedded SVG/base64 to Groq.
+            // If we ended up with very little readable OCR text, just log a warning
+            // but still let Groq see whatever text exists (better than blocking).
             if (ocrResult.readableChars < 300) {
-              // Auto-retry with a slightly expanded range so queries like "pages 7-8" still work
-              // even when one of the pages is mostly image/SVG.
               const expanded = expandRange(pageRangesToUse, 1);
               if (expanded !== pageRangesToUse) {
-                console.warn('[Assistant] Low readable OCR. Retrying with expanded range:', expanded);
-                const retry = await callMathpixPdf(file_url, mathpixId, mathpixKey, expanded);
-                if (retry.readableChars >= 300) {
-                  ocrContext = retry.ocrText;
-                  processedPagesCount = retry.processedPages;
-                } else {
-                  throw new Error(
-                    `OCR produced too little readable text for this range (requested=${pageRangesToUse}, expanded=${expanded}). ` +
-                    `This page range appears to be image-only/SVG-heavy. Try another range like "pages 1-10".`
+                console.warn('[Assistant] Low readable OCR. Optionally retrying with expanded range:', expanded);
+                try {
+                  const retry = await callMathpixPdf(file_url, mathpixId, mathpixKey, expanded);
+                  if (retry.readableChars >= 150) {
+                    ocrContext = retry.ocrText;
+                    processedPagesCount = retry.processedPages;
+                  }
+                } catch (retryErr) {
+                  console.warn(
+                    '[Assistant] Expanded-range OCR also low/failed; proceeding with original low-text OCR.',
+                    retryErr
                   );
                 }
               } else {
-                throw new Error(
-                  `OCR produced too little readable text for this page range (readableChars=${ocrResult.readableChars}). ` +
-                  `This usually happens when the PDF page is image-only or contains embedded SVG. ` +
-                  `Try "pages 1-10" or another range where questions exist.`
+                console.warn(
+                  '[Assistant] Very low readable OCR text for this page range (readableChars=',
+                  ocrResult.readableChars,
+                  '). Proceeding anyway so Groq can still try to generate questions.'
                 );
               }
             }
@@ -374,7 +378,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If OCR fails, don't let the model hallucinate random questions.
+    // If OCR completely failed (e.g., network/auth error), don't let the model hallucinate random questions.
     if (file_url && ocrError) {
       return new Response(
         JSON.stringify({
