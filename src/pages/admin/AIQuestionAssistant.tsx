@@ -122,6 +122,9 @@ export default function AIQuestionAssistant() {
   const parseAssistantContentFallback = (content: string): ParsedQuestion[] => {
     const text = (content || '').trim();
     if (!text) return [];
+    // Guardrail: never attempt "plain text" parsing on tagged JSON blocks.
+    // (If we do, the JSON gets treated like question/options and makes garbage preview cards.)
+    if (/<questions_json>/i.test(text)) return [];
 
     // Normalize common AI formatting variants so the parser can pick them up.
     // Examples we want to support:
@@ -218,12 +221,19 @@ export default function AIQuestionAssistant() {
       // Escape backslashes that are not valid JSON escape starters.
       s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
 
+    const extractJsonArraySubstring = (s: string) => {
+      const start = s.indexOf('[');
+      const end = s.lastIndexOf(']');
+      if (start >= 0 && end > start) return s.slice(start, end + 1);
+      return s;
+    };
+
     try {
-      const parsed = JSON.parse(cleaned);
+      const parsed = JSON.parse(extractJsonArraySubstring(cleaned));
       return Array.isArray(parsed) ? parsed : [];
     } catch (e1) {
       try {
-        const repaired = repairInvalidBackslashes(cleaned);
+        const repaired = repairInvalidBackslashes(extractJsonArraySubstring(cleaned));
         const parsed2 = JSON.parse(repaired);
         return Array.isArray(parsed2) ? parsed2 : [];
       } catch (e2) {
@@ -485,7 +495,10 @@ export default function AIQuestionAssistant() {
           /Correct\s*Answer/i.test(contentText);
 
         // If the assistant returned tagged JSON in the content, parse it.
-        const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
+        // Support both closed tags and "missing closing tag" cases.
+        const tagMatch =
+          contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i) ||
+          contentText.match(/<questions_json>\s*([\s\S]*)$/i);
         const taggedQuestions = (() => {
             if (!tagMatch?.[1]) return [];
           return safeParseQuestionsJson(tagMatch[1]);
