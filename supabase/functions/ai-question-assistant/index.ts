@@ -272,49 +272,92 @@ Deno.serve(async (req) => {
       const end = Math.max(start, r.b + pad);
       return `${start}-${end}`;
     };
+
+    const isSmallRange = (range: string, maxPages = 12) => {
+      const r = parseRange(range);
+      if (!r) return false;
+      return r.b >= r.a && (r.b - r.a + 1) <= maxPages;
+    };
     if (file_url) {
       if (!mathpixId || !mathpixKey) {
         console.warn('[Assistant] File uploaded but Mathpix keys are missing.');
         ocrError = 'Mathpix OCR keys not configured on server.';
       } else {
         try {
-          const ocrResult = await callMathpixPdf(
-            file_url,
-            mathpixId,
-            mathpixKey,
-            pageRangesToUse
-          );
-          ocrContext = ocrResult.ocrText;
-          processedPagesCount = ocrResult.processedPages;
-          console.log('[Assistant] OCR success, length:', ocrContext.length);
+          // For mid-range extraction (e.g. 6-10), OCR can fail if one page is mostly image/SVG.
+          // To make it robust, OCR each page individually and merge only the pages with readable text.
+          if (isSmallRange(pageRangesToUse, 12)) {
+            const r = parseRange(pageRangesToUse)!;
+            const collected: string[] = [];
+            let totalReadable = 0;
+            let pagesWithText = 0;
 
-          // Quick sanity log so we can confirm OCR text arrived.
-          console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
+            for (let p = r.a; p <= r.b; p++) {
+              const pageRange = `${p}-${p}`;
+              try {
+                const per = await callMathpixPdf(file_url, mathpixId, mathpixKey, pageRange);
+                if (per.readableChars >= 250) {
+                  collected.push(`\n\n[REQUESTED_PAGE ${p}]\n` + per.ocrText);
+                  totalReadable += per.readableChars;
+                  pagesWithText += 1;
+                } else {
+                  console.warn('[Assistant] Low readable OCR for page', p, 'readableChars=', per.readableChars);
+                }
+              } catch (e) {
+                console.warn('[Assistant] OCR failed for page', p, 'err=', e instanceof Error ? e.message : String(e));
+              }
+            }
+
+            processedPagesCount = r.b - r.a + 1;
+            ocrContext = collected.join('\n');
+
+            console.log('[Assistant] OCR merged pages:', { requested: pageRangesToUse, pagesWithText, totalReadable });
+
+            if (totalReadable < 300) {
+              throw new Error(
+                `OCR produced too little readable text for requested pages ${pageRangesToUse}. ` +
+                `Try a different range like "pages 1-10".`
+              );
+            }
+          } else {
+            const ocrResult = await callMathpixPdf(
+              file_url,
+              mathpixId,
+              mathpixKey,
+              pageRangesToUse
+            );
+            ocrContext = ocrResult.ocrText;
+            processedPagesCount = ocrResult.processedPages;
+            console.log('[Assistant] OCR success, length:', ocrContext.length);
+
+            // Quick sanity log so we can confirm OCR text arrived.
+            console.log('[Assistant] OCR preview:', ocrContext.substring(0, 400));
           
-          // Quality check: if we ended up with essentially no readable OCR text,
-          // avoid sending garbage like embedded SVG/base64 to Groq.
-          if (ocrResult.readableChars < 300) {
-            // Auto-retry with a slightly expanded range so queries like "pages 7-8" still work
-            // even when one of the pages is mostly image/SVG.
-            const expanded = expandRange(pageRangesToUse, 1);
-            if (expanded !== pageRangesToUse) {
-              console.warn('[Assistant] Low readable OCR. Retrying with expanded range:', expanded);
-              const retry = await callMathpixPdf(file_url, mathpixId, mathpixKey, expanded);
-              if (retry.readableChars >= 300) {
-                ocrContext = retry.ocrText;
-                processedPagesCount = retry.processedPages;
+            // Quality check: if we ended up with essentially no readable OCR text,
+            // avoid sending garbage like embedded SVG/base64 to Groq.
+            if (ocrResult.readableChars < 300) {
+              // Auto-retry with a slightly expanded range so queries like "pages 7-8" still work
+              // even when one of the pages is mostly image/SVG.
+              const expanded = expandRange(pageRangesToUse, 1);
+              if (expanded !== pageRangesToUse) {
+                console.warn('[Assistant] Low readable OCR. Retrying with expanded range:', expanded);
+                const retry = await callMathpixPdf(file_url, mathpixId, mathpixKey, expanded);
+                if (retry.readableChars >= 300) {
+                  ocrContext = retry.ocrText;
+                  processedPagesCount = retry.processedPages;
+                } else {
+                  throw new Error(
+                    `OCR produced too little readable text for this range (requested=${pageRangesToUse}, expanded=${expanded}). ` +
+                    `This page range appears to be image-only/SVG-heavy. Try another range like "pages 1-10".`
+                  );
+                }
               } else {
                 throw new Error(
-                  `OCR produced too little readable text for this range (requested=${pageRangesToUse}, expanded=${expanded}). ` +
-                  `This page range appears to be image-only/SVG-heavy. Try another range like "pages 1-10".`
+                  `OCR produced too little readable text for this page range (readableChars=${ocrResult.readableChars}). ` +
+                  `This usually happens when the PDF page is image-only or contains embedded SVG. ` +
+                  `Try "pages 1-10" or another range where questions exist.`
                 );
               }
-            } else {
-              throw new Error(
-                `OCR produced too little readable text for this page range (readableChars=${ocrResult.readableChars}). ` +
-                `This usually happens when the PDF page is image-only or contains embedded SVG. ` +
-                `Try "pages 1-10" or another range where questions exist.`
-              );
             }
           }
 
