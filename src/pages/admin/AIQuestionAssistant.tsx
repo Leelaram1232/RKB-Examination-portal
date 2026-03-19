@@ -336,7 +336,17 @@ export default function AIQuestionAssistant() {
         console.log('[AI Assistant] Edge build:', (responseData as any).meta);
       }
 
-      const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: responseData.content }];
+      // Don't show raw `<questions_json>...</questions_json>` in the chat UI.
+      // That block is meant for parsing into preview, not for displaying to admins.
+      const assistantChatContent =
+        typeof responseData.content === 'string'
+          ? responseData.content.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim()
+          : String((responseData as any)?.content ?? '').trim();
+
+      const newMessages: Message[] = [
+        ...conversationHistory,
+        { role: 'assistant', content: assistantChatContent || '[No response content]' },
+      ];
       setMessages(newMessages);
 
       // Persist chat history
