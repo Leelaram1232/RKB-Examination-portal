@@ -92,8 +92,93 @@ const LiveMonitoring = () => {
       navigate('/admin/exams');
       return;
     }
-
     setExam(resolvedExam);
+
+    // Fast path: many deployments keep ALL sessions/registrations/profiles in the external Supabase only.
+    // Try to load active sessions directly from the external project by exam_id.
+    const loadExternalSessionsByExam = async () => {
+      try {
+        const { data: externalSessionsData, error: extSessionsError } = await (externalSupabase as any)
+          .from('exam_sessions')
+          .select(
+            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
+          )
+          .limit(200);
+
+        if (extSessionsError || !externalSessionsData || externalSessionsData.length === 0) {
+          return [];
+        }
+
+        const extRegistrationIds = [...new Set(externalSessionsData.map((s: any) => s.registration_id).filter(Boolean))];
+        if (extRegistrationIds.length === 0) return [];
+
+        const { data: extRegs, error: extRegsError } = await (externalSupabase as any)
+          .from('registrations')
+          .select('id, registration_number, student_id, exam_id')
+          .in('id', extRegistrationIds);
+
+        if (extRegsError || !extRegs) return [];
+
+        const extRegMap = new Map<string, any>((extRegs || []).map((r: any) => [r.id, r]));
+        const filteredSessions = (externalSessionsData || []).filter((s: any) => {
+          const reg = extRegMap.get(s.registration_id);
+          return reg?.exam_id === examId && (!s.is_completed || s.is_auto_submitted === true);
+        });
+
+        if (filteredSessions.length === 0) return [];
+
+        const extStudentIds = [
+          ...new Set(
+            filteredSessions.map((s: any) => extRegMap.get(s.registration_id)?.student_id).filter(Boolean),
+          ),
+        ];
+        const { data: extProfiles } = await (externalSupabase as any)
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', extStudentIds);
+
+        const extProfileMap = new Map<string, any>((extProfiles || []).map((p: any) => [p.id, p]));
+
+        const mapped: ActiveSession[] = await Promise.all(
+          filteredSessions.map(async (s: any) => {
+            const reg = extRegMap.get(s.registration_id);
+            const profile = reg?.student_id ? extProfileMap.get(reg.student_id) : null;
+            const snapshotUrl = await getSignedUrl(externalSupabase as any, s.latest_snapshot_url || null);
+            const screenUrl = await getSignedUrl(externalSupabase as any, s.latest_screen_url || null);
+
+            return {
+              ...s,
+              registration: {
+                registration_number: reg?.registration_number || 'N/A',
+                student: {
+                  id: reg?.student_id || '',
+                  full_name: profile?.full_name || 'Unknown',
+                  email: profile?.email || 'N/A',
+                },
+              },
+              snapshotUrl,
+              screenUrl,
+            } as ActiveSession;
+          }),
+        );
+
+        return mapped.sort((a, b) => {
+          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+          return bt - at;
+        });
+      } catch (err) {
+        console.error('LiveMonitoring external fast-path error:', err);
+        return [];
+      }
+    };
+
+    const externalFastPath = await loadExternalSessionsByExam();
+    if (externalFastPath.length > 0) {
+      setSessions(externalFastPath);
+      setIsLoading(false);
+      return;
+    }
 
     const fetchRegsAndProfiles = async (client: typeof supabase) => {
       const { data: regs, error: regErr } = await client
