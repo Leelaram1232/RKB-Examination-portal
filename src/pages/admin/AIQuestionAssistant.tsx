@@ -217,7 +217,10 @@ export default function AIQuestionAssistant() {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll inside the chat panel (not the whole page)
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -681,7 +684,7 @@ export default function AIQuestionAssistant() {
               </div>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
-              <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto px-4">
+              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4">
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
