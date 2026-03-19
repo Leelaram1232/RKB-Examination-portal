@@ -207,6 +207,32 @@ export default function AIQuestionAssistant() {
       );
   };
 
+  const safeParseQuestionsJson = (raw: string): any[] => {
+    const cleaned = String(raw || '')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    if (!cleaned) return [];
+
+    const repairInvalidBackslashes = (s: string) =>
+      // Escape backslashes that are not valid JSON escape starters.
+      s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+
+    try {
+      const parsed = JSON.parse(cleaned);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e1) {
+      try {
+        const repaired = repairInvalidBackslashes(cleaned);
+        const parsed2 = JSON.parse(repaired);
+        return Array.isArray(parsed2) ? parsed2 : [];
+      } catch (e2) {
+        console.error('Tagged questions_json parse failed:', { e1, e2 });
+        return [];
+      }
+    }
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -460,14 +486,9 @@ export default function AIQuestionAssistant() {
 
         // If the assistant returned tagged JSON in the content, parse it.
         const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
-          const taggedQuestions = (() => {
+        const taggedQuestions = (() => {
             if (!tagMatch?.[1]) return [];
-            try {
-              return JSON.parse(tagMatch[1].trim());
-            } catch (e) {
-              console.error('Tagged questions_json parse failed:', e);
-              return [];
-            }
+          return safeParseQuestionsJson(tagMatch[1]);
           })();
 
         const fromTagged = Array.isArray(taggedQuestions) ? taggedQuestions : [];
