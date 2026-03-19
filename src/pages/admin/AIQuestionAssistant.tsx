@@ -282,6 +282,13 @@ export default function AIQuestionAssistant() {
         const msg1 = e1 instanceof Error ? e1.message : String(e1);
         const msg2 = e2 instanceof Error ? e2.message : String(e2);
         console.error('Tagged questions_json parse failed:', msg1, msg2);
+        // Helpful snippet for debugging deployed edge cases (truncates to avoid noisy logs)
+        try {
+          const snippet = extractJsonArraySubstring(sanitizeControlChars(cleaned)).slice(0, 400);
+          console.error('[questions_json snippet]', snippet);
+        } catch {
+          // ignore
+        }
         return [];
       }
     }
@@ -549,6 +556,9 @@ export default function AIQuestionAssistant() {
           })();
 
         const fromTagged = Array.isArray(taggedQuestions) ? taggedQuestions : [];
+        if (/<questions_json>/i.test(contentText) && fromTagged.length === 0) {
+          console.warn('[AI Assistant] <questions_json> present but parsed 0 questions.');
+        }
 
         // If tag exists but parsing failed, try a last-resort parse:
         // 1) parse `[...]` from the whole content (in case tag extraction was weird)
