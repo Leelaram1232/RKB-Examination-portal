@@ -427,9 +427,12 @@ export default function AIQuestionAssistant() {
           !hasQuestionSignals;
 
         if (looksLikeOcrFailure || (looksLikeOcrProcessedOnly || (/Mathpix/i.test(contentText) && !hasQuestionSignals))) {
-          toast.error(
-            'OCR did not extract readable questions from that page range. Try a different page range like "pages 1-10".'
-          );
+          const detailed =
+            contentText.length > 300
+              ? `${contentText.slice(0, 300)}...`
+              : contentText;
+          // Show actual OCR error/status text so the admin can diagnose (keys missing, timeout, etc.)
+          toast.error(detailed || 'OCR did not extract readable text. Try a different page range like "pages 1-10".');
         } else {
           // If the assistant returned tagged JSON in the content, parse it.
           const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
