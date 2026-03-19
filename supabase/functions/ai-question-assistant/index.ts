@@ -713,6 +713,19 @@ ${lastUser}${ocrSnippetForForce}`;
       }
     }
 
+    // Server-side salvage: if we STILL have no questions but the bestRawTextForUi
+    // contains a <questions_json> block or obvious question structure, try one last parse.
+    if (!Array.isArray(questions) || questions.length === 0) {
+      const hasTag = /<questions_json>/i.test(bestRawTextForUi || '');
+      const maybeQuestions = extractQuestionsFromText(bestRawTextForUi || '');
+      if (Array.isArray(maybeQuestions) && maybeQuestions.length > 0) {
+        console.warn('[Assistant] Salvaged questions from bestRawTextForUi on the server side.');
+        questions = maybeQuestions;
+      } else if (hasTag) {
+        console.warn('[Assistant] bestRawTextForUi has <questions_json> but extractQuestionsFromText returned 0 items.');
+      }
+    }
+
     const cleanedContent =
       (Array.isArray(questions) && questions.length > 0
         ? bestRawTextForUi.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim()
