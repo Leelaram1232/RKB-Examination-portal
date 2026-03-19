@@ -571,6 +571,9 @@ Exam ID: ${exam_id || 'Not specified'}`;
 
     const assistantContent = groqData.choices?.[0]?.message?.content ?? '';
     console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
+    // Track the best "raw" LLM text we have (may include <questions_json>).
+    // If parsing into `questions` fails, we will return this text in `content` so the UI can still parse it.
+    let bestRawTextForUi = assistantContent;
 
     const extractQuestionsFromText = (text: string) => {
       const cleaned = (text || '')
@@ -680,6 +683,7 @@ ${assistantContentForFix}`;
       const fixed = await callGroq(fixMessages, 0.0);
       const fixedText = fixed.choices?.[0]?.message?.content ?? '';
       console.log('[Assistant] FIXED RAW CONTENT:', fixedText.substring(0, 500) + '...');
+      if (fixedText && fixedText.trim()) bestRawTextForUi = fixedText;
       const fixedQuestions = extractQuestionsFromText(fixedText);
       if (Array.isArray(fixedQuestions) && fixedQuestions.length > 0) {
         questions = fixedQuestions;
@@ -702,15 +706,17 @@ ${lastUser}${ocrSnippetForForce}`;
       const forceMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: forcePrompt }];
       const forced = await callGroq(forceMessages, 0.0);
       const forcedText = forced.choices?.[0]?.message?.content ?? '';
+      if (forcedText && forcedText.trim()) bestRawTextForUi = forcedText;
       const forcedQuestions = extractQuestionsFromText(forcedText);
       if (Array.isArray(forcedQuestions) && forcedQuestions.length > 0) {
         questions = forcedQuestions;
       }
     }
 
-    const cleanedContent = assistantContent
-      .replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '')
-      .trim();
+    const cleanedContent =
+      (Array.isArray(questions) && questions.length > 0
+        ? bestRawTextForUi.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim()
+        : bestRawTextForUi.trim());
 
     const contentWithOcrNote =
       file_url && pageSpecToUse
