@@ -229,9 +229,20 @@ export default function AIQuestionAssistant() {
       if (error) throw error;
       if (!data) throw new Error('No response from AI Assistant');
 
-      console.log('AI Response Data:', data);
+      const responseData = (() => {
+        if (typeof data === 'string') {
+          try {
+            return JSON.parse(data);
+          } catch {
+            return { content: data, questions: [] };
+          }
+        }
+        return data;
+      })();
 
-      const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: data.content }];
+      console.log('AI Response Data:', responseData);
+
+      const newMessages: Message[] = [...conversationHistory, { role: 'assistant', content: responseData.content }];
       setMessages(newMessages);
 
       // Persist chat history
@@ -270,7 +281,7 @@ export default function AIQuestionAssistant() {
         setFileName(null);
       }
 
-      const questionsToProcess = Array.isArray(data.questions) ? data.questions : [];
+      const questionsToProcess = Array.isArray(responseData.questions) ? responseData.questions : [];
       if (questionsToProcess.length > 0) {
         const newQuestions = questionsToProcess.map((q: any, idx: number) => ({
           ...q,
@@ -308,9 +319,9 @@ export default function AIQuestionAssistant() {
         }));
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);
         toast.success(`Generated ${newQuestions.length} questions!`);
-      } else if (typeof data.content === 'string' && data.content.trim()) {
+      } else if (typeof responseData.content === 'string' && responseData.content.trim()) {
         // Don't treat OCR status/error messages as questions.
-        const contentText = data.content.trim();
+        const contentText = responseData.content.trim();
         const looksLikeOcrStatus =
           /^OCR processed/i.test(contentText) ||
           /^OCR failed/i.test(contentText) ||
@@ -319,10 +330,57 @@ export default function AIQuestionAssistant() {
         if (looksLikeOcrStatus) {
           toast.error('OCR did not extract readable questions from that page range. Try a different page range like "pages 1-10".');
         } else {
-          const fallbackQuestions = parseAssistantContentFallback(contentText);
+          // If the assistant returned tagged JSON in the content, parse it.
+          const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
+          const taggedQuestions = (() => {
+            if (!tagMatch?.[1]) return [];
+            try {
+              return JSON.parse(tagMatch[1].trim());
+            } catch (e) {
+              console.error('Tagged questions_json parse failed:', e);
+              return [];
+            }
+          })();
+
+          if (Array.isArray(taggedQuestions) && taggedQuestions.length > 0) {
+            const newQuestions = taggedQuestions.map((q: any, idx: number) => ({
+              ...q,
+              id: Math.random().toString(36).substring(2, 11),
+              questionNumber: generatedQuestions.length + idx + 1,
+              isValid: true,
+              errors: [],
+              hasLatex: true,
+              sectionName: q.section_name || 'General',
+              questionText: q.question_text || '(No question text provided)',
+              questionType: (() => {
+                const rawType = String(q.question_type || 'MCQ').toUpperCase();
+                const typeIndicatesFill =
+                  rawType.includes('FILL') ||
+                  rawType.includes('NUMERICAL') ||
+                  rawType.includes('BLANK') ||
+                  rawType.includes('SHORT');
+                const optionVals = [q.option_a, q.option_b, q.option_c, q.option_d];
+                const hasAnyOption = optionVals.some((v: any) => v !== null && v !== undefined && String(v).trim() !== '');
+                const hasCorrectAnswer = q.correct_answer !== null && q.correct_answer !== undefined && String(q.correct_answer).trim() !== '';
+                if (typeIndicatesFill || (hasCorrectAnswer && !hasAnyOption)) return 'FILL_BLANK';
+                return 'MCQ';
+              })() as 'MCQ' | 'FILL_BLANK',
+              optionA: q.option_a,
+              optionB: q.option_b,
+              optionC: q.option_c,
+              optionD: q.option_d,
+              correctOption: q.correct_option,
+              correctAnswer: q.correct_answer,
+              marks: q.marks || 4,
+            }));
+            setGeneratedQuestions(prev => [...prev, ...newQuestions]);
+            toast.success(`Generated ${newQuestions.length} questions!`);
+          } else {
+            const fallbackQuestions = parseAssistantContentFallback(contentText);
           if (fallbackQuestions.length > 0) {
             setGeneratedQuestions(prev => [...prev, ...fallbackQuestions]);
             toast.success(`Generated ${fallbackQuestions.length} questions!`);
+          }
           }
         }
       }
