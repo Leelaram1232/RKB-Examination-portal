@@ -1,5 +1,9 @@
-// @ts-nocheck
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore - Deno edge runtime import via URL
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const Deno: any;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -110,11 +114,13 @@ async function callMathpixPdf(
             { headers: { 'app_id': appId, 'app_key': appKey } }
           );
           if (linesResp.ok) {
-            const linesJson: any = await linesResp.json();
-            const pages = Array.isArray(linesJson?.pages) ? linesJson.pages : [];
+          const linesJson = await linesResp.json() as unknown;
+          const maybePages = (linesJson as { pages?: unknown }).pages;
+          const pages = Array.isArray(maybePages) ? (maybePages as unknown[]) : [];
             const maxChars = 20000;
             for (const page of pages) {
-              const lines = Array.isArray(page?.lines) ? page.lines : [];
+              const maybeLines = (page as { lines?: unknown }).lines;
+              const lines = Array.isArray(maybeLines) ? maybeLines : [];
               for (const line of lines) {
                 const t =
                   (typeof line?.text_display === 'string' && line.text_display.trim()
@@ -344,44 +350,63 @@ Exam ID: ${exam_id || 'Not specified'}`;
       messages: { role: string; content: string }[],
       temperature = 0.2
     ): Promise<GroqChatCompletion> {
-      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages,
-          temperature,
-        }),
-      });
+      const maxRetries = 3;
+      let lastError: unknown = undefined;
 
-      const text = await resp.text();
-      if (!resp.ok) {
-        let errJson: unknown = undefined;
-        try {
-          errJson = JSON.parse(text) as unknown;
-        } catch (_e) {
-          void _e;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages,
+            temperature,
+          }),
+        });
+
+        const text = await resp.text();
+        if (!resp.ok) {
+          let errJson: unknown = undefined;
+          try {
+            errJson = JSON.parse(text) as unknown;
+          } catch (_e) {
+            void _e;
+          }
+          const errMsg = (() => {
+            if (typeof errJson !== 'object' || !errJson) return text;
+            const maybeError = (errJson as Record<string, unknown>).error;
+            if (typeof maybeError !== 'object' || !maybeError) return text;
+            const maybeMsg = (maybeError as Record<string, unknown>).message;
+            return typeof maybeMsg === 'string' && maybeMsg.trim() ? maybeMsg : text;
+          })();
+
+          const isRateLimit = /Rate limit reached/i.test(errMsg) || resp.status === 429;
+          if (isRateLimit && attempt < maxRetries) {
+            const waitMatch = errMsg.match(/try again in\s*([0-9.]+)s/i);
+            const waitSeconds = waitMatch ? Number.parseFloat(waitMatch[1]) : 2.5;
+            const waitMs = Math.max(0, Math.ceil(waitSeconds * 1000)) + 500;
+            console.warn('[Assistant] Groq rate limit. Retrying in', waitMs, 'ms...');
+            await new Promise((r) => setTimeout(r, waitMs));
+            lastError = errMsg;
+            continue;
+          }
+
+          throw new Error(`Groq API Error: ${errMsg}`);
         }
-        const errMsg = (() => {
-          if (typeof errJson !== 'object' || !errJson) return text;
-          const maybeError = (errJson as Record<string, unknown>).error;
-          if (typeof maybeError !== 'object' || !maybeError) return text;
-          const maybeMsg = (maybeError as Record<string, unknown>).message;
-          return typeof maybeMsg === 'string' && maybeMsg.trim() ? maybeMsg : text;
-        })();
-        throw new Error(`Groq API Error: ${errMsg}`);
+
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          throw new Error('Invalid JSON response from Groq API');
+        }
+        return json as GroqChatCompletion;
       }
 
-      let json: unknown;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        throw new Error('Invalid JSON response from Groq API');
-      }
-      return json as GroqChatCompletion;
+      throw new Error(`Groq call failed after retries: ${String(lastError)}`);
     }
 
     console.log('[Assistant] Calling Groq with model: llama-3.3-70b-versatile');
@@ -450,12 +475,18 @@ Exam ID: ${exam_id || 'Not specified'}`;
     // We reverse that by mapping these control characters back to `\f`, `\r`, `\t`, etc.
     const sanitizeLatexControlEscapes = (value: unknown): unknown => {
       if (typeof value === 'string') {
+        // Avoid regex literals containing control chars (eslint). Use split/join instead.
         return value
-          .replace(/\u0008/g, '\\b') // backspace -> \b
-          .replace(/\u000c/g, '\\f') // form feed -> \f (fixes \frac -> \frac)
-          .replace(/\u000d/g, '\\r') // carriage return -> \r (fixes \rho, etc.)
-          .replace(/\u0009/g, '\\t') // tab -> \t (fixes \theta, etc.)
-          .replace(/\u000b/g, '\\v'); // vertical tab -> \v
+          .split(String.fromCharCode(8))
+          .join('\\b') // backspace -> \b
+          .split(String.fromCharCode(12))
+          .join('\\f') // form feed -> \f
+          .split(String.fromCharCode(13))
+          .join('\\r') // carriage return -> \r
+          .split(String.fromCharCode(9))
+          .join('\\t') // tab -> \t
+          .split(String.fromCharCode(11))
+          .join('\\v'); // vertical tab -> \v
       }
       if (Array.isArray(value)) {
         return value.map(sanitizeLatexControlEscapes);
@@ -474,13 +505,14 @@ Exam ID: ${exam_id || 'Not specified'}`;
     // If model didn't comply, run a fast "format fix" pass using the assistant output
     if (!Array.isArray(questions) || questions.length === 0) {
       console.warn('[Assistant] No questions parsed. Running format-fix call...');
+      const assistantContentForFix = truncateText(assistantContent, 2500);
       const fixPrompt = `Return ONLY the JSON array wrapped in <questions_json> tags.
 No explanation. No intro line. No markdown. No code fences.
 
 Convert the following content into the exact JSON schema array. If questions are missing, generate the requested questions now.
 
 CONTENT TO CONVERT/COMPLETE:
-${assistantContent}`;
+${assistantContentForFix}`;
 
       const fixMessages = [
         { role: 'system', content: systemPrompt },
@@ -499,7 +531,11 @@ ${assistantContent}`;
 
     // Final guarantee: if still empty, force-generate from the last user prompt
     if (!Array.isArray(questions) || questions.length === 0) {
-      console.warn('[Assistant] Still no questions after fix. Forcing generation...');
+      // To reduce rate-limit pressure, skip the final force-generate pass when OCR file was uploaded.
+      if (file_url) {
+        console.warn('[Assistant] Still no questions after fix (OCR upload present). Skipping force generation to avoid more Groq calls.');
+      } else {
+        console.warn('[Assistant] Still no questions after fix. Forcing generation...');
       const lastUser = [...sanitizedMessages].reverse().find((m) => m.role === 'user')?.content ||
         'Generate 6 JEE Mains level questions.';
       const forcePrompt = `Generate questions for this request. Output ONLY <questions_json>...</questions_json>.
@@ -511,6 +547,7 @@ ${lastUser}`;
       const forcedQuestions = extractQuestionsFromText(forcedText);
       if (Array.isArray(forcedQuestions) && forcedQuestions.length > 0) {
         questions = forcedQuestions;
+      }
       }
     }
 
