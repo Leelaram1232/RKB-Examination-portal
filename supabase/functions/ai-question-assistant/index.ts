@@ -692,9 +692,13 @@ ${assistantContentForFix}`;
       const lastUser =
         [...sanitizedMessages].reverse().find((m) => m.role === 'user')?.content ||
         'Generate 6 JEE Mains level questions.';
+      const ocrSnippetForForce =
+        file_url && ocrContext
+          ? `\n\nOCR EXTRACT (use this, do not invent outside it):\n${truncateText(ocrContext, 6000)}`
+          : '';
       const forcePrompt = `Generate questions for this request. Output ONLY <questions_json>...</questions_json>.
 REQUEST:
-${lastUser}`;
+${lastUser}${ocrSnippetForForce}`;
       const forceMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: forcePrompt }];
       const forced = await callGroq(forceMessages, 0.0);
       const forcedText = forced.choices?.[0]?.message?.content ?? '';
