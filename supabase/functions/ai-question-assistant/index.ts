@@ -690,6 +690,72 @@ ${assistantContentForFix}`;
       }
     }
 
+    const safeParseQuestionsJsonServer = (raw: string): unknown[] => {
+      const cleaned = String(raw || '').trim();
+      if (!cleaned) return [];
+
+      const sanitizeControlChars = (s: string) =>
+        s
+          .split(String.fromCharCode(8))
+          .join('\\b')
+          .split(String.fromCharCode(12))
+          .join('\\f')
+          .split(String.fromCharCode(13))
+          .join('\\r')
+          .split(String.fromCharCode(9))
+          .join('\\t')
+          .split(String.fromCharCode(11))
+          .join('\\v');
+
+      const repairInvalidBackslashes = (s: string) =>
+        s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+
+      const extractJsonArraySubstring = (s: string) => {
+        const start = s.indexOf('[');
+        if (start < 0) return s;
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let i = start; i < s.length; i++) {
+          const ch = s[i]!;
+          if (escape) {
+            escape = false;
+            continue;
+          }
+          if (ch === '\\') {
+            escape = true;
+            continue;
+          }
+          if (ch === '"') {
+            inString = !inString;
+            continue;
+          }
+          if (inString) continue;
+          if (ch === '[') depth += 1;
+          else if (ch === ']') {
+            depth -= 1;
+            if (depth === 0) return s.slice(start, i + 1);
+          }
+        }
+        return s.slice(start);
+      };
+
+      const base = extractJsonArraySubstring(sanitizeControlChars(cleaned));
+      try {
+        const parsed = JSON.parse(base) as unknown;
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        try {
+          const repaired = repairInvalidBackslashes(base);
+          const parsed2 = JSON.parse(repaired) as unknown;
+          return Array.isArray(parsed2) ? parsed2 : [];
+        } catch (e2) {
+          console.error('[Assistant] Server questions_json parse failed:', e2);
+          return [];
+        }
+      }
+    };
+
     // Final guarantee: if still empty, force-generate from the last user prompt
     if (!Array.isArray(questions) || questions.length === 0) {
       console.warn('[Assistant] Still no questions after fix. Forcing generation from last user prompt...');
@@ -716,13 +782,31 @@ ${lastUser}${ocrSnippetForForce}`;
     // Server-side salvage: if we STILL have no questions but the bestRawTextForUi
     // contains a <questions_json> block or obvious question structure, try one last parse.
     if (!Array.isArray(questions) || questions.length === 0) {
-      const hasTag = /<questions_json>/i.test(bestRawTextForUi || '');
-      const maybeQuestions = extractQuestionsFromText(bestRawTextForUi || '');
-      if (Array.isArray(maybeQuestions) && maybeQuestions.length > 0) {
-        console.warn('[Assistant] Salvaged questions from bestRawTextForUi on the server side.');
-        questions = maybeQuestions;
-      } else if (hasTag) {
-        console.warn('[Assistant] bestRawTextForUi has <questions_json> but extractQuestionsFromText returned 0 items.');
+      const rawForSalvage = bestRawTextForUi || assistantContent || '';
+      const hasTag = /<questions_json>/i.test(rawForSalvage);
+      if (hasTag) {
+        const tagMatch =
+          rawForSalvage.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i) ??
+          rawForSalvage.match(/<questions_json>\s*([\s\S]*)$/i);
+        const inner = tagMatch?.[1] ?? '';
+        const parsedFromTag = safeParseQuestionsJsonServer(inner);
+        if (Array.isArray(parsedFromTag) && parsedFromTag.length > 0) {
+          console.warn('[Assistant] Salvaged questions from <questions_json> tag on the server side.');
+          questions = parsedFromTag;
+        } else {
+          console.warn('[Assistant] <questions_json> tag present but server parse returned 0 items.');
+          const maybeQuestions = extractQuestionsFromText(rawForSalvage);
+          if (Array.isArray(maybeQuestions) && maybeQuestions.length > 0) {
+            console.warn('[Assistant] Salvaged questions from bestRawTextForUi via extractQuestionsFromText.');
+            questions = maybeQuestions;
+          }
+        }
+      } else {
+        const maybeQuestions = extractQuestionsFromText(rawForSalvage);
+        if (Array.isArray(maybeQuestions) && maybeQuestions.length > 0) {
+          console.warn('[Assistant] Salvaged questions from bestRawTextForUi via extractQuestionsFromText (no tag).');
+          questions = maybeQuestions;
+        }
       }
     }
 
