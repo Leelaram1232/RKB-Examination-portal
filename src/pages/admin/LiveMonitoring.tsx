@@ -677,7 +677,7 @@ const LiveMonitoring = () => {
                     </div>
                   )}
                   
-                  {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to recent snapshot time */}
+                  {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to snapshot info */}
                   {(() => {
                     const now = Date.now();
                     let isOnline = false;
@@ -691,6 +691,10 @@ const LiveMonitoring = () => {
                       // (captured within the last 60 seconds) as "online" so you can still monitor.
                       const diff = now - new Date(session.snapshot_updated_at).getTime();
                       isOnline = diff >= 0 && diff < 60000;
+                    } else if (session.snapshotUrl) {
+                      // Last-resort: if we have any snapshot URL at all, consider the camera online.
+                      // This covers deployments where timestamps/heartbeat aren't stored but images are.
+                      isOnline = true;
                     }
                     
                     return (
