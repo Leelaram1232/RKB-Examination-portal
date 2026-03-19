@@ -413,13 +413,23 @@ export default function AIQuestionAssistant() {
       } else if (typeof responseData.content === 'string' && responseData.content.trim()) {
         // Don't treat OCR status/error messages as questions.
         const contentText = responseData.content.trim();
-        const looksLikeOcrStatus =
-          /^OCR processed/i.test(contentText) ||
-          /^OCR failed/i.test(contentText) ||
-          /Mathpix/i.test(contentText);
+        const hasQuestionSignals =
+          /<questions_json>\s*[\s\S]*<\/questions_json>/i.test(contentText) ||
+          /\bQ\s*\d+\b/i.test(contentText) ||
+          /Question\s*\d+/i.test(contentText) ||
+          /\bOption\s*[A-D]\b/i.test(contentText) ||
+          /\bAnswer\s*[:\-]/i.test(contentText) ||
+          /Correct\s*Answer/i.test(contentText);
 
-        if (looksLikeOcrStatus) {
-          toast.error('OCR did not extract readable questions from that page range. Try a different page range like "pages 1-10".');
+        const looksLikeOcrFailure = /^OCR failed/i.test(contentText) || /^OCR error/i.test(contentText);
+        const looksLikeOcrProcessedOnly =
+          /^OCR processed/i.test(contentText) &&
+          !hasQuestionSignals;
+
+        if (looksLikeOcrFailure || (looksLikeOcrProcessedOnly || (/Mathpix/i.test(contentText) && !hasQuestionSignals))) {
+          toast.error(
+            'OCR did not extract readable questions from that page range. Try a different page range like "pages 1-10".'
+          );
         } else {
           // If the assistant returned tagged JSON in the content, parse it.
           const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
