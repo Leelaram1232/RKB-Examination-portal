@@ -439,6 +439,15 @@ export default function AIQuestionAssistant() {
           .replace(/^OCR failed:[^\n]*\n+/i, '')
           .trim();
 
+        const hasQuestionSignals =
+          /<questions_json>\s*[\s\S]*<\/questions_json>/i.test(contentTextRaw) ||
+          /\bQ\s*\d+\b/i.test(contentText) ||
+          /Question\s*\d+/i.test(contentText) ||
+          /\bOption\s*[A-D]\b/i.test(contentText) ||
+          /\b[A-D]\)\s+/.test(contentText) ||
+          /\bAnswer\s*[:\-]/i.test(contentText) ||
+          /Correct\s*Answer/i.test(contentText);
+
         // If the assistant returned tagged JSON in the content, parse it.
         const tagMatch = contentText.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
           const taggedQuestions = (() => {
@@ -453,18 +462,14 @@ export default function AIQuestionAssistant() {
 
         const fromTagged = Array.isArray(taggedQuestions) ? taggedQuestions : [];
 
+        // Guardrail: don't "invent" preview questions from OCR status text.
+        // Only attempt parsing when the content actually contains question-like markers.
         const derivedQuestions =
           fromTagged.length > 0
             ? fromTagged
-            : parseAssistantContentFallback(contentText);
-
-        const hasQuestionSignals =
-          /<questions_json>\s*[\s\S]*<\/questions_json>/i.test(contentTextRaw) ||
-          /\bQ\s*\d+\b/i.test(contentText) ||
-          /Question\s*\d+/i.test(contentText) ||
-          /\bOption\s*[A-D]\b/i.test(contentText) ||
-          /\bAnswer\s*[:\-]/i.test(contentText) ||
-          /Correct\s*Answer/i.test(contentText);
+            : hasQuestionSignals
+              ? parseAssistantContentFallback(contentText)
+              : [];
 
         if (derivedQuestions.length > 0) {
           // If tagged JSON was parsed, map it to ParsedQuestion shape; otherwise fallback parser already returns ParsedQuestion.
