@@ -25,6 +25,7 @@ import { AudioMonitor } from '@/components/exam/AudioMonitor';
 import { ScreenCapture } from '@/components/exam/ScreenCapture';
 import { ExamBlockedOverlay } from '@/components/exam/ExamBlockedOverlay';
 import { useHeartbeat } from '@/hooks/useHeartbeat';
+import { connect, createLocalVideoTrack, type Room } from 'livekit-client';
 
 interface Question {
   id: string;
@@ -115,6 +116,7 @@ export default function ExamInterface() {
   const hasInitialized = useRef(false);
   const violationRef = useRef(0);
   const violationsRef = useRef<ViolationRecord[]>([]);
+  const livekitRoomRef = useRef<Room | null>(null);
   
   // Get proctoring settings from exam
   const proctoringEnabled = session?.exam?.proctoring_enabled ?? false;
@@ -271,7 +273,59 @@ export default function ExamInterface() {
     };
 
     loadExamData();
+
+    return () => {
+      // Clean up LiveKit connection if still active when component unmounts.
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
   }, [examId, navigate, toast]);
+
+  // Start LiveKit camera streaming once we have a valid session + exam id
+  useEffect(() => {
+    if (!session?.session_id || !session.exam?.id) return;
+
+    let cancelled = false;
+
+    const startStreaming = async () => {
+      try {
+        // Avoid creating multiple rooms if effect re-runs
+        if (livekitRoomRef.current) return;
+
+        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
+          exam_id: session.exam.id,
+          session_id: session.session_id,
+          role: 'student',
+        });
+        if (error || !data || cancelled) {
+          console.error('get-stream-token error:', error);
+          return;
+        }
+
+        const room = await connect(data.url, data.token);
+        livekitRoomRef.current = room;
+
+        const camTrack = await createLocalVideoTrack();
+        await room.localParticipant.publishTrack(camTrack, { name: 'camera' });
+
+        console.log('[LiveKit] Student camera track published for session', session.session_id);
+      } catch (e) {
+        console.error('[LiveKit] Failed to start streaming:', e);
+      }
+    };
+
+    startStreaming();
+
+    return () => {
+      cancelled = true;
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
+  }, [session?.session_id, session?.exam?.id, invokeExternalFunction]);
 
   // Sync numerical answer when question changes
   useEffect(() => {

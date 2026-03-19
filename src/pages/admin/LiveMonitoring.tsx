@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
@@ -23,6 +23,8 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { externalSupabase } from '@/lib/externalSupabase';
+import { connect, type Room, type RemoteParticipant, type RemoteTrackPublication } from 'livekit-client';
+import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface ActiveSession {
   id: string;
@@ -65,6 +67,7 @@ const LiveMonitoring = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const livekitRoomRef = useRef<Room | null>(null);
 
   const fetchData = async () => {
     if (!examId) return;
@@ -418,6 +421,66 @@ const LiveMonitoring = () => {
     fetchData();
   }, [examId]);
 
+  // Connect admin to LiveKit room for this exam and subscribe to student camera tracks
+  useEffect(() => {
+    if (!examId) return;
+
+    let cancelled = false;
+
+    const joinLiveKit = async () => {
+      try {
+        if (livekitRoomRef.current) return;
+
+        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
+          exam_id: examId,
+          session_id: `admin-${Date.now()}`,
+          role: 'admin',
+        });
+        if (error || !data || cancelled) {
+          console.error('[LiveKit] get-stream-token error (admin):', error);
+          return;
+        }
+
+        const room = await connect(data.url, data.token);
+        livekitRoomRef.current = room;
+
+        const handleTrack = (pub: RemoteTrackPublication) => {
+          const track = pub.track;
+          if (!track) return;
+
+          const sessionId = pub.participant.identity;
+          const elementId = pub.trackName === 'camera' ? `cam-${sessionId}` : `screen-${sessionId}`;
+          const el = document.getElementById(elementId) as HTMLVideoElement | null;
+          if (el) {
+            track.attach(el);
+          }
+        };
+
+        const handleParticipant = (p: RemoteParticipant) => {
+          p.tracks.forEach((pub) => handleTrack(pub));
+          p.on('trackSubscribed', (_track, pub) => handleTrack(pub));
+        };
+
+        room.participants.forEach(handleParticipant);
+        room.on('participantConnected', handleParticipant);
+
+        console.log('[LiveKit] Admin connected to room for exam', examId);
+      } catch (e) {
+        console.error('[LiveKit] Admin connect failed:', e);
+      }
+    };
+
+    joinLiveKit();
+
+    return () => {
+      cancelled = true;
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
+  }, [examId]);
+
   // Set up realtime subscription
   useEffect(() => {
     if (!examId) return;
@@ -644,38 +707,15 @@ const LiveMonitoring = () => {
                       : ''
                 }`}
               >
-                {/* Camera Preview */}
+                {/* Camera Preview (LiveKit video) */}
                 <div className="relative aspect-video bg-muted">
-                  {session.snapshotUrl ? (
-                    <>
-                      <img
-                        src={session.snapshotUrl || ''}
-                        alt={`${session.registration.student.full_name}'s camera`}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                        onClick={() => setSelectedSnapshot(session.snapshotUrl || null)}
-                      >
-                        <Maximize2 className="w-3 h-3" />
-                      </Button>
-                      {session.snapshot_updated_at && (
-                        <div className="absolute bottom-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
-                          {format(new Date(session.snapshot_updated_at), 'HH:mm:ss')}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
-                      <VideoOff className="w-8 h-8 mb-2" />
-                      <span className="text-xs">No camera feed</span>
-                    </div>
-                  )}
+                  <video
+                    id={`cam-${session.id}`}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover bg-black"
+                  />
                   
                   {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to snapshot info */}
                   {(() => {
@@ -708,23 +748,15 @@ const LiveMonitoring = () => {
                   })()}
                 </div>
 
-                {/* Screen Capture Preview */}
+                {/* Screen Capture Preview (LiveKit video, optional) */}
                 <div className="relative aspect-video bg-muted border-t">
-                  {session.screenUrl ? (
-                    <img
-                      src={session.screenUrl || ''}
-                      alt={`${session.registration.student.full_name}'s screen`}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
-                      <VideoOff className="w-8 h-8 mb-2" />
-                      <span className="text-xs">No screen capture</span>
-                    </div>
-                  )}
+                  <video
+                    id={`screen-${session.id}`}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover bg-black"
+                  />
                   <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
                     SCREEN
                   </div>
