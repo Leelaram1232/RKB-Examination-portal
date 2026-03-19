@@ -134,13 +134,26 @@ export default function AIQuestionAssistant() {
         const [examsRes, subjectsRes, historyRes] = await Promise.all([
           supabase.from('exams').select('id, exam_name, exam_code').order('created_at', { ascending: false }),
           supabase.from('subjects').select('id, name').eq('is_active', true).order('name'),
-          user ? (supabase as any).from('ai_chat_history').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }).limit(1).single() : Promise.resolve({ data: null, error: null })
+          user
+            ? (supabase as any)
+                .from('ai_chat_history')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('updated_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+            : Promise.resolve({ data: null, error: null })
         ]);
 
         if (examsRes.data) setExams(examsRes.data);
         if (subjectsRes.data) setSubjects(subjectsRes.data);
         
-        if (historyRes.data) {
+        if (historyRes?.error) {
+          // Avoid noisy 406 errors when there is no history row yet (single-row expectation).
+          console.warn('AI chat history not loaded:', historyRes.error);
+        }
+
+        if (historyRes?.data) {
           setChatHistoryId(historyRes.data.id);
           if (historyRes.data.messages && Array.isArray(historyRes.data.messages)) {
             setMessages(historyRes.data.messages as Message[]);
