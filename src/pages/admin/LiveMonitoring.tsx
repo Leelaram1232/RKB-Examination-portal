@@ -677,11 +677,21 @@ const LiveMonitoring = () => {
                     </div>
                   )}
                   
-                  {/* Live indicator - use camera_heartbeat_at for accurate status */}
+                  {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to recent snapshot time */}
                   {(() => {
-                    // Check if heartbeat is within last 10 seconds
-                    const isOnline = session.camera_heartbeat_at && 
-                      (new Date().getTime() - new Date(session.camera_heartbeat_at).getTime()) < 10000;
+                    const now = Date.now();
+                    let isOnline = false;
+
+                    if (session.camera_heartbeat_at) {
+                      // Heartbeat within the last 20 seconds => online
+                      const diff = now - new Date(session.camera_heartbeat_at).getTime();
+                      isOnline = diff >= 0 && diff < 20000;
+                    } else if (session.snapshot_updated_at) {
+                      // When heartbeat is not wired up on this project, treat a fresh snapshot
+                      // (captured within the last 60 seconds) as "online" so you can still monitor.
+                      const diff = now - new Date(session.snapshot_updated_at).getTime();
+                      isOnline = diff >= 0 && diff < 60000;
+                    }
                     
                     return (
                       <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/50 px-2 py-1 rounded">
