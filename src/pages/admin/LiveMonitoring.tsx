@@ -150,10 +150,12 @@ const LiveMonitoring = () => {
           .select(
             'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
           )
-          .order('start_time', { ascending: false })
           .limit(200);
 
-        if (sessionsError || !sessionsData) return [];
+        if (sessionsError || !sessionsData) {
+          console.error('LiveMonitoring fallback fetchSessionsAny error:', sessionsError);
+          return [];
+        }
         // Treat NULL as "not completed". Include:
         // - live sessions (is_completed false or null)
         // - auto-submitted sessions (flag true)
@@ -269,10 +271,12 @@ const LiveMonitoring = () => {
         .select(
           'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
         )
-        .in('registration_id', allRegIds)
-        .order('start_time', { ascending: false });
+        .in('registration_id', allRegIds);
 
-      if (sessionsError || !sessionsData) return [];
+      if (sessionsError || !sessionsData) {
+        console.error('LiveMonitoring fetchActiveSessions error:', sessionsError);
+        return [];
+      }
 
       const filtered = sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
 
