@@ -100,8 +100,10 @@ const LiveMonitoring = () => {
       try {
         const { data: externalSessionsData, error: extSessionsError } = await (externalSupabase as any)
           .from('exam_sessions')
+          // Use a conservative column list that matches both internal and external schemas.
+          // Newer columns like latest_screen_url / camera_status may not exist externally and can cause 400 errors.
           .select(
-            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
+            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
           )
           .limit(200);
 
@@ -146,7 +148,8 @@ const LiveMonitoring = () => {
             const reg = extRegMap.get(s.registration_id);
             const profile = reg?.student_id ? extProfileMap.get(reg.student_id) : null;
             const snapshotUrl = await getSignedUrl(externalSupabase as any, s.latest_snapshot_url || null);
-            const screenUrl = await getSignedUrl(externalSupabase as any, s.latest_screen_url || null);
+            // External schema may not yet have latest_screen_url; screen capture will simply show "No screen capture" in that case.
+            const screenUrl = await getSignedUrl(externalSupabase as any, (s as any).latest_screen_url || null);
 
             return {
               ...s,
@@ -234,8 +237,9 @@ const LiveMonitoring = () => {
       const fetchSessionsAny = async (client: typeof supabase) => {
         const { data: sessionsData, error: sessionsError } = await client
           .from('exam_sessions')
+          // Same conservative column list as above to avoid 400s on external DBs that don't have new proctoring fields.
           .select(
-            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
+            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
           )
           .limit(200);
 
@@ -372,7 +376,7 @@ const LiveMonitoring = () => {
           const reg = regMapMerged.get(s.registration_id);
           const profile = reg?.student_id ? profileMapMerged.get(reg.student_id) : null;
           const snapshotUrl = await getSignedUrl(client, s.latest_snapshot_url || null);
-          const screenUrl = await getSignedUrl(client, s.latest_screen_url || null);
+          const screenUrl = await getSignedUrl(client, (s as any).latest_screen_url || null);
 
           return {
             ...s,
