@@ -629,7 +629,7 @@ export default function AIQuestionAssistant() {
 
   if (isLoading) {
     return (
-      <AdminLayout title="AI Assistant" description="...">
+      <AdminLayout title="AI Assistant" description="..." mainClassName="flex flex-col min-h-0">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
@@ -638,8 +638,12 @@ export default function AIQuestionAssistant() {
   }
 
   return (
-    <AdminLayout title="AI Question Assistant" description="Generate and extract exam questions with AI">
-      <div className="flex flex-col h-[calc(100vh-160px)] min-h-[500px] space-y-4 overflow-hidden">
+    <AdminLayout
+      title="AI Question Assistant"
+      description="Generate and extract exam questions with AI"
+      mainClassName="flex flex-col min-h-0"
+    >
+      <div className="flex flex-col h-full min-h-0 gap-4">
         <div className="flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={() => navigate('/admin/questions')}>
             <ArrowLeft className="h-4 w-4 mr-2" />
@@ -669,10 +673,11 @@ export default function AIQuestionAssistant() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
+        {/* On small screens: cap chat row height so composer stays in view. */}
+        <div className="grid grid-cols-1 gap-6 h-full flex-1 min-h-0 overflow-hidden lg:grid-cols-3 max-lg:grid-rows-[minmax(240px,min(52dvh,32rem))_minmax(0,1fr)] lg:grid-rows-1">
           {/* Chat Sidebar */}
-          <Card className="flex flex-col h-full lg:col-span-1 shadow-md border-primary/20">
-            <CardHeader className="py-3 px-4 bg-primary/5">
+          <Card className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden shadow-md border-primary/20 lg:col-span-1">
+            <CardHeader className="space-y-2 py-3 px-4 bg-primary/5">
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <BrainCircuit className="h-4 w-4 text-primary" />
@@ -685,15 +690,37 @@ export default function AIQuestionAssistant() {
                   onClick={handleDeleteChat}
                   disabled={isSending}
                   title="Delete chat"
-                  className="text-destructive"
+                  className="text-destructive shrink-0"
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete chat
                 </Button>
               </div>
+              {fileName && (
+                <div className="flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1.5 text-xs text-primary">
+                  <FileText className="h-3 w-3 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate" title={fileName}>
+                    {fileName}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFileUrl(null);
+                      setFileName(null);
+                    }}
+                    className="shrink-0 rounded p-1 hover:bg-primary/20"
+                    title="Remove PDF"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
             </CardHeader>
-            <CardContent className="flex-1 flex flex-col p-0 min-h-0">
-              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-scroll px-4 h-full">
+            <CardContent className="isolate flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+              <div
+                ref={scrollRef}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 [scrollbar-gutter:stable]"
+              >
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
@@ -726,16 +753,7 @@ export default function AIQuestionAssistant() {
                 </div>
               </div>
               
-              <div className="shrink-0 mt-auto p-4 border-t bg-muted/30 space-y-2">
-                {fileName && (
-                   <div className="flex items-center gap-2 bg-primary/10 p-2 rounded text-xs text-primary mb-2">
-                     <FileText className="h-3 w-3" />
-                     {fileName}
-                     <button onClick={() => {setFileUrl(null); setFileName(null)}} className="ml-auto">
-                        <Trash2 className="h-3 w-3" />
-                     </button>
-                   </div>
-                )}
+              <div className="sticky bottom-0 z-30 shrink-0 border-t bg-card p-3 shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.15)] sm:p-4">
                 <div className="flex gap-2">
                   <input 
                     type="file" 
@@ -776,7 +794,7 @@ export default function AIQuestionAssistant() {
 
           {/* Question Preview Area */}
           <div className="lg:col-span-2 flex flex-col h-full min-h-0 overflow-hidden">
-            <Card className="flex flex-col h-full shadow-lg">
+            <Card className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden shadow-lg">
               <CardHeader className="flex flex-row items-center justify-between py-3 px-6 border-b">
                 <div>
                   <CardTitle className="text-lg">Generated Questions</CardTitle>
@@ -799,7 +817,7 @@ export default function AIQuestionAssistant() {
                     </p>
                   </div>
                 ) : (
-                  <div className="h-full overflow-y-scroll p-6">
+                  <div className="h-full min-h-0 overflow-y-auto overscroll-y-contain p-6 [scrollbar-gutter:stable]">
                     <div className="space-y-6 pb-6">
                       {generatedQuestions.map((q) => (
                         <div key={q.id} className="relative group">

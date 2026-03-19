@@ -12,6 +12,8 @@ interface AdminLayoutProps {
   children: ReactNode;
   title: string;
   description?: string;
+  /** Override main area layout (e.g. overflow-hidden + flex column for full-height tools pages) */
+  mainClassName?: string;
 }
 
 const navItems = [
@@ -24,7 +26,7 @@ const navItems = [
   { title: 'Results', url: '/admin/results', icon: BarChart3 },
 ];
 
-export const AdminLayout = ({ children, title, description }: AdminLayoutProps) => {
+export const AdminLayout = ({ children, title, description, mainClassName }: AdminLayoutProps) => {
   const { user, signOut } = useAuth();
   const location = useLocation();
 
@@ -99,7 +101,7 @@ export const AdminLayout = ({ children, title, description }: AdminLayoutProps) 
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* Header */}
         <header className="h-16 border-b border-border bg-card px-6 flex items-center justify-between">
           <div>
@@ -115,7 +117,7 @@ export const AdminLayout = ({ children, title, description }: AdminLayoutProps) 
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-6 overflow-auto">
+        <main className={cn('flex-1 min-h-0 p-6 overflow-auto', mainClassName)}>
           {children}
         </main>
       </div>
