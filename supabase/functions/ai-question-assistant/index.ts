@@ -35,7 +35,7 @@ async function callMathpixPdf(
   appId: string,
   appKey: string,
   pageRanges?: string
-): Promise<{ ocrText: string; processedPages: number }> {
+): Promise<{ ocrText: string; processedPages: number; readableChars: number }> {
   console.log('[Mathpix] Submitting PDF for processing:', fileUrl);
 
   // Use polling (no SSE) to avoid Mathpix streaming 504s/compute limits.
@@ -156,7 +156,8 @@ async function callMathpixPdf(
         const ocrText = linesText
           ? `${mdText}\n\n[LINES_JSON]\n${linesText}`
           : mdText;
-        return { ocrText, processedPages };
+        const readableChars = ocrText.replace(/[^A-Za-z0-9]+/g, '').length;
+        return { ocrText, processedPages, readableChars };
       }
 
       if (statusData.status === 'failed') {
@@ -275,9 +276,12 @@ Deno.serve(async (req) => {
           
           // Quality check: if we ended up with essentially no readable OCR text,
           // avoid sending garbage like embedded SVG/base64 to Groq.
-          const usableChars = ocrContext.replace(/\s/g, '').length;
-          if (usableChars < 200) {
-            throw new Error(`OCR produced too little readable text (usableChars=${usableChars}). Try a smaller page range like "pages 1-10".`);
+          if (ocrResult.readableChars < 300) {
+            throw new Error(
+              `OCR produced too little readable text for this page range (readableChars=${ocrResult.readableChars}). ` +
+              `This usually happens when the PDF page is image-only or contains embedded SVG. ` +
+              `Try "pages 1-10" or another range where questions exist.`
+            );
           }
 
           // Truncate extremely large OCR text to prevent memory crashes

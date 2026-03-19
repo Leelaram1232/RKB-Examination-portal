@@ -296,10 +296,21 @@ export default function AIQuestionAssistant() {
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);
         toast.success(`Generated ${newQuestions.length} questions!`);
       } else if (typeof data.content === 'string' && data.content.trim()) {
-        const fallbackQuestions = parseAssistantContentFallback(data.content);
-        if (fallbackQuestions.length > 0) {
-          setGeneratedQuestions(prev => [...prev, ...fallbackQuestions]);
-          toast.success(`Generated ${fallbackQuestions.length} questions!`);
+        // Don't treat OCR status/error messages as questions.
+        const contentText = data.content.trim();
+        const looksLikeOcrStatus =
+          /^OCR processed/i.test(contentText) ||
+          /^OCR failed/i.test(contentText) ||
+          /Mathpix/i.test(contentText);
+
+        if (looksLikeOcrStatus) {
+          toast.error('OCR did not extract readable questions from that page range. Try a different page range like "pages 1-10".');
+        } else {
+          const fallbackQuestions = parseAssistantContentFallback(contentText);
+          if (fallbackQuestions.length > 0) {
+            setGeneratedQuestions(prev => [...prev, ...fallbackQuestions]);
+            toast.success(`Generated ${fallbackQuestions.length} questions!`);
+          }
         }
       }
       
