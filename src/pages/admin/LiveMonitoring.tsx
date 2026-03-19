@@ -150,12 +150,14 @@ const LiveMonitoring = () => {
           .select(
             'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
           )
-          .or('is_completed.eq.false,is_auto_submitted.eq.true')
           .order('start_time', { ascending: false })
           .limit(200);
 
         if (sessionsError || !sessionsData) return [];
-        return sessionsData;
+        // Treat NULL as "not completed". Include:
+        // - live sessions (is_completed false or null)
+        // - auto-submitted sessions (flag true)
+        return sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
       };
 
       const mergeRegs = async (regIds: string[]) => {
@@ -268,14 +270,14 @@ const LiveMonitoring = () => {
           'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
         )
         .in('registration_id', allRegIds)
-        // Include running exams + auto-submitted sessions (even if completed=true)
-        .or('is_completed.eq.false,is_auto_submitted.eq.true')
         .order('start_time', { ascending: false });
 
       if (sessionsError || !sessionsData) return [];
 
+      const filtered = sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
+
       return await Promise.all(
-        sessionsData.map(async (s: any) => {
+        filtered.map(async (s: any) => {
           const reg = regMapMerged.get(s.registration_id);
           const profile = reg?.student_id ? profileMapMerged.get(reg.student_id) : null;
           const snapshotUrl = await getSignedUrl(client, s.latest_snapshot_url || null);
