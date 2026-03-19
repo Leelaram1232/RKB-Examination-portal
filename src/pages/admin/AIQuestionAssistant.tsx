@@ -620,8 +620,8 @@ export default function AIQuestionAssistant() {
                 AI Assistant (Groq Llama 3)
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 flex flex-col p-0 min-h-0">
-              <ScrollArea className="flex-1 min-h-0 px-4" ref={scrollRef}>
+            <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
+              <ScrollArea className="flex-1 min-h-0 px-4 overflow-hidden" ref={scrollRef}>
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}>
@@ -654,7 +654,7 @@ export default function AIQuestionAssistant() {
                 </div>
               </ScrollArea>
               
-              <div className="p-4 border-t bg-muted/30 space-y-2">
+              <div className="shrink-0 sticky bottom-0 p-4 border-t bg-muted/30 space-y-2">
                 {fileName && (
                    <div className="flex items-center gap-2 bg-primary/10 p-2 rounded text-xs text-primary mb-2">
                      <FileText className="h-3 w-3" />
