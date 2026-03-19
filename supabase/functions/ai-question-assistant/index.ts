@@ -274,6 +274,32 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Groq on-demand tier has strict token/TPM limits; when OCR is large we must
+    // aggressively limit what we send back to Groq (OCR + chat history).
+    const MAX_OCR_CONTEXT_CHARS = 20000; // safe for this model tier
+    const MAX_MESSAGE_CHARS = 4000;
+
+    const truncateText = (s: string, maxChars: number) => {
+      if (!s) return s;
+      if (s.length <= maxChars) return s;
+      return s.slice(0, maxChars) + '... [TRUNCATED]';
+    };
+
+    // Truncate OCR context again right before embedding into the system prompt.
+    // (We already truncate inside Mathpix, but we keep this as defense-in-depth.)
+    if (ocrContext && ocrContext.length > MAX_OCR_CONTEXT_CHARS) {
+      console.log('[Assistant] Truncating OCR context for Groq from', ocrContext.length, 'to', MAX_OCR_CONTEXT_CHARS, 'chars');
+      ocrContext = truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS);
+    }
+
+    const trimmedMessages = sanitizedMessages
+      .map((m) => ({
+        ...m,
+        content: truncateText(m.content || '', MAX_MESSAGE_CHARS),
+      }))
+      // Keep only the most recent part of the conversation (older messages add tokens but usually don't help extraction).
+      .slice(-(file_url ? 4 : 8));
+
     const systemPrompt = `You are an expert Exam Question Assistant for JEE/NEET.
 Generate or extract high-quality questions based on the provided context or prompt.
 
@@ -303,13 +329,13 @@ Generate or extract high-quality questions based on the provided context or prom
 ]
 
 Current context:
-${ocrContext ? `OCR Extracted Content: \n${ocrContext}` : 'No file uploaded.'}
+${ocrContext ? `OCR Extracted Content: \n${truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS)}` : 'No file uploaded.'}
 Subject ID: ${subject_id || 'Not specified'}
 Exam ID: ${exam_id || 'Not specified'}`;
 
     const groqMessages = [
       { role: 'system', content: systemPrompt },
-      ...sanitizedMessages
+      ...trimmedMessages
     ];
 
     async function callGroq(
