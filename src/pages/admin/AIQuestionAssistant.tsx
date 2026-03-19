@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { 
   Loader2, 
@@ -70,6 +69,55 @@ export default function AIQuestionAssistant() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetChat = () => {
+    setMessages([
+      {
+        role: 'assistant',
+        content:
+          "Hello! I'm your AI Question Assistant. How can I help you prepare questions today? You can ask me to generate questions or upload a PDF/Image for me to analyze.",
+      },
+    ]);
+    setInput('');
+    setFileUrl(null);
+    setFileName(null);
+  };
+
+  const handleDeleteChat = async () => {
+    try {
+      resetChat();
+      setGeneratedQuestions([]);
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setChatHistoryId(null);
+        toast.success('Chat cleared');
+        return;
+      }
+
+      // Delete stored history row if present (avoid errors when row doesn't exist).
+      if (chatHistoryId) {
+        const { error } = await (supabase as any)
+          .from('ai_chat_history')
+          .delete()
+          .eq('id', chatHistoryId)
+          .eq('user_id', user.id);
+        if (error) console.warn('Failed to delete AI chat history:', error);
+      } else {
+        const { error } = await (supabase as any)
+          .from('ai_chat_history')
+          .delete()
+          .eq('user_id', user.id);
+        if (error) console.warn('Failed to delete AI chat history:', error);
+      }
+
+      setChatHistoryId(null);
+      toast.success('Chat deleted');
+    } catch (e) {
+      console.error('Delete chat error:', e);
+      toast.error('Failed to delete chat');
+    }
+  };
 
   const parseAssistantContentFallback = (content: string): ParsedQuestion[] => {
     const text = (content || '').trim();
@@ -615,10 +663,22 @@ export default function AIQuestionAssistant() {
           {/* Chat Sidebar */}
           <Card className="flex flex-col h-full lg:col-span-1 shadow-md border-primary/20">
             <CardHeader className="py-3 px-4 bg-primary/5">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BrainCircuit className="h-4 w-4 text-primary" />
-                AI Assistant (Groq Llama 3)
-              </CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <BrainCircuit className="h-4 w-4 text-primary" />
+                  AI Assistant (Groq Llama 3)
+                </CardTitle>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleDeleteChat}
+                  disabled={isSending}
+                  title="Delete chat"
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
               <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto px-4">
@@ -727,27 +787,27 @@ export default function AIQuestionAssistant() {
                     </p>
                   </div>
                 ) : (
-                  <ScrollArea className="h-full p-6">
+                  <div className="h-full overflow-y-auto p-6">
                     <div className="space-y-6 pb-6">
                       {generatedQuestions.map((q) => (
                         <div key={q.id} className="relative group">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             className="absolute -top-2 -right-2 h-8 w-8 rounded-full bg-background shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10"
                             onClick={() => setGeneratedQuestions(prev => prev.filter(item => item.id !== q.id))}
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
-                          <QuestionPreviewCard 
-                            question={q} 
-                            sectionName={(q as any).sectionName || 'General'} 
-                            onUpdate={handleUpdateQuestion} 
+                          <QuestionPreviewCard
+                            question={q}
+                            sectionName={(q as any).sectionName || 'General'}
+                            onUpdate={handleUpdateQuestion}
                           />
                         </div>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 )}
               </CardContent>
             </Card>
