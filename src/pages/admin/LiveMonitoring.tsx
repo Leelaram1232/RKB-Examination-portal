@@ -472,20 +472,33 @@ const LiveMonitoring = () => {
     const objectPath = extractObjectPath(path, bucket);
     if (!objectPath) return null;
 
-    const { data, error } = await client.storage
-      .from(bucket)
-      .createSignedUrl(objectPath, 60 * 5); // 5 minutes
+    // Helper to try a specific Supabase client (internal or external) for this object.
+    const tryClient = async (c: typeof supabase | typeof externalSupabase | null) => {
+      if (!c) return null;
+      try {
+        const { data, error } = await (c as any).storage
+          .from(bucket)
+          .createSignedUrl(objectPath, 60 * 5); // 5 minutes
+        if (!error && data?.signedUrl) return data.signedUrl as string;
 
-    if (!error && data?.signedUrl) return data.signedUrl;
+        if (error) {
+          console.warn('Signed URL error for client:', error);
+          const { data: publicData } = (c as any).storage.from(bucket).getPublicUrl(objectPath);
+          return (publicData && (publicData as any).publicUrl) || null;
+        }
+      } catch (e) {
+        console.warn('Signed URL exception for client:', e);
+      }
+      return null;
+    };
 
-    // Fallback: if bucket is public or signed URLs fail for auth reasons.
-    if (error) {
-      console.error('Signed URL error:', error);
-      const { data: publicData } = client.storage.from(bucket).getPublicUrl(objectPath);
-      return publicData?.publicUrl || null;
-    }
+    // First try the provided client, then fall back to the "other" Supabase project.
+    const primary = await tryClient(client);
+    if (primary) return primary;
 
-    return null;
+    const isPrimaryExternal = (client as any) === (externalSupabase as any);
+    const secondary = await tryClient(isPrimaryExternal ? supabase : (externalSupabase as any));
+    return secondary;
   };
 
   const getViolationColor = (count: number, max: number) => {
