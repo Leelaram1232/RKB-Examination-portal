@@ -655,12 +655,9 @@ ${assistantContentForFix}`;
 
     // Final guarantee: if still empty, force-generate from the last user prompt
     if (!Array.isArray(questions) || questions.length === 0) {
-      // To reduce rate-limit pressure, skip the final force-generate pass when OCR file was uploaded.
-      if (file_url) {
-        console.warn('[Assistant] Still no questions after fix (OCR upload present). Skipping force generation to avoid more Groq calls.');
-      } else {
-        console.warn('[Assistant] Still no questions after fix. Forcing generation...');
-      const lastUser = [...sanitizedMessages].reverse().find((m) => m.role === 'user')?.content ||
+      console.warn('[Assistant] Still no questions after fix. Forcing generation from last user prompt...');
+      const lastUser =
+        [...sanitizedMessages].reverse().find((m) => m.role === 'user')?.content ||
         'Generate 6 JEE Mains level questions.';
       const forcePrompt = `Generate questions for this request. Output ONLY <questions_json>...</questions_json>.
 REQUEST:
@@ -671,7 +668,6 @@ ${lastUser}`;
       const forcedQuestions = extractQuestionsFromText(forcedText);
       if (Array.isArray(forcedQuestions) && forcedQuestions.length > 0) {
         questions = forcedQuestions;
-      }
       }
     }
 
