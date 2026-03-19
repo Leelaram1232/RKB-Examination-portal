@@ -236,6 +236,49 @@ export default function AIQuestionAssistant() {
       // Escape backslashes that are not valid JSON escape starters.
       s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
 
+    const repairBackslashesInJsonStrings = (s: string) => {
+      // String-aware variant of backslash repair:
+      // inside JSON string literals, escape backslashes that would otherwise create invalid escapes.
+      let out = '';
+      let inString = false;
+      let escape = false;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+
+        if (!inString) {
+          out += ch;
+          if (ch === '"') inString = true;
+          continue;
+        }
+
+        // inString
+        if (escape) {
+          // previous char was a backslash; we already decided how to handle it
+          out += ch;
+          escape = false;
+          continue;
+        }
+
+        if (ch === '\\') {
+          const next = s[i + 1] ?? '';
+          const isValidEscapeStarter = next && /["\\/bfnrtu]/.test(next);
+          // If it's not a valid JSON escape, insert an extra backslash so JSON.parse can succeed.
+          out += isValidEscapeStarter ? '\\' : '\\\\';
+          escape = true;
+          continue;
+        }
+
+        if (ch === '"') {
+          inString = false;
+          out += ch;
+          continue;
+        }
+
+        out += ch;
+      }
+      return out;
+    };
+
     const extractJsonArraySubstring = (s: string) => {
       const start = s.indexOf('[');
       if (start < 0) return s;
@@ -275,7 +318,8 @@ export default function AIQuestionAssistant() {
       return Array.isArray(parsed) ? parsed : [];
     } catch (e1) {
       try {
-        const repaired = repairInvalidBackslashes(extractJsonArraySubstring(sanitizeControlChars(cleaned)));
+        const base = extractJsonArraySubstring(sanitizeControlChars(cleaned));
+        const repaired = repairInvalidBackslashes(repairBackslashesInJsonStrings(base));
         const parsed2 = JSON.parse(repaired);
         return Array.isArray(parsed2) ? parsed2 : [];
       } catch (e2) {
