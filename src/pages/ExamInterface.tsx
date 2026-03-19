@@ -25,7 +25,8 @@ import { AudioMonitor } from '@/components/exam/AudioMonitor';
 import { ScreenCapture } from '@/components/exam/ScreenCapture';
 import { ExamBlockedOverlay } from '@/components/exam/ExamBlockedOverlay';
 import { useHeartbeat } from '@/hooks/useHeartbeat';
-import { connect, createLocalVideoTrack, type Room } from 'livekit-client';
+import * as Livekit from 'livekit-client';
+import type { Room } from 'livekit-client';
 
 interface Question {
   id: string;
@@ -304,10 +305,10 @@ export default function ExamInterface() {
           return;
         }
 
-        const room = await connect(data.url, data.token);
+        const room = await Livekit.connect(data.url, data.token);
         livekitRoomRef.current = room;
 
-        const camTrack = await createLocalVideoTrack();
+        const camTrack = await Livekit.createLocalVideoTrack();
         await room.localParticipant.publishTrack(camTrack, { name: 'camera' });
 
         console.log('[LiveKit] Student camera track published for session', session.session_id);
