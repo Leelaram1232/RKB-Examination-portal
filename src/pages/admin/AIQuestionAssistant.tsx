@@ -959,7 +959,7 @@ export default function AIQuestionAssistant() {
             <CardContent className="isolate flex min-h-0 flex-1 flex-col overflow-hidden p-0">
               <div
                 ref={scrollRef}
-                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-y-auto px-4 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y"
               >
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
@@ -1047,9 +1047,9 @@ export default function AIQuestionAssistant() {
                   </Button>
                 )}
               </CardHeader>
-              <CardContent className="flex-1 p-0 overflow-hidden min-h-0">
+              <CardContent className="flex flex-col flex-1 p-0 overflow-hidden min-h-0">
                 {generatedQuestions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-12 text-center">
+                  <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground p-12 text-center">
                     <Sparkles className="h-12 w-12 mb-4 opacity-20" />
                     <h3 className="text-lg font-medium mb-1">No questions generated yet</h3>
                     <p className="text-sm max-w-xs">
@@ -1057,7 +1057,7 @@ export default function AIQuestionAssistant() {
                     </p>
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-y-auto overscroll-y-contain p-6 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y">
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-auto p-6 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y">
                     <div className="space-y-6 pb-6">
                       {generatedQuestions.map((q) => (
                         <div key={q.id} className="relative group">
