@@ -959,7 +959,7 @@ export default function AIQuestionAssistant() {
             <CardContent className="isolate flex min-h-0 flex-1 flex-col overflow-hidden p-0">
               <div
                 ref={scrollRef}
-                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 [scrollbar-gutter:stable]"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y"
               >
                 <div className="py-4 space-y-4">
                   {messages.map((m, i) => (
@@ -1057,7 +1057,7 @@ export default function AIQuestionAssistant() {
                     </p>
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-y-auto overscroll-y-contain p-6 [scrollbar-gutter:stable]">
+                  <div className="h-full min-h-0 overflow-y-auto overscroll-y-contain p-6 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] touch-pan-y">
                     <div className="space-y-6 pb-6">
                       {generatedQuestions.map((q) => (
                         <div key={q.id} className="relative group">
