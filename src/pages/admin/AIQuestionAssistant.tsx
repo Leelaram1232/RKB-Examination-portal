@@ -232,6 +232,80 @@ export default function AIQuestionAssistant() {
         .join('\\v'); // vertical tab -> \v
     };
 
+    // Repair backslashes so the JSON inside <questions_json> becomes parseable.
+    // The AI output often contains LaTeX commands like \frac, \left, \operatorname, etc.
+    // Those backslashes are NOT valid JSON escapes, so JSON.parse throws "Bad escaped character".
+    //
+    // We scan and when we see a backslash:
+    // - If it's a valid JSON escape (\", \\, \/, \b \f \n \r \t, or \uXXXX), keep it,
+    //   BUT for \b/\f/\n/\r/\t we treat it as LaTeX when followed by a letter (e.g. \beta, \tan).
+    // - Otherwise, we escape the backslash (turn \X into \\X) so it becomes valid JSON.
+    const repairJsonBackslashesForLaTeX = (s: string) => {
+      const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
+      const isLetter = (ch: string) => /[A-Za-z]/.test(ch);
+
+      let out = '';
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch !== '\\') {
+          out += ch;
+          continue;
+        }
+
+        const next = s[i + 1] ?? '';
+        if (!next) {
+          out += '\\';
+          continue;
+        }
+
+        // Unicode escape: only if followed by 4 hex digits
+        if (next === 'u') {
+          const h1 = s[i + 2] ?? '';
+          const h2 = s[i + 3] ?? '';
+          const h3 = s[i + 4] ?? '';
+          const h4 = s[i + 5] ?? '';
+          if (h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4)) {
+            out += `\\u${h1}${h2}${h3}${h4}`;
+            i += 5; // consumed \ u + 4 digits => total 6 chars
+            continue;
+          }
+
+          // Invalid \u... (likely LaTeX). Escape backslash.
+          out += `\\\\u`;
+          continue;
+        }
+
+        // JSON single-letter escapes that collide with LaTeX (b,f,n,r,t)
+        if (next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't') {
+          const after = s[i + 2] ?? '';
+          if (after && isLetter(after)) {
+            // LaTeX likely (e.g. \beta, \tan, \frac...). Escape backslash.
+            out += `\\\\${next}`;
+            i += 1;
+            continue;
+          }
+
+          // Real JSON escape
+          out += `\\${next}`;
+          i += 1;
+          continue;
+        }
+
+        // Valid JSON escapes for these starters
+        if (next === '"' || next === '\\' || next === '/') {
+          out += `\\${next}`;
+          i += 1;
+          continue;
+        }
+
+        // Anything else (e.g. \l, \o, \c, \left, \operatorname) => invalid JSON escape => escape it.
+        out += `\\\\${next}`;
+        i += 1;
+      }
+
+      return out;
+    };
+
     const repairInvalidBackslashes = (s: string) =>
       // Escape backslashes that are not valid JSON escape starters.
       s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
@@ -318,11 +392,11 @@ export default function AIQuestionAssistant() {
           escape = false;
           continue;
         }
-        if (ch === '\\\\') {
+        if (ch === '\\') {
           escape = true;
           continue;
         }
-        if (ch === '\"') {
+        if (ch === '"') {
           inString = !inString;
           continue;
         }
@@ -344,7 +418,7 @@ export default function AIQuestionAssistant() {
     } catch (e1) {
       try {
         const base = extractJsonArraySubstring(sanitizeControlChars(cleaned));
-        const repaired = repairInvalidBackslashes(repairBackslashesInJsonStrings(base));
+          const repaired = repairJsonBackslashesForLaTeX(base);
         const parsed2 = JSON.parse(repaired);
         return Array.isArray(parsed2) ? parsed2 : [];
       } catch (e2) {
