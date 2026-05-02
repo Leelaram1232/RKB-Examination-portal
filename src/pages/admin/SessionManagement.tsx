@@ -622,7 +622,7 @@ const SessionManagement = () => {
                             End Exam
                           </Button>
                         )}
-                        {session.is_auto_submitted && (
+                        {session.is_completed && (
                           <Button
                             size="sm"
                             variant="default"
