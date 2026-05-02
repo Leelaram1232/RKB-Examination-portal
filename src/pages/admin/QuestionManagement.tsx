@@ -431,19 +431,25 @@ const QuestionManagement = () => {
 
     if (fetchError || !currentQuestions) return;
 
+    // Filter to only those that actually need updating
     const updates = currentQuestions
       .map((q, index) => ({ id: q.id, question_number: index + 1 }))
       .filter((u, index) => currentQuestions[index].question_number !== u.question_number);
 
     if (updates.length === 0) return;
 
-    const { error: updateError } = await supabase
-      .from('questions')
-      .upsert(updates);
+    // Perform updates individually to avoid "400 Bad Request" (missing columns in upsert)
+    // and unique constraint collisions.
+    for (const update of updates) {
+      const { error: updateError } = await supabase
+        .from('questions')
+        .update({ question_number: update.question_number })
+        .eq('id', update.id);
 
-    if (updateError) {
-      console.error('Failed to reorder questions:', updateError);
-      throw updateError;
+      if (updateError) {
+        console.error('Failed to update question number for', update.id, updateError);
+        // We continue with others even if one fails, but log it
+      }
     }
   };
 
