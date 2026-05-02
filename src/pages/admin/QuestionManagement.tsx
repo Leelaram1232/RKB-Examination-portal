@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image, ListOrdered } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -138,6 +138,7 @@ const QuestionManagement = () => {
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const [dragActionType, setDragActionType] = useState<'select' | 'deselect'>('select');
   const mouseYRef = useRef<number>(0);
+  const [isReordering, setIsReordering] = useState(false);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
 
   const fetchExams = async () => {
@@ -442,6 +443,22 @@ const QuestionManagement = () => {
 
     if (updateError) {
       console.error('Failed to reorder questions:', updateError);
+      throw updateError;
+    }
+  };
+
+  const handleManualReorder = async () => {
+    if (!selectedExamId) return;
+    
+    setIsReordering(true);
+    try {
+      await reorderQuestions(selectedExamId);
+      await fetchExamAndQuestions(selectedExamId);
+      toast.success('Question numbers rearranged successfully');
+    } catch (error) {
+      toast.error('Failed to rearrange question numbers');
+    } finally {
+      setIsReordering(false);
     }
   };
 
@@ -793,6 +810,12 @@ const QuestionManagement = () => {
                           </AlertDialog>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                    )}
+                    {questions.length > 0 && (
+                      <Button variant="outline" onClick={handleManualReorder} disabled={isReordering}>
+                        {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ListOrdered className="w-4 h-4 mr-2" />}
+                        Rearrange Numbers
+                      </Button>
                     )}
                     <Button onClick={openAddDialog}>
                       <Plus className="w-4 h-4 mr-2" />
