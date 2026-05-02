@@ -916,19 +916,6 @@ export default function AIQuestionAssistant() {
                 ))}
               </select>
             </div>
-            <div className="w-44 min-w-[10rem]">
-              <Label className="text-xs text-muted-foreground sr-only">Model</Label>
-              <select
-                className="w-full p-2 border rounded-md text-sm"
-                value={llmMode}
-                onChange={(e) => setLlmMode(e.target.value as LlmMode)}
-                title="Chat & quality-check backend"
-              >
-                <option value="groq">Groq</option>
-                <option value="gemini">Gemini</option>
-                <option value="both">Both</option>
-              </select>
-            </div>
             <Button
               type="button"
               variant="secondary"
@@ -1037,10 +1024,10 @@ export default function AIQuestionAssistant() {
           {/* Chat Sidebar */}
           <Card className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden shadow-md border-primary/20 lg:col-span-1">
             <CardHeader className="space-y-2 py-3 px-4 bg-primary/5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <BrainCircuit className="h-4 w-4 text-primary" />
-                  AI Assistant ({llmMode === 'groq' ? 'Groq' : llmMode === 'gemini' ? 'Gemini' : 'Groq + Gemini'})
+                  AI Assistant
                 </CardTitle>
                 <Button
                   type="button"
@@ -1054,6 +1041,23 @@ export default function AIQuestionAssistant() {
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete chat
                 </Button>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="ai-llm-mode" className="text-xs text-muted-foreground">
+                  Model (chat + quality check)
+                </Label>
+                <select
+                  id="ai-llm-mode"
+                  className="w-full max-w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                  value={llmMode}
+                  onChange={(e) => setLlmMode(e.target.value as LlmMode)}
+                  disabled={isSending}
+                  title="Groq: fast Llama. Gemini: Google only. Both: Groq draft then Gemini merge."
+                >
+                  <option value="groq">Groq</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="both">Both (Groq → Gemini)</option>
+                </select>
               </div>
               {fileName && (
                 <div className="flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1.5 text-xs text-primary">
