@@ -4,9 +4,11 @@ import { Card, CardContent } from '@/components/ui/card';
 interface ExamBlockedOverlayProps {
   violationCount: number;
   maxViolations: number;
+  reason?: string;
+  recentViolations?: { type: string; timestamp: string }[];
 }
 
-export const ExamBlockedOverlay = ({ violationCount, maxViolations }: ExamBlockedOverlayProps) => {
+export const ExamBlockedOverlay = ({ violationCount, maxViolations, reason, recentViolations }: ExamBlockedOverlayProps) => {
   return (
     <div className="fixed inset-0 z-[200] bg-red-900 flex items-center justify-center p-4">
       <Card className="max-w-lg w-full bg-white shadow-2xl">
@@ -24,6 +26,11 @@ export const ExamBlockedOverlay = ({ violationCount, maxViolations }: ExamBlocke
             <p className="text-lg text-gray-800">
               You have violated examination rules.
             </p>
+            {reason && (
+              <p className="text-sm text-gray-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                <span className="font-semibold text-red-700">Reason:</span> {reason}
+              </p>
+            )}
             <p className="text-lg font-semibold text-gray-900">
               You are no longer allowed to continue.
             </p>
@@ -45,6 +52,20 @@ export const ExamBlockedOverlay = ({ violationCount, maxViolations }: ExamBlocke
           <p className="text-sm text-gray-600">
             Your answers up to this point have been saved.
           </p>
+
+          {/* Recent violations */}
+          {recentViolations && recentViolations.length > 0 && (
+            <div className="text-left bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <p className="font-semibold text-gray-800 mb-2">Recent violations</p>
+              <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+                {recentViolations.slice(-5).reverse().map((v, idx) => (
+                  <li key={idx}>
+                    {v.type}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Contact Section */}
           <div className="bg-gray-100 rounded-lg p-6 space-y-3">

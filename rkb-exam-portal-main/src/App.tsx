@@ -12,8 +12,9 @@ import ExamList from "./pages/admin/ExamList";
 import ExamForm from "./pages/admin/ExamForm";
 import ExamDetail from "./pages/admin/ExamDetail";
 import RegistrationApproval from "./pages/admin/RegistrationApproval";
-import QuestionManagement from "./pages/admin/QuestionManagement";
-import SmartQuestionPaste from "./pages/admin/SmartQuestionPaste";
+import QuestionManagement from "@/pages/admin/QuestionManagement";
+import SmartQuestionPaste from "@/pages/admin/SmartQuestionPaste";
+import AIQuestionAssistant from "@/pages/admin/AIQuestionAssistant";
 import SessionManagement from "./pages/admin/SessionManagement";
 import LiveMonitoring from "./pages/admin/LiveMonitoring";
 import ExamRegistration from "./pages/ExamRegistration";
@@ -128,6 +129,14 @@ const App = () => (
               element={
                 <ProtectedRoute requiredRole="admin">
                   <SmartQuestionPaste />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/questions/ai-assistant"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <AIQuestionAssistant />
                 </ProtectedRoute>
               }
             />

@@ -203,6 +203,8 @@ async function callMathpixPdf(fileUrl: string, appId: string, appKey: string): P
       conversion_formats: { mmd: true },
       math_inline_delimiters: ["$", "$"],
       math_display_delimiters: ["$$", "$$"],
+      // Multi-language OCR: Telugu, Hindi, Tamil, Kannada + English
+      languages: ['en', 'te', 'hi', 'ta', 'kn'],
     }),
   });
 
@@ -546,8 +548,10 @@ Deno.serve(async (req) => {
     const systemPrompt = `You extract questions from competitive exam papers.
 Rules:
 - Preserve LaTeX inside $...$ for math/science.
+- IMPORTANT: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English text. Preserve regional-language text EXACTLY as-is. Do NOT translate.
 - For has_image: true if a diagram/graph/figure/circuit is referenced or present.
 - image_description should be a concise description when has_image is true.
+- If the OCR text contains image URLs (e.g., https://cdn.mathpix.com/...), include them in image_description so they can be extracted later.
 - NEVER include the full paper; return ONLY tool output.`;
 
     // Pass 1: answer key only

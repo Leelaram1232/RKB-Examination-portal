@@ -7,8 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { externalSupabase as supabase } from '@/lib/externalSupabase';
-import { supabase as lovableSupabase } from '@/integrations/supabase/client';
+import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { toast } from 'sonner';
 import {
   Table,
@@ -78,6 +77,7 @@ interface Registration {
     exam_name: string;
     exam_code: string;
     exam_date: string;
+    notify_on_approval: boolean;
   } | null;
 }
 
@@ -105,7 +105,7 @@ const RegistrationApproval = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [examFilter, setExamFilter] = useState<string>('all');
-  const [exams, setExams] = useState<{ id: string; exam_name: string }[]>([]);
+  const [exams, setExams] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkActionDialog, setShowBulkActionDialog] = useState(false);
   const [bulkActionType, setBulkActionType] = useState<'approve' | 'reject'>('approve');
@@ -115,7 +115,7 @@ const RegistrationApproval = () => {
       // Fetch exams for filter dropdown and for mapping exam details
       const { data: examsData } = await supabase
         .from('exams')
-        .select('id, exam_name, exam_code, exam_date')
+        .select('id, exam_name, exam_code, exam_date, notify_on_approval')
         .order('exam_name');
 
       if (examsData) {
@@ -218,63 +218,75 @@ const RegistrationApproval = () => {
     if (!selectedRegistration) return;
     
     setIsProcessing(true);
+    try {
+      const updateData: Record<string, unknown> = {
+        approval_status: actionType === 'approve' ? 'approved' : 'rejected',
+        approval_remarks: remarks || null,
+        approved_at: actionType === 'approve' ? new Date().toISOString() : null,
+      };
 
-    const updateData: Record<string, unknown> = {
-      approval_status: actionType === 'approve' ? 'approved' : 'rejected',
-      approval_remarks: remarks || null,
-      approved_at: actionType === 'approve' ? new Date().toISOString() : null,
-    };
-
-    if (actionType === 'approve') {
-      updateData.exam_login_enabled = true;
-      // Generate password from DOB if available
-      if (selectedRegistration.date_of_birth) {
-        const dob = new Date(selectedRegistration.date_of_birth);
-        updateData.exam_password = format(dob, 'ddMMyy');
+      if (actionType === 'approve') {
+        updateData.exam_login_enabled = true;
+        // Generate password from DOB if available
+        if (selectedRegistration.date_of_birth) {
+          const dob = new Date(selectedRegistration.date_of_birth);
+          updateData.exam_password = format(dob, 'ddMMyy');
+        }
       }
-    }
 
-    const { error } = await supabase
-      .from('registrations')
-      .update(updateData)
-      .eq('id', selectedRegistration.id);
+      const { error } = await supabase
+        .from('registrations')
+        .update(updateData)
+        .eq('id', selectedRegistration.id);
 
-    if (error) {
-      setIsProcessing(false);
-      toast.error(`Failed to ${actionType} registration`);
-      console.error(error);
-      return;
-    }
+      if (error) {
+        toast.error(`Failed to ${actionType} registration`);
+        console.error(error);
+        return;
+      }
 
-    // Send approval email notification
-    if (actionType === 'approve') {
-      console.log('[APPROVAL] Sending approval email for registration:', selectedRegistration.id);
-      try {
-        const emailResponse = await lovableSupabase.functions.invoke('send-notification-email', {
-          body: {
+      const shouldNotify = selectedRegistration.exams?.notify_on_approval ?? true;
+
+      if (actionType === 'approve') {
+        toast.success('Registration approved');
+
+        // Same Supabase project as registrations (external) — Lovable invoke would look up the wrong DB.
+        if (shouldNotify) {
+          console.log(
+            `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
+          );
+
+          const emailPromise = invokeExternalFunction('send-notification-email', {
             type: 'registration_approved',
             registration_id: selectedRegistration.id,
-          },
-        });
-        console.log('[APPROVAL] Email response:', emailResponse);
-        if (emailResponse.error) {
-          console.error('[APPROVAL] Email failed:', emailResponse.error);
-          toast.warning('Approved but email notification failed');
-        } else {
-          toast.success('Registration approved and email sent!');
-        }
-      } catch (emailError) {
-        console.error('[APPROVAL] Email error:', emailError);
-        toast.warning('Approved but email notification failed');
-      }
-    } else {
-      toast.success('Registration rejected');
-    }
+          });
 
-    setIsProcessing(false);
-    setShowActionDialog(false);
-    setRemarks('');
-    fetchRegistrations();
+          const timeoutPromise = new Promise<{ data: unknown; error: Error }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: new Error('Email send timed out') }), 15000)
+          );
+
+          const emailResp = await Promise.race([emailPromise, timeoutPromise]);
+
+          if (emailResp.error) {
+            console.error('[APPROVAL] Email failed:', emailResp.error);
+            toast.warning('Approved, but email notification failed');
+          } else {
+            toast.success('Approval email sent');
+          }
+        }
+      } else {
+        toast.success('Registration rejected');
+      }
+
+      setShowActionDialog(false);
+      setRemarks('');
+      fetchRegistrations();
+    } catch (err) {
+      console.error('[RegistrationApproval] handleAction error:', err);
+      toast.error('Something went wrong while processing this action');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleBulkAction = async () => {
@@ -303,31 +315,39 @@ const RegistrationApproval = () => {
       return;
     }
 
-    // Send approval emails for bulk approve
+    // Send approval emails for bulk approve if enabled for the exam
     if (bulkActionType === 'approve') {
-      console.log('[BULK_APPROVAL] Sending emails for', selectedIds.size, 'registrations');
+      console.log('[BULK_APPROVAL] Sending emails for selected registrations');
+      
       const emailPromises = Array.from(selectedIds).map(async (regId) => {
+        const registration = registrations.find(r => r.id === regId);
+        const shouldNotify = registration?.exams?.notify_on_approval ?? true;
+        
+        if (!shouldNotify) return { regId, success: true, skipped: true };
+        
         try {
-          const response = await lovableSupabase.functions.invoke('send-notification-email', {
-            body: {
-              type: 'registration_approved',
-              registration_id: regId,
-            },
+          const { data, error } = await invokeExternalFunction('send-notification-email', {
+            type: 'registration_approved',
+            registration_id: regId,
           });
-          return { regId, success: !response.error };
-        } catch {
-          return { regId, success: false };
+          return { regId, success: !error, error, skipped: false };
+        } catch (err) {
+          return { regId, success: false, error: err, skipped: false };
         }
       });
 
       const results = await Promise.all(emailPromises);
       const successCount = results.filter(r => r.success).length;
-      console.log('[BULK_APPROVAL] Email results:', successCount, '/', results.length, 'sent');
+      const skippedCount = results.filter(r => (r as any).skipped).length;
+      console.log('[BULK_APPROVAL] Results:', successCount, 'sent/skipped,', results.length, 'total');
       
       if (successCount < results.length) {
-        toast.warning(`${selectedIds.size} approved, ${successCount} emails sent`);
+        toast.warning(`${selectedIds.size} approved, ${successCount - skippedCount} emails sent`);
       } else {
-        toast.success(`${selectedIds.size} registration(s) approved and emails sent!`);
+        const message = skippedCount > 0 
+          ? `${selectedIds.size} approved (${skippedCount} emails disabled by exam settings)`
+          : `${selectedIds.size} registration(s) approved and emails sent!`;
+        toast.success(message);
       }
     } else {
       toast.success(`${selectedIds.size} registration(s) rejected`);

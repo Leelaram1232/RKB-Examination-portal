@@ -34,3 +34,7 @@ dist-ssr
 # OCR Temporary files
 push_error.txt
 ocr/__pycache__/
+
+# Supabase CLI / local scratch
+supabase/.temp/
+full_diff_list.txt

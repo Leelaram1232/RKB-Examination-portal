@@ -22,10 +22,37 @@ interface RegistrationData {
 
 // Generate DOB-based password (DDMMYY format)
 function generateDobPassword(dob: string): string {
-  const date = new Date(dob);
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = String(date.getFullYear()).slice(-2);
+  const raw = String(dob || '').trim();
+  if (/^\d{6}$/.test(raw)) {
+    // Already in DDMMYY
+    return raw;
+  }
+
+  // Common DB formats:
+  // - YYYY-MM-DD
+  // - YYYY/MM/DD
+  const mIso = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (mIso) {
+    const year4 = mIso[1];
+    const month2 = mIso[2];
+    const day2 = mIso[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  // - DD-MM-YYYY or DD/MM/YYYY
+  const mDmy = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (mDmy) {
+    const day2 = mDmy[1];
+    const month2 = mDmy[2];
+    const year4 = mDmy[3];
+    return `${day2}${month2}${year4.slice(-2)}`;
+  }
+
+  // Fallback: parse as date but use UTC getters to avoid timezone day shifts.
+  const date = new Date(raw);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = String(date.getUTCFullYear()).slice(-2);
   return `${day}${month}${year}`;
 }
 
@@ -44,11 +71,11 @@ async function findRegistration(
     .maybeSingle();
 
   if (profileError || !profile) {
-    console.log('[exam-login] Profile not found:', profileError?.message);
+    console.log('[exam-login] Profile not found or error:', profileError?.message || 'Not found');
     return null;
   }
 
-  console.log('[exam-login] Profile found:', profile.id);
+  console.log('[exam-login] Profile found ID:', profile.id);
 
   // Find registration for this profile + exam
   const { data: registration, error: regError } = await supabase
@@ -59,11 +86,11 @@ async function findRegistration(
     .maybeSingle();
 
   if (regError || !registration) {
-    console.log('[exam-login] Registration not found:', regError?.message);
+    console.log('[exam-login] Registration not found or error:', regError?.message || 'Not found');
     return null;
   }
 
-  console.log('[exam-login] Registration found:', registration.id);
+  console.log('[exam-login] Registration found:', registration.id, 'Status:', registration.approval_status);
   return {
     id: registration.id,
     registration_number: registration.registration_number,
@@ -75,23 +102,38 @@ async function findRegistration(
 }
 
 Deno.serve(async (req) => {
+  console.log(`=== EXAM LOGIN: ${req.method} ${req.url} ===`);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // Lovable Cloud Supabase (for profiles, registrations, and exam_sessions)
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // External Supabase (for exams and questions)
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL')!;
-    const externalServiceKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')!;
-    const externalSupabase = createClient(externalUrl, externalServiceKey);
+    // Create clients
+    const internalSupabase = createClient(internalUrl, internalKey);
+    let externalSupabase = null;
+    if (externalUrl && externalKey) {
+      externalSupabase = createClient(externalUrl, externalKey);
+    }
 
-    const data: ExamLoginData = await req.json();
-    console.log('[exam-login] Login attempt for exam:', data.exam_id);
+    // Determine primary client (where registrations live)
+    const primaryClient = externalSupabase || internalSupabase;
+    console.log('[exam-login] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+
+    const rawBody = await req.text();
+    if (!rawBody) throw new Error('Empty request body');
+    const data: ExamLoginData = JSON.parse(rawBody);
+    
+    console.log('[exam-login] Login attempt:', { 
+      exam_id: data.exam_id, 
+      email: data.email,
+      has_password: !!data.password 
+    });
 
     if (!data.exam_id || !data.email || !data.password) {
       return new Response(
@@ -100,12 +142,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Find registration using profiles + registrations
-    const registration = await findRegistration(supabase, data.exam_id, data.email);
+    // Find registration in primary database
+    const registration = await findRegistration(primaryClient, data.exam_id, data.email);
 
     if (!registration) {
+      console.log('[exam-login] FAIL: Registration not found for', data.email);
       return new Response(
-        JSON.stringify({ success: false, error: 'Invalid email or date of birth. Please check your credentials.' }),
+        JSON.stringify({ success: false, error: 'Invalid email or registration. Please check your credentials.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -119,10 +162,18 @@ Deno.serve(async (req) => {
     }
 
     const expectedPassword = generateDobPassword(registration.date_of_birth);
-    if (data.password !== expectedPassword) {
-      console.log('[exam-login] Password mismatch');
+    // Strict DDMMYY check – but ignore non-digit characters to avoid user typos like "25-08-05"
+    const enteredRaw = data.password || '';
+    const enteredDigits = enteredRaw.replace(/\D/g, '');
+
+    if (enteredDigits !== expectedPassword) {
+      console.log('[exam-login] Password mismatch', {
+        entered: enteredRaw,
+        normalized: enteredDigits,
+        expected: expectedPassword,
+      });
       return new Response(
-        JSON.stringify({ success: false, error: 'Invalid email or date of birth. Please check your credentials.' }),
+        JSON.stringify({ success: false, error: 'Invalid email or password. Please use your DOB (DDMMYY).' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -143,8 +194,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch exam details from external DB
-    const { data: exam, error: examError } = await externalSupabase
+    // Fetch exam details from external DB (or primary if not split)
+    const examClient = externalSupabase || primaryClient;
+    const { data: exam, error: examError } = await examClient
       .from('exams')
       .select(`
         id,
@@ -203,15 +255,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check for existing session (Lovable Cloud DB for sessions)
-    const { data: existingSession } = await supabase
+    // Check for existing session (Primary DB)
+    const { data: existingSession } = await primaryClient
       .from('exam_sessions')
       .select('id, start_time, is_completed, is_blocked, exam_status')
       .eq('registration_id', registration.id)
       .maybeSingle();
 
-    // Fetch questions from external DB
-    const { data: questions, error: questionsError } = await externalSupabase
+    // Fetch questions from External DB (or primary if not split)
+    const questionsClient = externalSupabase || primaryClient;
+    const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
       .select('id, question_number, question_text, option_a, option_b, option_c, option_d, section_name, marks, image_url, subject_id, question_type, correct_answer, subjects(id, name, code)')
       .eq('exam_id', data.exam_id)
@@ -235,7 +288,7 @@ Deno.serve(async (req) => {
 
     // Fetch option images from external DB
     const questionIds = questions.map((q: any) => q.id);
-    const { data: optionImages } = await externalSupabase
+    const { data: optionImages } = await questionsClient
       .from('question_images')
       .select('question_id, option_key, image_url')
       .in('question_id', questionIds)
@@ -276,6 +329,73 @@ Deno.serve(async (req) => {
       };
     });
 
+    // If image URLs are not publicly accessible (common for protected buckets),
+    // create signed URLs on-demand so ExamInterface can render images.
+    const IMAGE_BUCKET = 'question-uploads';
+    const SIGN_EXPIRES_IN_SECONDS = 60 * 60 * 6; // 6 hours
+
+    const extractObjectPath = (imageUrl: string | null | undefined): string | null => {
+      if (!imageUrl) return null;
+      const cleaned = String(imageUrl).split('?')[0];
+      const re = new RegExp(`/storage/v1/object/(?:public|authenticated)/${IMAGE_BUCKET}/(.+)$`);
+      const m = cleaned.match(re);
+      if (m?.[1]) return m[1];
+
+      // Fallback: last occurrence of `${bucket}/...`
+      const idx = cleaned.lastIndexOf(`${IMAGE_BUCKET}/`);
+      if (idx >= 0) return cleaned.slice(idx + IMAGE_BUCKET.length + 1);
+
+      return null;
+    };
+
+    const allImageUrls: Array<string | null> = [];
+    for (const q of transformedQuestions) {
+      allImageUrls.push(q.image_url);
+      allImageUrls.push(q.option_a_image);
+      allImageUrls.push(q.option_b_image);
+      allImageUrls.push(q.option_c_image);
+      allImageUrls.push(q.option_d_image);
+    }
+
+    const uniquePaths = new Set<string>();
+    for (const url of allImageUrls) {
+      const path = extractObjectPath(url);
+      if (path) uniquePaths.add(path);
+    }
+
+    const signedByPath: Record<string, string> = {};
+    if (uniquePaths.size > 0) {
+      const paths = Array.from(uniquePaths);
+      const signedPairs = await Promise.all(
+        paths.map(async (path) => {
+          const { data, error } = await questionsClient.storage
+            .from(IMAGE_BUCKET)
+            .createSignedUrl(path, SIGN_EXPIRES_IN_SECONDS);
+          if (error || !data?.signedUrl) return [path, null] as const;
+          return [path, data.signedUrl] as const;
+        })
+      );
+
+      for (const pair of signedPairs) {
+        const [path, signedUrl] = pair;
+        if (signedUrl) signedByPath[path] = signedUrl;
+      }
+    }
+
+    const signUrlOrKeep = (url: string | null | undefined) => {
+      const path = extractObjectPath(url);
+      if (!path) return url ?? null;
+      return signedByPath[path] ?? (url ?? null);
+    };
+
+    for (const q of transformedQuestions) {
+      q.image_url = signUrlOrKeep(q.image_url);
+      q.option_a_image = signUrlOrKeep(q.option_a_image);
+      q.option_b_image = signUrlOrKeep(q.option_b_image);
+      q.option_c_image = signUrlOrKeep(q.option_c_image);
+      q.option_d_image = signUrlOrKeep(q.option_d_image);
+    }
+
     if (existingSession) {
       // Check if exam was finally submitted
       if (existingSession.exam_status === 'finally_submitted' || (existingSession.is_completed && existingSession.exam_status !== 'resumed')) {
@@ -308,7 +428,7 @@ Deno.serve(async (req) => {
       
       // Update session status to in_progress if resuming
       if (existingSession.exam_status === 'resumed') {
-        await supabase
+        await primaryClient
           .from('exam_sessions')
           .update({ 
             exam_status: 'in_progress',
@@ -317,8 +437,8 @@ Deno.serve(async (req) => {
           .eq('id', existingSession.id);
       }
       
-      // Fetch existing answers
-      const { data: existingAnswers } = await supabase
+      // Fetch existing answers (Primary DB)
+      const { data: existingAnswers } = await primaryClient
         .from('student_answers')
         .select('question_id, selected_option, text_answer, is_marked_for_review')
         .eq('session_id', existingSession.id);
@@ -359,8 +479,8 @@ Deno.serve(async (req) => {
     const userAgent = req.headers.get('user-agent') || '';
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || '';
 
-    // Create new session (in Lovable Cloud DB)
-    const { data: newSession, error: sessionError } = await supabase
+    // Create new session (Primary DB)
+    const { data: newSession, error: sessionError } = await primaryClient
       .from('exam_sessions')
       .insert({
         registration_id: registration.id,

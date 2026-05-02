@@ -10,10 +10,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/integrations/supabase/types';
 
-// Hardcoded external Supabase credentials
-// These bypass Lovable Cloud's runtime injection
-const EXTERNAL_SUPABASE_URL = "https://hwhhgprivdgdbnlqruln.supabase.co";
-const EXTERNAL_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
+import { supabase } from '@/integrations/supabase/client';
+
+// Use environment variables if available, fallback to hardcoded values for legacy support
+export const EXTERNAL_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hwhhgprivdgdbnlqruln.supabase.co";
+export const EXTERNAL_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
 
 // Create the external Supabase client
 export const externalSupabase: SupabaseClient<Database> = createClient<Database>(
@@ -38,38 +39,59 @@ export const externalSupabase: SupabaseClient<Database> = createClient<Database>
  */
 export async function invokeExternalFunction<T = unknown>(
   functionName: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown> = {},
+  options: { method?: 'POST' | 'GET' } = {}
 ): Promise<{ data: T | null; error: Error | null }> {
-  const url = `${EXTERNAL_SUPABASE_URL}/functions/v1/${functionName}`;
+  const method = options.method || 'POST';
+  let url = `${EXTERNAL_SUPABASE_URL}/functions/v1/${functionName}`;
   
   try {
-    console.log(`[ExternalSupabase] Invoking ${functionName} on external backend...`);
-    console.log(`[ExternalSupabase] URL: ${url}`);
-    
-    // Get current session token if available
+    // Add query params for GET requests
+    if (method === 'GET' && body && Object.keys(body).length > 0) {
+      const params = new URLSearchParams();
+      Object.entries(body).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, String(value));
+        }
+      });
+      url += `?${params.toString()}`;
+    }
+
+    // Get current session for auth - Use the same client we use for external calls
     const { data: { session } } = await externalSupabase.auth.getSession();
-    const accessToken = session?.access_token;
+    const token = session?.access_token || EXTERNAL_SUPABASE_ANON_KEY;
+
+    // Avoid logging auth/JWT-related details to the console.
+    console.log(`[ExternalSupabase] Invoking ${functionName} via ${method}...`);
     
-    // Use native fetch with explicit headers to bypass Lovable's fetch wrapper
-    const response = await window.fetch(url, {
-      method: 'POST',
+    // Setup request init
+    const init: RequestInit = {
+      method,
       headers: {
         'Content-Type': 'application/json',
         'apikey': EXTERNAL_SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${accessToken || EXTERNAL_SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify(body),
-    });
+    };
 
+    if (method === 'POST') {
+      init.body = JSON.stringify(body);
+    }
+
+    const response = await window.fetch(url, init);
     const responseText = await response.text();
     console.log(`[ExternalSupabase] ${functionName} response status:`, response.status);
-    console.log(`[ExternalSupabase] ${functionName} response body:`, responseText);
 
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status}`;
       try {
         const errorData = JSON.parse(responseText);
-        errorMessage = errorData.error || errorData.message || errorMessage;
+        if (response.status === 401) {
+          errorMessage = errorData.details || errorData.error || "Session Timeout or Unauthorized. Please log in again.";
+          // Don't log Supabase debug_info/auth details (may contain sensitive metadata).
+        } else {
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        }
       } catch {
         errorMessage = responseText || errorMessage;
       }
@@ -80,18 +102,16 @@ export async function invokeExternalFunction<T = unknown>(
     try {
       data = JSON.parse(responseText) as T;
     } catch {
-      // Response might not be JSON
       data = responseText as unknown as T;
     }
 
     return { data, error: null };
   } catch (err) {
     console.error(`[ExternalSupabase] Exception invoking ${functionName}:`, err);
-    // Check if it's a CORS/network error
     if (err instanceof TypeError && err.message === 'Failed to fetch') {
       return { 
         data: null, 
-        error: new Error(`Network error calling ${functionName}. This may be a CORS issue - please verify the edge function has proper CORS headers and is deployed.`) 
+        error: new Error(`Network error calling ${functionName}. This may be a CORS issue.`) 
       };
     }
     return { data: null, error: err as Error };

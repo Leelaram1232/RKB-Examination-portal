@@ -87,11 +87,20 @@ Deno.serve(async (req) => {
     const payload = JSON.parse(rawBody);
     console.log('Parsed webhook payload:', JSON.stringify(payload, null, 2));
     
-    // Use external Supabase credentials to access the data
-    const supabase = createClient(
-      Deno.env.get('EXTERNAL_SUPABASE_URL')!,
-      Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')!
-    );
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const internalUrl = Deno.env.get('SUPABASE_URL');
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+    // Use external if available, otherwise fallback to internal
+    const supabaseUrl = externalUrl || internalUrl;
+    const supabaseKey = externalKey || internalKey;
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Handle different webhook event types
     const eventType = payload.type;

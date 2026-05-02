@@ -27,9 +27,18 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const { order_id, registration_id } = await req.json();
+    let order_id, registration_id;
+    try {
+      const body = await req.json();
+      order_id = body.order_id;
+      registration_id = body.registration_id;
+    } catch {
+      // Body may be empty for some requests
+    }
+    
     console.log("verify-payment called:", { order_id, registration_id });
+
+    try {
 
     if (!order_id && !registration_id) {
       throw new Error("Either order_id or registration_id is required");
@@ -45,14 +54,27 @@ Deno.serve(async (req) => {
 
     const isProduction =
       environment === "production" || environment === "PROD";
-    const baseUrl = isProduction
+    const primaryBaseUrl = isProduction
       ? "https://api.cashfree.com"
       : "https://sandbox.cashfree.com";
+    const secondaryBaseUrl = isProduction
+      ? "https://sandbox.cashfree.com"
+      : "https://api.cashfree.com";
 
-    const supabase = createClient(
-      Deno.env.get("EXTERNAL_SUPABASE_URL")!,
-      Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const externalUrl = Deno.env.get("EXTERNAL_SUPABASE_URL");
+    const externalKey = Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY");
+    const internalUrl = Deno.env.get("SUPABASE_URL");
+    const internalKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    // Use external if available, otherwise fallback to internal
+    const supabaseUrl = externalUrl || internalUrl;
+    const supabaseKey = externalKey || internalKey;
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error("Supabase credentials not configured");
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     let orderId = order_id;
     let regId = registration_id;
@@ -88,39 +110,72 @@ Deno.serve(async (req) => {
       console.log("Extracted regId from orderId:", regId);
     }
 
-    // Fetch order status from Cashfree
-    console.log("Fetching Cashfree order:", orderId);
-    const cfResponse = await fetch(`${baseUrl}/pg/orders/${orderId}`, {
-      method: "GET",
-      headers: {
-        "x-client-id": appId,
-        "x-client-secret": secretKey,
-        "x-api-version": "2023-08-01",
-      },
-    });
-
-    const cfText = await cfResponse.text();
-    console.log("Cashfree response:", cfResponse.status, cfText);
-
-    let orderData;
-    try {
-      orderData = JSON.parse(cfText);
-    } catch {
-      throw new Error("Invalid response from payment gateway");
+    async function fetchOrder(baseUrl: string) {
+      const res = await fetch(`${baseUrl}/pg/orders/${orderId}`, {
+        method: "GET",
+        headers: {
+          "x-client-id": appId,
+          "x-client-secret": secretKey,
+          "x-api-version": "2023-08-01",
+        },
+      });
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        // keep null
+      }
+      return { res, text, json };
     }
 
-    if (!cfResponse.ok) {
-      throw new Error(orderData.message || "Failed to verify payment");
+    // Fetch order status from Cashfree (try both prod & sandbox to avoid env mismatch)
+    console.log("Fetching Cashfree order:", orderId, { primaryBaseUrl });
+    let cf = await fetchOrder(primaryBaseUrl);
+    console.log("Cashfree response (primary):", cf.res.status, cf.text);
+
+    if (!cf.res.ok) {
+      console.log("Retrying Cashfree order on secondary base URL:", {
+        secondaryBaseUrl,
+      });
+      const cf2 = await fetchOrder(secondaryBaseUrl);
+      console.log("Cashfree response (secondary):", cf2.res.status, cf2.text);
+      if (cf2.res.ok) {
+        cf = cf2;
+      }
     }
 
-    // Map status
+    const orderData = cf.json;
+    if (!cf.res.ok || !orderData) {
+      // Don't hard-fail to "failed" if gateway verification is temporarily unavailable.
+      // If DB already has completed, trust it. Otherwise treat as pending.
+      if (regId) {
+        const details = await fetchRegistrationDetails(supabase, regId);
+        if (details?.payment_status === "completed") {
+          return jsonResponse({
+            success: true,
+            payment_status: "completed",
+            order_id: orderId,
+            registration: details,
+          });
+        }
+      }
+      return jsonResponse({
+        success: true,
+        order_id: orderId,
+        payment_status: "pending",
+        error:
+          (orderData?.message as string) ||
+          "Payment verification temporarily unavailable",
+      });
+    }
+
+    // Map status (also cross-check payments list)
     let paymentStatus = "pending";
-    if (orderData.order_status === "PAID") {
+    const orderStatus = orderData.order_status;
+    if (orderStatus === "PAID") {
       paymentStatus = "completed";
-    } else if (
-      orderData.order_status === "EXPIRED" ||
-      orderData.order_status === "CANCELLED"
-    ) {
+    } else if (orderStatus === "EXPIRED" || orderStatus === "CANCELLED") {
       paymentStatus = "failed";
     }
 
@@ -128,41 +183,61 @@ Deno.serve(async (req) => {
 
     // Update DB if we have regId
     if (regId) {
-      const updateData: Record<string, unknown> = {
-        payment_status: paymentStatus,
-      };
-
-      if (paymentStatus === "completed") {
-        updateData.payment_time = new Date().toISOString();
-      }
+      const updateData: Record<string, unknown> = {};
 
       // Fetch transaction ID from payments endpoint
       try {
-        const payRes = await fetch(
-          `${baseUrl}/pg/orders/${orderId}/payments`,
-          {
+        async function fetchPayments(baseUrl: string) {
+          const payRes = await fetch(`${baseUrl}/pg/orders/${orderId}/payments`, {
             method: "GET",
             headers: {
               "x-client-id": appId,
               "x-client-secret": secretKey,
               "x-api-version": "2023-08-01",
             },
+          });
+          let json: any = null;
+          try {
+            json = await payRes.json();
+          } catch {
+            // ignore
           }
-        );
-        if (payRes.ok) {
-          const payments = await payRes.json();
-          if (Array.isArray(payments) && payments.length > 0) {
-            const success = payments.find(
-              (p: any) => p.payment_status === "SUCCESS"
-            );
-            if (success) {
-              updateData.transaction_id =
-                success.cf_payment_id?.toString();
-            }
+          return { payRes, json };
+        }
+
+        let pay = await fetchPayments(primaryBaseUrl);
+        if (!pay.payRes.ok) {
+          pay = await fetchPayments(secondaryBaseUrl);
+        }
+
+        const paymentsList = Array.isArray(pay.json)
+          ? pay.json
+          : Array.isArray(pay.json?.payments)
+            ? pay.json.payments
+            : [];
+
+        if (paymentsList.length > 0) {
+          const success = paymentsList.find((p: any) => p.payment_status === "SUCCESS");
+          const failed = paymentsList.find((p: any) =>
+            ["FAILED", "CANCELLED", "USER_DROPPED"].includes(p.payment_status)
+          );
+
+          if (success) {
+            updateData.transaction_id = success.cf_payment_id?.toString();
+            paymentStatus = "completed";
+          } else if (paymentStatus !== "completed" && failed && orderStatus !== "PAID") {
+            // Only mark failed when gateway clearly says so
+            paymentStatus = "failed";
           }
         }
       } catch (e) {
         console.log("Could not fetch payment details:", e);
+      }
+
+      // Ensure DB update matches the FINAL derived status
+      updateData.payment_status = paymentStatus;
+      if (paymentStatus === "completed") {
+        updateData.payment_time = new Date().toISOString();
       }
 
       console.log("Updating registration", regId, updateData);

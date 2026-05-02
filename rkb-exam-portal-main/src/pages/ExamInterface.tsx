@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -24,6 +25,7 @@ import { AudioMonitor } from '@/components/exam/AudioMonitor';
 import { ScreenCapture } from '@/components/exam/ScreenCapture';
 import { ExamBlockedOverlay } from '@/components/exam/ExamBlockedOverlay';
 import { useHeartbeat } from '@/hooks/useHeartbeat';
+import { Room, createLocalVideoTrack } from 'livekit-client';
 
 interface Question {
   id: string;
@@ -100,6 +102,7 @@ export default function ExamInterface() {
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [endTime, setEndTime] = useState<Date | null>(null);
+  const [tempNumericalAnswer, setTempNumericalAnswer] = useState<string>('');
   
   // Fullscreen and violation tracking
   const [violationCount, setViolationCount] = useState(0);
@@ -113,6 +116,7 @@ export default function ExamInterface() {
   const hasInitialized = useRef(false);
   const violationRef = useRef(0);
   const violationsRef = useRef<ViolationRecord[]>([]);
+  const livekitRoomRef = useRef<Room | null>(null);
   
   // Get proctoring settings from exam
   const proctoringEnabled = session?.exam?.proctoring_enabled ?? false;
@@ -269,7 +273,107 @@ export default function ExamInterface() {
     };
 
     loadExamData();
+
+    return () => {
+      // Clean up LiveKit connection if still active when component unmounts.
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
   }, [examId, navigate, toast]);
+
+  // Real-time questions update subscription
+  useEffect(() => {
+    if (!session?.exam?.id) return;
+
+    const channel = supabase
+      .channel(`public:questions:exam_id=eq.${session.exam.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'questions',
+          filter: `exam_id=eq.${session.exam.id}`,
+        },
+        (payload) => {
+          console.log('[Real-time] Question updated from admin:', payload.new);
+          setQuestions((prevQuestions) => {
+            const updatedIndex = prevQuestions.findIndex((q) => q.id === payload.new.id);
+            if (updatedIndex === -1) return prevQuestions;
+            
+            const newQuestions = [...prevQuestions];
+            // Merge payload.new while preserving joined fields like subject_name
+            newQuestions[updatedIndex] = { ...prevQuestions[updatedIndex], ...payload.new as any };
+            return newQuestions;
+          });
+          
+          toast({
+            title: 'Question Updated',
+            description: 'A question was just updated by the administrator.',
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.exam?.id, toast]);
+
+  // Start LiveKit camera streaming once we have a valid session + exam id
+  useEffect(() => {
+    if (!session?.session_id || !session.exam?.id) return;
+
+    let cancelled = false;
+
+    const startStreaming = async () => {
+      try {
+        // Avoid creating multiple rooms if effect re-runs
+        if (livekitRoomRef.current) return;
+
+        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
+          exam_id: session.exam.id,
+          session_id: session.session_id,
+          role: 'student',
+        });
+        if (error || !data || cancelled) {
+          console.error('get-stream-token error:', error);
+          return;
+        }
+
+        const room = new Room();
+        await room.connect(data.url, data.token);
+        livekitRoomRef.current = room;
+        
+        const camTrack = await createLocalVideoTrack();
+        await room.localParticipant.publishTrack(camTrack, { name: 'camera' });
+
+        console.log('[LiveKit] Student camera track published for session', session.session_id);
+      } catch (e) {
+        console.error('[LiveKit] Failed to start streaming:', e);
+      }
+    };
+
+    startStreaming();
+
+    return () => {
+      cancelled = true;
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
+  }, [session?.session_id, session?.exam?.id, invokeExternalFunction]);
+
+  // Sync numerical answer when question changes
+  useEffect(() => {
+    if (currentQuestion && currentQuestion.question_type === 'NUMERICAL') {
+      const existingAnswer = answers.get(currentQuestion.id);
+      setTempNumericalAnswer(existingAnswer?.text_answer || '');
+    }
+  }, [currentQuestion, answers]);
 
   // Save answer to database via edge function with retry logic
   const saveAnswer = useCallback(
@@ -291,35 +395,30 @@ export default function ExamInterface() {
           question_id: questionId,
           selected_option: selectedOption,
           text_answer: textAnswer,
-          is_marked_for_review: isMarkedForReview,
+          is_marked_for_review: !!isMarkedForReview,
         });
         return newMap;
       });
 
       try {
-        console.log('[SAVE_ANSWER] Invoking save-answer edge function...');
-        const response = await supabase.functions.invoke('save-answer', {
-          body: {
-            session_id: session.session_id,
-            question_id: questionId,
-            selected_option: selectedOption,
-            text_answer: textAnswer,
-            is_marked_for_review: isMarkedForReview,
-          },
-        });
-
-        console.log('[SAVE_ANSWER] Response received:', response);
-
-        if (response.error) {
-          console.error('[SAVE_ANSWER] Function error:', response.error);
-          throw new Error(response.error.message || 'Function invocation failed');
-        }
-
-        const result = response.data;
-        console.log('[SAVE_ANSWER] Result data:', result);
+        const payload = {
+          session_id: session.session_id,
+          question_id: questionId,
+          selected_option: selectedOption,
+          text_answer: textAnswer,
+          is_marked_for_review: !!isMarkedForReview,
+        };
+        console.log('[SAVE_ANSWER] Sending payload:', payload);
         
-        if (!result?.success) {
-          console.error('[SAVE_ANSWER] Save failed:', result?.error);
+        const { data: result, error: invocationError } = await invokeExternalFunction<any>('save-answer', payload);
+
+        if (invocationError) {
+          console.error('[SAVE_ANSWER] Function invocation error:', invocationError);
+          throw new Error(invocationError.message || 'Save failed');
+        }
+        
+        if (!result || !result.success) {
+          console.error('[SAVE_ANSWER] Save rejected:', result?.error);
           throw new Error(result?.error || 'Save failed');
         }
 
@@ -334,17 +433,52 @@ export default function ExamInterface() {
             saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1);
           }, (retryCount + 1) * 1000);
         } else {
-          console.error('[SAVE_ANSWER] Max retries exceeded');
-          toast({
-            title: 'Failed to save answer',
-            description: 'Please check your connection and try again.',
-            variant: 'destructive',
-          });
+          console.error('[SAVE_ANSWER] Max retries reached. Attempting direct DB fallback...');
+          
+          // --- EMERGENCY FALLBACK ---
+          const { error: fallbackError } = await externalSupabase
+            .from('student_answers')
+            .upsert({
+              session_id: session.session_id,
+              question_id: questionId,
+              selected_option: selectedOption,
+              text_answer: textAnswer,
+              is_marked_for_review: !!isMarkedForReview,
+              answered_at: new Date().toISOString()
+            }, {
+              onConflict: 'session_id,question_id'
+            });
+
+          if (fallbackError) {
+            console.error('[SAVE_ANSWER] Direct fallback also failed:', fallbackError);
+            toast({
+              title: 'Final Save Error',
+              description: 'We could not save your answer. Please notify the invigilator.',
+              variant: 'destructive',
+            });
+          } else {
+            console.log('[SAVE_ANSWER] Direct fallback successful (Direct DB Save)');
+          }
         }
       }
     },
     [session, toast]
   );
+
+  const saveCurrentNumericalAnswer = useCallback(() => {
+    if (currentQuestion?.question_type === 'NUMERICAL') {
+      const existingAnswer = answers.get(currentQuestion.id);
+      // Only save if it has changed
+      if (tempNumericalAnswer !== (existingAnswer?.text_answer || '')) {
+        saveAnswer(
+          currentQuestion.id,
+          null,
+          tempNumericalAnswer,
+          existingAnswer?.is_marked_for_review || false
+        );
+      }
+    }
+  }, [currentQuestion, tempNumericalAnswer, answers, saveAnswer]);
 
   // Handle option selection
   const handleSelectOption = useCallback(
@@ -367,81 +501,110 @@ export default function ExamInterface() {
   const handleMarkForReview = useCallback(() => {
     if (!currentQuestion) return;
     const existingAnswer = answers.get(currentQuestion.id);
+    
+    // If it's numerical, use the temp value
+    const textToSave = currentQuestion.question_type === 'NUMERICAL' 
+      ? tempNumericalAnswer 
+      : (existingAnswer?.text_answer || null);
+
     saveAnswer(
       currentQuestion.id,
       existingAnswer?.selected_option || null,
-      existingAnswer?.text_answer || null,
-      !existingAnswer?.is_marked_for_review
+      textToSave,
+      !existingAnswer?.is_marked_for_review // This will be flipped to boolean by !! in saveAnswer
     );
-  }, [currentQuestion, answers, saveAnswer]);
+  }, [currentQuestion, answers, saveAnswer, tempNumericalAnswer]);
 
   // Navigate to question using 1-based display index
   const handleNavigate = useCallback(
     (displayNumber: number) => {
+      saveCurrentNumericalAnswer();
       // displayNumber is 1-based, convert to 0-based index
       const index = displayNumber - 1;
       if (index >= 0 && index < sectionQuestions.length) {
         setCurrentQuestionIndex(index);
       }
     },
-    [sectionQuestions.length]
+    [sectionQuestions.length, saveCurrentNumericalAnswer]
   );
 
-  // Navigate next/previous
   const handleNext = useCallback(() => {
+    saveCurrentNumericalAnswer();
     if (currentQuestionIndex < sectionQuestions.length - 1) {
       setCurrentQuestionIndex((prev) => prev + 1);
     }
-  }, [currentQuestionIndex, sectionQuestions.length]);
+  }, [currentQuestionIndex, sectionQuestions.length, saveCurrentNumericalAnswer]);
 
   const handlePrevious = useCallback(() => {
+    saveCurrentNumericalAnswer();
     if (currentQuestionIndex > 0) {
       setCurrentQuestionIndex((prev) => prev - 1);
     }
-  }, [currentQuestionIndex]);
+  }, [currentQuestionIndex, saveCurrentNumericalAnswer]);
 
   // Submit exam
   const handleSubmit = useCallback(
     async (isAutoSubmit = false) => {
       if (!session) return;
+      
+      if (currentQuestion?.question_type === 'NUMERICAL') {
+        saveCurrentNumericalAnswer();
+      }
 
       setIsSubmitting(true);
 
       try {
-        const response = await supabase.functions.invoke('submit-exam', {
-          body: {
-            session_id: session.session_id,
-            is_auto_submit: isAutoSubmit,
-          },
+        console.log('[SUBMIT] Invoking submit-exam via external backend...');
+        const { data: result, error: invocationError } = await invokeExternalFunction<any>('submit-exam', {
+          session_id: session.session_id,
+          is_auto_submit: isAutoSubmit,
         });
 
-        if (response.error) {
-          throw new Error(response.error.message);
+        if (invocationError) {
+          console.error('[SUBMIT] Function invocation error:', invocationError);
+          throw invocationError;
         }
 
-        const result = response.data;
-
-        if (!result.success) {
-          throw new Error(result.error);
+        if (!result || !result.success) {
+          console.error('[SUBMIT] Submission rejected by server:', result?.error);
+          throw new Error(result?.error || 'Submission failed');
         }
 
-        // Clear session storage
-        sessionStorage.removeItem('examSession');
-
-        toast({
-          title: isAutoSubmit ? 'Time Up!' : 'Exam Submitted',
-          description: isAutoSubmit
-            ? 'Your exam has been auto-submitted'
-            : 'Your answers have been submitted successfully',
-        });
-
-        navigate(`/exam/${examId}/submitted`);
+        console.log('[SUBMIT] Success! Redirecting...');
       } catch (error: any) {
-        toast({
-          title: 'Submission Failed',
-          description: error.message || 'Please try again',
-          variant: 'destructive',
-        });
+        console.error('[SUBMIT] Main submission failed:', error);
+        
+        // --- EMERGENCY FALLBACK ---
+        // If the edge function fails (401, 500, etc.), try to at least mark the session as finished
+        // so the student can "come out" of the exam.
+        try {
+          console.log('[SUBMIT] Attempting emergency database fallback...');
+          await externalSupabase
+            .from('exam_sessions')
+            .update({
+              is_completed: true,
+              exam_status: 'finally_submitted',
+              submitted_at: new Date().toISOString()
+            })
+            .eq('id', session.session_id);
+          
+          toast({
+            title: 'Exam Finish (Manual Sync)',
+            description: 'Your answers were saved, but evaluation might be delayed. You can close this window.',
+          });
+        } catch (fallbackError) {
+          console.error('[SUBMIT] Emergency fallback also failed:', fallbackError);
+          toast({
+            title: 'Submission Connectivity Issue',
+            description: 'We encountered a problem. Please notify the invigilator, but your session has been closed for safety.',
+            variant: 'destructive',
+          });
+        }
+      } finally {
+        // ALWAYS let the student out of the interface if they clicked submit
+        // This prevents them from being held "hostage" by a server error
+        sessionStorage.removeItem('examSession');
+        navigate(`/exam/${examId}/submitted`);
         setIsSubmitting(false);
       }
     },
@@ -456,6 +619,17 @@ export default function ExamInterface() {
   // Handle violation
   const handleViolation = useCallback((type: string) => {
     if (isBlocked) return;
+    
+    // Prevent double-counting: if a violation occurred within the last 2 seconds, ignore this one.
+    // (e.g. Escaping fullscreen triggers 'fullscreenchange' AND 'blur' almost instantly)
+    const now = Date.now();
+    const lastViolationTime = violationsRef.current.length > 0 
+      ? new Date(violationsRef.current[violationsRef.current.length - 1].timestamp).getTime() 
+      : 0;
+      
+    if (now - lastViolationTime < 2000) {
+      return;
+    }
     
     violationRef.current += 1;
     const newCount = violationRef.current;
@@ -634,13 +808,39 @@ export default function ExamInterface() {
 
   // Show blocked overlay if blocked
   if (isBlocked) {
+    const last = violations.length > 0 ? violations[violations.length - 1] : null;
     return (
       <ExamBlockedOverlay 
         violationCount={violationCount} 
         maxViolations={maxViolations} 
+        reason={last?.type || lastViolationType || 'Maximum violations exceeded'}
+        recentViolations={violations.map(v => ({ type: v.type, timestamp: v.timestamp }))}
       />
     );
   }
+
+  // If blocked, poll for admin unblock/resume so the student can continue without refresh.
+  useEffect(() => {
+    if (!session || !isBlocked) return;
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('exam_sessions')
+          .select('is_blocked, exam_status')
+          .eq('id', session.session_id)
+          .maybeSingle();
+
+        if (data && data.is_blocked === false && data.exam_status === 'resumed') {
+          setIsBlocked(false);
+          // Re-enter fullscreen and continue
+          enterFullscreen();
+        }
+      } catch {
+        // ignore
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [session, isBlocked, enterFullscreen]);
 
   if (isLoading || !session || !endTime) {
     return (
@@ -751,21 +951,12 @@ export default function ExamInterface() {
                   <QuestionPanel
                     question={currentQuestion}
                     selectedOption={answers.get(currentQuestion.id)?.selected_option || null}
-                    textAnswer={answers.get(currentQuestion.id)?.text_answer || null}
+                    textAnswer={tempNumericalAnswer}
                     isMarkedForReview={
                       answers.get(currentQuestion.id)?.is_marked_for_review || false
                     }
                     onSelectOption={handleSelectOption}
-                    onChangeTextAnswer={(value) => {
-                      // Save text answer for numerical/fill-in-the-blank questions
-                      const existingAnswer = answers.get(currentQuestion.id);
-                      saveAnswer(
-                        currentQuestion.id,
-                        null,
-                        value,
-                        existingAnswer?.is_marked_for_review || false
-                      );
-                    }}
+                    onChangeTextAnswer={(value) => setTempNumericalAnswer(value)}
                   />
                 </div>
               )}

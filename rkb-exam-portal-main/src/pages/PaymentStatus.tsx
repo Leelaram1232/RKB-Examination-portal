@@ -4,7 +4,7 @@ import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Loader2, CheckCircle2, XCircle, AlertCircle, Home, RefreshCw, Receipt, Calendar, Mail, Phone, User } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -50,11 +50,9 @@ const PaymentStatus = () => {
     setIsVerifying(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('verify-payment', {
-        body: {
-          order_id: orderId,
-          registration_id: registrationId,
-        },
+      const { data, error } = await invokeExternalFunction<any>('verify-payment', {
+        order_id: orderId,
+        registration_id: registrationId,
       });
 
       console.log('[PaymentStatus] response:', { data, error });
@@ -78,15 +76,24 @@ const PaymentStatus = () => {
       // Fallback: try reading payment status directly from external Supabase
       try {
         if (registrationId) {
-          const { data: reg } = await externalSupabase
+          const { data: reg, error: regError } = await externalSupabase
             .from('registrations')
-            .select(
-              `id, registration_number, payment_amount, payment_time, transaction_id, payment_status,
-               profiles:student_id(full_name, email, mobile),
-               exams:exam_id(exam_name, exam_code, exam_date)`
-            )
+            .select(`
+              id, 
+              registration_number, 
+              payment_amount, 
+              payment_time, 
+              transaction_id, 
+              payment_status,
+              profiles!registrations_student_id_profiles_fkey(full_name, email, mobile),
+              exams!registrations_exam_id_fkey(exam_name, exam_code, exam_date)
+            `)
             .eq('id', registrationId)
-            .single();
+            .maybeSingle();
+
+          if (regError) {
+            console.error('Fallback query error:', regError);
+          }
 
           if (reg) {
             setRegistration(reg as RegistrationDetails);
@@ -106,7 +113,9 @@ const PaymentStatus = () => {
         console.error('Payment status fallback error:', fallbackError);
       }
 
-      setStatus('failed');
+      // If verification fails (network/env mismatch), do NOT show "failed" (it confuses users after success).
+      // Treat as pending and allow manual "Verify Again".
+      setStatus('pending');
     } finally {
       setIsVerifying(false);
     }
@@ -122,20 +131,24 @@ const PaymentStatus = () => {
 
     return (
       <div className="space-y-6">
-        <div className="text-center border-b pb-4">
-          <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 className="h-8 w-8 text-green-600 dark:text-green-400" />
+        {/* Hero success header */}
+        <div className="rounded-xl bg-gradient-to-r from-emerald-500 via-green-500 to-teal-500 px-6 py-5 text-center text-primary-foreground shadow-sm">
+          <div className="w-14 h-14 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-3">
+            <CheckCircle2 className="h-8 w-8 text-lime-200" />
           </div>
-          <h2 className="text-2xl font-bold text-green-600 dark:text-green-400">Payment Successful!</h2>
-          <p className="text-muted-foreground mt-1">Your registration is confirmed</p>
+          <h2 className="text-2xl font-semibold tracking-tight">Payment Successful</h2>
+          <p className="text-sm text-emerald-50 mt-1">
+            Your registration has been securely completed.
+          </p>
         </div>
 
-        <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl p-6 border border-primary/20">
+        {/* Receipt card */}
+        <div className="bg-card rounded-xl p-6 border border-primary/20 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Receipt className="h-5 w-5 text-primary" />
             <h3 className="font-semibold text-lg">Payment Receipt</h3>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 text-sm">
             {registration?.registration_number && (
               <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Registration No.</span>
@@ -156,7 +169,9 @@ const PaymentStatus = () => {
             )}
             <div className="flex justify-between items-center py-2 border-b border-border/50">
               <span className="text-muted-foreground">Amount Paid</span>
-              <span className="font-bold text-lg">₹{registration?.payment_amount || orderAmount || 0}</span>
+              <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">
+                ₹{registration?.payment_amount || orderAmount || 0}
+              </span>
             </div>
             {registration?.payment_time && (
               <div className="flex justify-between items-center py-2 border-b border-border/50">
@@ -168,7 +183,7 @@ const PaymentStatus = () => {
         </div>
 
         {exam && (
-          <div className="bg-muted/30 rounded-xl p-6">
+          <div className="bg-muted/40 rounded-xl p-6 border border-border/50">
             <div className="flex items-center gap-2 mb-4">
               <Calendar className="h-5 w-5 text-primary" />
               <h3 className="font-semibold">Exam Details</h3>
@@ -191,7 +206,7 @@ const PaymentStatus = () => {
         )}
 
         {profile && (
-          <div className="bg-muted/30 rounded-xl p-6">
+          <div className="bg-muted/40 rounded-xl p-6 border border-border/50">
             <div className="flex items-center gap-2 mb-4">
               <User className="h-5 w-5 text-primary" />
               <h3 className="font-semibold">Student Details</h3>
@@ -217,6 +232,7 @@ const PaymentStatus = () => {
           </div>
         )}
 
+        {/* Next steps */}
         <div className="bg-blue-50 dark:bg-blue-950/20 rounded-lg p-4 border border-blue-200 dark:border-blue-900">
           <h3 className="font-medium mb-2">What's Next?</h3>
           <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">

@@ -4,6 +4,7 @@ import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 interface EmailRequest {
@@ -182,16 +183,22 @@ async function updateEmailSentFlag(
 }
 
 Deno.serve(async (req) => {
-  console.log('=== SEND NOTIFICATION EMAIL (SMTP ONLY) ===');
-  console.log('[EMAIL] Timestamp:', new Date().toISOString());
-  console.log('[EMAIL] Method: STRICT SMTP - No fallback providers');
+  console.log(`=== SEND NOTIFICATION EMAIL: ${req.method} ${req.url} ===`);
+  console.log('Headers:', JSON.stringify(Object.fromEntries(req.headers.entries())));
 
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { type, registration_id }: EmailRequest = await req.json();
+    const rawBody = await req.text();
+    console.log('Raw body:', rawBody);
+    
+    if (!rawBody) {
+      throw new Error('Empty request body');
+    }
+
+    const { type, registration_id }: EmailRequest = JSON.parse(rawBody);
 
     console.log('[EMAIL] Request type:', type);
     console.log('[EMAIL] Registration ID:', registration_id);
@@ -200,20 +207,31 @@ Deno.serve(async (req) => {
       throw new Error('Missing type or registration_id');
     }
 
-    // Lovable Cloud Supabase client (where registrations + profiles live)
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
+    // 1. Identify which Supabase client to use as primary (where registrations live)
+    // If EXTERNAL_SUPABASE_URL is provided, we use that for the database
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // External Supabase client for exams table
-    const externalSupabase = createClient(
-      Deno.env.get('EXTERNAL_SUPABASE_URL')!,
-      Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')!
-    );
+    const internalSupabase = createClient(internalUrl, internalKey);
+    
+    // Create external client if credentials exist
+    let externalSupabase = null;
+    if (externalUrl && externalKey) {
+      externalSupabase = createClient(externalUrl, externalKey);
+    }
 
-    // Fetch registration data from registrations + profiles
-    const registration = await fetchRegistrationData(supabase, registration_id);
+    // Determine primary client for registrations table
+    // Most users move registrations to the external DB
+    const primaryClient = externalSupabase || internalSupabase;
+    
+    console.log('[EMAIL] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+
+    // Fetch registration data from primary database
+    const registration = await fetchRegistrationData(primaryClient, registration_id);
+
 
     if (!registration) {
       console.error('[EMAIL] Registration not found');
@@ -249,11 +267,14 @@ Deno.serve(async (req) => {
 
     console.log('[EMAIL] Student:', registration.full_name, '-', registration.email);
 
-    // Fetch exam details from external DB
+    // Fetch exam details from primary database (where exams usually are if using external)
     let exam: { exam_name: string; exam_date: string; exam_time: string } | null = null;
     
     if (registration.exam_id) {
-      const { data: examData, error: examError } = await externalSupabase
+      // Use external client if available, otherwise primary
+      const examClient = externalSupabase || primaryClient;
+      
+      const { data: examData, error: examError } = await examClient
         .from('exams')
         .select('exam_name, exam_date, exam_time')
         .eq('id', registration.exam_id)
@@ -472,10 +493,10 @@ Deno.serve(async (req) => {
     console.log('[EMAIL] Message ID:', emailResult.message_id || 'N/A');
     console.log('[EMAIL] Error:', emailResult.error || 'None');
 
-    // Update email sent flag ONLY if successful
+    // Update email sent flag ONLY if successful on the primary database
     if (emailResult.success) {
       const updateField = type === 'payment_success' ? 'email_sent_payment' : 'email_sent_approval';
-      await updateEmailSentFlag(supabase, registration_id, updateField);
+      await updateEmailSentFlag(primaryClient, registration_id, updateField);
     }
 
     return new Response(

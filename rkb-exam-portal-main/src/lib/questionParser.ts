@@ -24,6 +24,7 @@ export interface ParsedQuestion {
   optionCImage?: string | null;
   optionDImage?: string | null;
   subject?: string;
+  sectionName?: string;
 }
 
 export interface ParsedSection {

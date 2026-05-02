@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
@@ -22,15 +22,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { externalSupabase } from '@/lib/externalSupabase';
+import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
+import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface ActiveSession {
   id: string;
   registration_id: string;
   start_time: string | null;
   is_completed: boolean;
+  is_auto_submitted: boolean | null;
   violation_count: number;
   latest_snapshot_url: string | null;
   snapshot_updated_at: string | null;
+  latest_screen_url?: string | null;
+  snapshotUrl?: string | null;
+  screenUrl?: string | null;
   camera_status: string | null;
   camera_heartbeat_at: string | null;
   registration: {
@@ -60,6 +67,7 @@ const LiveMonitoring = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const livekitRoomRef = useRef<Room | null>(null);
 
   const fetchData = async () => {
     if (!examId) return;
@@ -71,65 +79,407 @@ const LiveMonitoring = () => {
       .eq('id', examId)
       .single();
 
+    let resolvedExam = examData;
     if (examError || !examData) {
+      // Fallback: some setups may have exams/sessions on external DB.
+      const { data: extExamData, error: extExamError } = await externalSupabase
+        .from('exams')
+        .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
+        .eq('id', examId)
+        .single();
+      if (!extExamError && extExamData) resolvedExam = extExamData;
+    }
+
+    if (!resolvedExam) {
       toast.error('Exam not found');
       navigate('/admin/exams');
       return;
     }
+    setExam(resolvedExam);
 
-    setExam(examData);
-
-    // Fetch active sessions with camera heartbeat info
-    const { data: sessionsData, error: sessionsError } = await supabase
-      .from('exam_sessions')
-      .select(`
-        id,
-        registration_id,
-        start_time,
-        is_completed,
-        violation_count,
-        latest_snapshot_url,
-        snapshot_updated_at,
-        camera_status,
-        camera_heartbeat_at,
-        registration:registrations!inner(
-          registration_number,
-          exam_id,
-          student:profiles!registrations_student_id_profiles_fkey(
-            id,
-            full_name,
-            email
+    // Fast path: many deployments keep ALL sessions/registrations/profiles in the external Supabase only.
+    // Try to load active sessions directly from the external project by exam_id.
+    const loadExternalSessionsByExam = async () => {
+      try {
+        const { data: externalSessionsData, error: extSessionsError } = await (externalSupabase as any)
+          .from('exam_sessions')
+          // Use a conservative column list that matches both internal and external schemas.
+          // Newer columns like latest_screen_url / camera_status may not exist externally and can cause 400 errors.
+          .select(
+            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
           )
-        )
-      `)
-      .eq('registration.exam_id', examId)
-      .eq('is_completed', false)
-      .not('start_time', 'is', null)
-      .order('start_time', { ascending: false });
+          .limit(200);
 
-    if (sessionsError) {
-      console.error('Error fetching sessions:', sessionsError);
-    } else {
-      const transformedSessions = (sessionsData || []).map((s: any) => ({
-        ...s,
-        registration: {
-          registration_number: s.registration?.registration_number || 'N/A',
-          student: {
-            id: s.registration?.student?.id || '',
-            full_name: s.registration?.student?.full_name || 'Unknown',
-            email: s.registration?.student?.email || 'N/A',
-          },
-        },
-      }));
-      setSessions(transformedSessions);
+        if (extSessionsError || !externalSessionsData || externalSessionsData.length === 0) {
+          return [];
+        }
+
+        const extRegistrationIds = [...new Set(externalSessionsData.map((s: any) => s.registration_id).filter(Boolean))];
+        if (extRegistrationIds.length === 0) return [];
+
+        const { data: extRegs, error: extRegsError } = await (externalSupabase as any)
+          .from('registrations')
+          .select('id, registration_number, student_id, exam_id')
+          .in('id', extRegistrationIds);
+
+        if (extRegsError || !extRegs) return [];
+
+        const extRegMap = new Map<string, any>((extRegs || []).map((r: any) => [r.id, r]));
+        // Do NOT filter by completion flags here – show all sessions for this exam.
+        // Camera/screen tiles will naturally be empty for finished sessions.
+        const filteredSessions = (externalSessionsData || []).filter((s: any) => {
+          const reg = extRegMap.get(s.registration_id);
+          return reg?.exam_id === examId;
+        });
+
+        if (filteredSessions.length === 0) return [];
+
+        const extStudentIds = [
+          ...new Set(
+            filteredSessions.map((s: any) => extRegMap.get(s.registration_id)?.student_id).filter(Boolean),
+          ),
+        ];
+        const { data: extProfiles } = await (externalSupabase as any)
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', extStudentIds);
+
+        const extProfileMap = new Map<string, any>((extProfiles || []).map((p: any) => [p.id, p]));
+
+        const mapped: ActiveSession[] = await Promise.all(
+          filteredSessions.map(async (s: any) => {
+            const reg = extRegMap.get(s.registration_id);
+            const profile = reg?.student_id ? extProfileMap.get(reg.student_id) : null;
+            const snapshotUrl = await getSignedUrl(externalSupabase as any, s.latest_snapshot_url || null);
+            // External schema may not yet have latest_screen_url; screen capture will simply show "No screen capture" in that case.
+            const screenUrl = await getSignedUrl(externalSupabase as any, (s as any).latest_screen_url || null);
+
+            return {
+              ...s,
+              registration: {
+                registration_number: reg?.registration_number || 'N/A',
+                student: {
+                  id: reg?.student_id || '',
+                  full_name: profile?.full_name || 'Unknown',
+                  email: profile?.email || 'N/A',
+                },
+              },
+              snapshotUrl,
+              screenUrl,
+            } as ActiveSession;
+          }),
+        );
+
+        return mapped.sort((a, b) => {
+          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+          return bt - at;
+        });
+      } catch (err) {
+        console.error('LiveMonitoring external fast-path error:', err);
+        return [];
+      }
+    };
+
+    const externalFastPath = await loadExternalSessionsByExam();
+    if (externalFastPath.length > 0) {
+      setSessions(externalFastPath);
+      setIsLoading(false);
+      return;
     }
 
+    const fetchRegsAndProfiles = async (client: typeof supabase) => {
+      const { data: regs, error: regErr } = await client
+        .from('registrations')
+        .select('id, registration_number, student_id')
+        .eq('exam_id', examId);
+
+      if (regErr || !regs || regs.length === 0) {
+        return { regMap: new Map<string, any>(), profileMap: new Map<string, any>() };
+      }
+
+      const regMap = new Map<string, any>(regs.map((r: any) => [r.id, r]));
+      const studentIds = [...new Set(regs.map((r: any) => r.student_id).filter(Boolean))];
+
+      if (studentIds.length === 0) {
+        return { regMap, profileMap: new Map<string, any>() };
+      }
+
+      const { data: profiles, error: profilesErr } = await client
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', studentIds);
+
+      if (profilesErr || !profiles) {
+        return { regMap, profileMap: new Map<string, any>() };
+      }
+
+      const profileMap = new Map<string, any>(profiles.map((p: any) => [p.id, p]));
+      return { regMap, profileMap };
+    };
+
+    // Some deployments have sessions in one DB and registrations/profiles in another.
+    // Merge both sources so we can still load active sessions reliably.
+    const internalData = await fetchRegsAndProfiles(supabase);
+    const externalData = await fetchRegsAndProfiles(externalSupabase as any);
+
+    const regMapMerged = new Map<string, any>(internalData.regMap);
+    for (const [id, reg] of externalData.regMap.entries()) {
+      if (!regMapMerged.has(id)) regMapMerged.set(id, reg);
+    }
+
+    const profileMapMerged = new Map<string, any>(internalData.profileMap);
+    for (const [id, profile] of externalData.profileMap.entries()) {
+      if (!profileMapMerged.has(id)) profileMapMerged.set(id, profile);
+    }
+
+    const allRegIds = Array.from(regMapMerged.keys());
+    if (allRegIds.length === 0) {
+      // Fallback: if registrations/profiles mapping is missing for this exam in both DBs,
+      // still try to load sessions and then map them using registrations by registration_id.
+      const fetchSessionsAny = async (client: typeof supabase) => {
+        const { data: sessionsData, error: sessionsError } = await client
+          .from('exam_sessions')
+          // Same conservative column list as above to avoid 400s on external DBs that don't have new proctoring fields.
+          .select(
+            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
+          )
+          .limit(200);
+
+        if (sessionsError || !sessionsData) {
+          console.error('LiveMonitoring fallback fetchSessionsAny error:', sessionsError);
+          return [];
+        }
+        // Treat NULL as "not completed". Include:
+        // - live sessions (is_completed false or null)
+        // - auto-submitted sessions (flag true)
+        return sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
+      };
+
+      const mergeRegs = async (regIds: string[]) => {
+        const [internalRegsRes, externalRegsRes] = await Promise.all([
+          supabase
+            .from('registrations')
+            .select('id, registration_number, student_id, exam_id')
+            .in('id', regIds),
+          externalSupabase
+            ? (externalSupabase as any).from('registrations')
+                .select('id, registration_number, student_id, exam_id')
+                .in('id', regIds)
+            : Promise.resolve({ data: null, error: null }),
+        ]);
+
+        const internalRegs = (internalRegsRes.data || []) as any[];
+        const externalRegs = (externalRegsRes as any).data ? ((externalRegsRes as any).data as any[]) : [];
+
+        const regMap = new Map<string, any>();
+        for (const r of internalRegs) regMap.set(r.id, r);
+        for (const r of externalRegs) if (!regMap.has(r.id)) regMap.set(r.id, r);
+        return regMap;
+      };
+
+      const mergeProfiles = async (studentIds: string[]) => {
+        const [internalProfilesRes, externalProfilesRes] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', studentIds),
+          externalSupabase
+            ? (externalSupabase as any).from('profiles')
+                .select('id, full_name, email')
+                .in('id', studentIds)
+            : Promise.resolve({ data: null, error: null }),
+        ]);
+
+        const internalProfiles = (internalProfilesRes.data || []) as any[];
+        const externalProfiles = (externalProfilesRes as any).data ? ((externalProfilesRes as any).data as any[]) : [];
+
+        const profileMap = new Map<string, any>();
+        for (const p of internalProfiles) profileMap.set(p.id, p);
+        for (const p of externalProfiles) if (!profileMap.has(p.id)) profileMap.set(p.id, p);
+        return profileMap;
+      };
+
+      const mapSessionsFromClient = async (sessionsClient: typeof supabase) => {
+        const sessionsData = await fetchSessionsAny(sessionsClient);
+        if (!sessionsData || sessionsData.length === 0) return [];
+
+        const sessionRegIds = [...new Set(sessionsData.map((s: any) => s.registration_id).filter(Boolean))];
+        if (sessionRegIds.length === 0) return [];
+
+        const regMapFallback = await mergeRegs(sessionRegIds);
+
+        const filteredSessions = sessionsData.filter((s: any) => {
+          const reg = regMapFallback.get(s.registration_id);
+          return reg?.exam_id === examId;
+        });
+
+        const studentIds = [...new Set(filteredSessions.map((s: any) => regMapFallback.get(s.registration_id)?.student_id).filter(Boolean))];
+        const profileMapFallback = studentIds.length > 0 ? await mergeProfiles(studentIds) : new Map<string, any>();
+
+        return await Promise.all(
+          filteredSessions.map(async (s: any) => {
+            const reg = regMapFallback.get(s.registration_id);
+            const profile = reg?.student_id ? profileMapFallback.get(reg.student_id) : null;
+            const snapshotUrl = await getSignedUrl(sessionsClient, s.latest_snapshot_url || null);
+            const screenUrl = await getSignedUrl(sessionsClient, s.latest_screen_url || null);
+
+            return {
+              ...s,
+              registration: {
+                registration_number: reg?.registration_number || 'N/A',
+                student: {
+                  id: reg?.student_id || '',
+                  full_name: profile?.full_name || 'Unknown',
+                  email: profile?.email || 'N/A',
+                },
+              },
+              snapshotUrl,
+              screenUrl,
+            };
+          })
+        );
+      };
+
+      const internalMapped = await mapSessionsFromClient(supabase);
+      const externalMapped = await mapSessionsFromClient(externalSupabase as any);
+
+      const byId = new Map<string, ActiveSession>();
+      for (const s of internalMapped) byId.set(s.id, s);
+      for (const s of externalMapped) if (!byId.has(s.id)) byId.set(s.id, s);
+
+      const merged = Array.from(byId.values()).sort((a, b) => {
+        const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+        const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+        return bt - at;
+      });
+
+      setSessions(merged);
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchActiveSessions = async (client: typeof supabase) => {
+      const { data: sessionsData, error: sessionsError } = await client
+        .from('exam_sessions')
+        .select(
+          'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
+        )
+        .in('registration_id', allRegIds);
+
+      if (sessionsError || !sessionsData) {
+        console.error('LiveMonitoring fetchActiveSessions error:', sessionsError);
+        return [];
+      }
+
+      const filtered = sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
+
+      return await Promise.all(
+        filtered.map(async (s: any) => {
+          const reg = regMapMerged.get(s.registration_id);
+          const profile = reg?.student_id ? profileMapMerged.get(reg.student_id) : null;
+          const snapshotUrl = await getSignedUrl(client, s.latest_snapshot_url || null);
+          const screenUrl = await getSignedUrl(client, (s as any).latest_screen_url || null);
+
+          return {
+            ...s,
+            registration: {
+              registration_number: reg?.registration_number || 'N/A',
+              student: {
+                id: reg?.student_id || '',
+                full_name: profile?.full_name || 'Unknown',
+                email: profile?.email || 'N/A',
+              },
+            },
+            snapshotUrl,
+            screenUrl,
+          };
+        })
+      );
+    };
+
+    const internalSessions = await fetchActiveSessions(supabase);
+    const externalSessions = await fetchActiveSessions(externalSupabase as any);
+
+    // Deduplicate by session id; prefer internal version if both exist.
+    const byId = new Map<string, ActiveSession>();
+    for (const s of internalSessions) byId.set(s.id, s);
+    for (const s of externalSessions) if (!byId.has(s.id)) byId.set(s.id, s);
+
+    const merged = Array.from(byId.values()).sort((a, b) => {
+      const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+      const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+      return bt - at;
+    });
+
+    setSessions(merged);
     setIsLoading(false);
   };
 
   // Initial fetch
   useEffect(() => {
     fetchData();
+  }, [examId]);
+
+  // Connect admin to LiveKit room for this exam and subscribe to student camera tracks
+  useEffect(() => {
+    if (!examId) return;
+
+    let cancelled = false;
+
+    const joinLiveKit = async () => {
+      try {
+        if (livekitRoomRef.current) return;
+
+        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
+          exam_id: examId,
+          session_id: `admin-${Date.now()}`,
+          role: 'admin',
+        });
+        if (error || !data || cancelled) {
+          console.error('[LiveKit] get-stream-token error (admin):', error);
+          return;
+        }
+
+        const room = new Room();
+        await room.connect(data.url, data.token);
+        livekitRoomRef.current = room;
+
+        const handleTrack = (pub: RemoteTrackPublication) => {
+          const track = pub.track;
+          if (!track) return;
+
+          const sessionId = pub.participant.identity;
+          const elementId = pub.trackName === 'camera' ? `cam-${sessionId}` : `screen-${sessionId}`;
+          const el = document.getElementById(elementId) as HTMLVideoElement | null;
+          if (el) {
+            track.attach(el);
+          }
+        };
+
+        const handleParticipant = (p: RemoteParticipant) => {
+          p.tracks.forEach((pub) => handleTrack(pub));
+          p.on('trackSubscribed', (_track, pub) => handleTrack(pub));
+        };
+
+        room.participants.forEach(handleParticipant);
+        room.on('participantConnected', handleParticipant);
+
+        console.log('[LiveKit] Admin connected to room for exam', examId);
+      } catch (e) {
+        console.error('[LiveKit] Admin connect failed:', e);
+      }
+    };
+
+    joinLiveKit();
+
+    return () => {
+      cancelled = true;
+      if (livekitRoomRef.current) {
+        livekitRoomRef.current.disconnect();
+        livekitRoomRef.current = null;
+      }
+    };
   }, [examId]);
 
   // Set up realtime subscription
@@ -161,10 +511,58 @@ const LiveMonitoring = () => {
     };
   }, [examId]);
 
-  const getSnapshotUrl = (path: string | null) => {
+  const extractObjectPath = (imageUrl: string | null, bucket: string): string | null => {
+    if (!imageUrl) return null;
+    const cleaned = String(imageUrl).split('?')[0];
+
+    // Typical Supabase URL:
+    // /storage/v1/object/public/<bucket>/<path> OR /storage/v1/object/authenticated/<bucket>/<path>
+    const re = new RegExp(`/storage/v1/object/(?:public|authenticated)/${bucket}/(.+)$`);
+    const m = cleaned.match(re);
+    if (m?.[1]) return m[1];
+
+    // Fallback: last occurrence of `${bucket}/...`
+    const idx = cleaned.lastIndexOf(`${bucket}/`);
+    if (idx >= 0) return cleaned.slice(idx + bucket.length + 1);
+
+    // If it's already an object path, return as-is.
+    return cleaned;
+  };
+
+  const getSignedUrl = async (client: typeof supabase, path: string | null) => {
     if (!path) return null;
-    const { data } = supabase.storage.from('proctoring-snapshots').getPublicUrl(path);
-    return data?.publicUrl;
+
+    const bucket = 'proctoring-snapshots';
+    const objectPath = extractObjectPath(path, bucket);
+    if (!objectPath) return null;
+
+    // Helper to try a specific Supabase client (internal or external) for this object.
+    const tryClient = async (c: typeof supabase | typeof externalSupabase | null) => {
+      if (!c) return null;
+      try {
+        const { data, error } = await (c as any).storage
+          .from(bucket)
+          .createSignedUrl(objectPath, 60 * 5); // 5 minutes
+        if (!error && data?.signedUrl) return data.signedUrl as string;
+
+        if (error) {
+          console.warn('Signed URL error for client:', error);
+          const { data: publicData } = (c as any).storage.from(bucket).getPublicUrl(objectPath);
+          return (publicData && (publicData as any).publicUrl) || null;
+        }
+      } catch (e) {
+        console.warn('Signed URL exception for client:', e);
+      }
+      return null;
+    };
+
+    // First try the provided client, then fall back to the "other" Supabase project.
+    const primary = await tryClient(client);
+    if (primary) return primary;
+
+    const isPrimaryExternal = (client as any) === (externalSupabase as any);
+    const secondary = await tryClient(isPrimaryExternal ? supabase : (externalSupabase as any));
+    return secondary;
   };
 
   const getViolationColor = (count: number, max: number) => {
@@ -310,44 +708,35 @@ const LiveMonitoring = () => {
                       : ''
                 }`}
               >
-                {/* Camera Preview */}
+                {/* Camera Preview (LiveKit video) */}
                 <div className="relative aspect-video bg-muted">
-                  {session.latest_snapshot_url ? (
-                    <>
-                      <img
-                        src={getSnapshotUrl(session.latest_snapshot_url) || ''}
-                        alt={`${session.registration.student.full_name}'s camera`}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                        onClick={() => setSelectedSnapshot(getSnapshotUrl(session.latest_snapshot_url))}
-                      >
-                        <Maximize2 className="w-3 h-3" />
-                      </Button>
-                      {session.snapshot_updated_at && (
-                        <div className="absolute bottom-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
-                          {format(new Date(session.snapshot_updated_at), 'HH:mm:ss')}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
-                      <VideoOff className="w-8 h-8 mb-2" />
-                      <span className="text-xs">No camera feed</span>
-                    </div>
-                  )}
+                  <video
+                    id={`cam-${session.id}`}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover bg-black"
+                  />
                   
-                  {/* Live indicator - use camera_heartbeat_at for accurate status */}
+                  {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to snapshot info */}
                   {(() => {
-                    // Check if heartbeat is within last 10 seconds
-                    const isOnline = session.camera_heartbeat_at && 
-                      (new Date().getTime() - new Date(session.camera_heartbeat_at).getTime()) < 10000;
+                    const now = Date.now();
+                    let isOnline = false;
+
+                    if (session.camera_heartbeat_at) {
+                      // Heartbeat within the last 20 seconds => online
+                      const diff = now - new Date(session.camera_heartbeat_at).getTime();
+                      isOnline = diff >= 0 && diff < 20000;
+                    } else if (session.snapshot_updated_at) {
+                      // When heartbeat is not wired up on this project, treat a fresh snapshot
+                      // (captured within the last 60 seconds) as "online" so you can still monitor.
+                      const diff = now - new Date(session.snapshot_updated_at).getTime();
+                      isOnline = diff >= 0 && diff < 60000;
+                    } else if (session.snapshotUrl) {
+                      // Last-resort: if we have any snapshot URL at all, consider the camera online.
+                      // This covers deployments where timestamps/heartbeat aren't stored but images are.
+                      isOnline = true;
+                    }
                     
                     return (
                       <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/50 px-2 py-1 rounded">
@@ -358,6 +747,20 @@ const LiveMonitoring = () => {
                       </div>
                     );
                   })()}
+                </div>
+
+                {/* Screen Capture Preview (LiveKit video, optional) */}
+                <div className="relative aspect-video bg-muted border-t">
+                  <video
+                    id={`screen-${session.id}`}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover bg-black"
+                  />
+                  <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                    SCREEN
+                  </div>
                 </div>
 
                 <CardContent className="p-4">

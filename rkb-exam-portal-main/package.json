@@ -50,6 +50,7 @@
     "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.7",
     "katex": "^0.16.27",
+    "livekit-client": "^2.17.3",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
     "react": "^18.3.1",
