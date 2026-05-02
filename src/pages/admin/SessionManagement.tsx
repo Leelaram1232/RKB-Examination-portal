@@ -44,7 +44,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Json } from '@/integrations/supabase/types';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface ExamSession {
   id: string;
@@ -345,20 +345,41 @@ const SessionManagement = () => {
 
     setIsProcessing(true);
 
-    // Mark the session as completed
-    const { error } = await supabase
-      .from('exam_sessions')
-      .update({
-        is_completed: true,
-        end_time: new Date().toISOString(),
-      })
-      .eq('id', selectedSession.id);
+    try {
+      // Call the edge function to properly grade and end the exam, instead of just updating the table
+      const { data, error } = await invokeExternalFunction<any>('submit-exam', {
+        session_id: selectedSession.id,
+        is_auto_submit: true, // admin forcing end
+      });
 
-    if (error) {
-      toast.error('Failed to end exam');
-    } else {
-      toast.success('Exam has been ended for this student');
+      if (error) {
+        throw error;
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || 'Submission failed');
+      }
+
+      toast.success('Exam has been ended for this student and results calculated');
       fetchData();
+    } catch (error: any) {
+      console.error('Error ending exam via submit-exam:', error);
+      
+      // Fallback: If edge function fails, at least close the session
+      const { error: fallbackError } = await supabase
+        .from('exam_sessions')
+        .update({
+          is_completed: true,
+          end_time: new Date().toISOString(),
+        })
+        .eq('id', selectedSession.id);
+
+      if (fallbackError) {
+        toast.error('Failed to end exam');
+      } else {
+        toast.warning('Exam ended, but result calculation may have been delayed.');
+        fetchData();
+      }
     }
 
     setIsProcessing(false);

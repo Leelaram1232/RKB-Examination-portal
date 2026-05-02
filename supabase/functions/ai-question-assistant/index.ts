@@ -491,7 +491,9 @@ Generate or extract high-quality questions based on the provided context or prom
 - If a question references a figure/diagram/graph/circuit but no URL is found, still set has_image: true and describe it.
 
 ### CRITICAL OUTPUT RULES
-- **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output N question objects (never output only an intro sentence).
+- **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output EXACTLY N question objects. Do not output more or fewer than requested.
+- **DOUBLE CHECK ANSWERS**: You MUST solve the generated question internally and verify that the correct answer is actually present in one of the 4 options (option_a, option_b, option_c, option_d).
+- **CORRECT OPTION MATCH**: Ensure the 'correct_option' field correctly points to the letter (A, B, C, or D) that holds the right answer.
 - **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
 - **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
 - **MCQ IS DEFAULT**: Unless "numerical" or "fill in blank" is requested, always stick to MCQ.
@@ -505,6 +507,7 @@ Generate or extract high-quality questions based on the provided context or prom
 - Match by 'question_number' if present in the OCR.
 - If question numbers are not present, match by the order of appearance in the OCR (Q1 uses the first answer entry, etc.).
 - Do NOT guess correct answers when the answer key is present; derive them from the OCR.
+- ALWAYS verify that the option text corresponds correctly to the answer key letter.
 
 ### JSON SCHEMA
 [
