@@ -137,6 +137,7 @@ const QuestionManagement = () => {
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const [dragActionType, setDragActionType] = useState<'select' | 'deselect'>('select');
+  const [mouseY, setMouseY] = useState<number>(0);
 
   const fetchExams = async () => {
     const { data, error } = await supabase
@@ -497,6 +498,44 @@ const QuestionManagement = () => {
     };
     window.addEventListener('mouseup', stopDragging);
   };
+
+  useEffect(() => {
+    if (!isDraggingSelection) return;
+
+    let rafId: number;
+    const scrollSpeed = 15;
+    const scrollThreshold = 100; // px from top/bottom
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setMouseY(e.clientY);
+    };
+
+    const autoScroll = () => {
+      const scrollContainer = document.querySelector('main');
+      if (!scrollContainer) return;
+
+      const viewportHeight = window.innerHeight;
+      const rect = scrollContainer.getBoundingClientRect();
+      
+      if (mouseY > rect.bottom - scrollThreshold) {
+        // Scroll down
+        scrollContainer.scrollTop += scrollSpeed;
+      } else if (mouseY < rect.top + scrollThreshold) {
+        // Scroll up
+        scrollContainer.scrollTop -= scrollSpeed;
+      }
+      
+      rafId = requestAnimationFrame(autoScroll);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    rafId = requestAnimationFrame(autoScroll);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      cancelAnimationFrame(rafId);
+    };
+  }, [isDraggingSelection, mouseY]);
 
   const onMouseEnterRow = (id: string, index: number) => {
     if (!isDraggingSelection) return;
