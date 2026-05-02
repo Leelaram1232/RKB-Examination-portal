@@ -527,19 +527,21 @@ ${ocrContext ? `OCR Extracted Content: \n${truncateText(ocrContext, MAX_OCR_CONT
 Subject ID: ${subject_id || 'Not specified'}
 Exam ID: ${exam_id || 'Not specified'}`;
 
-    const reviewSystemPrompt = `You are an expert Exam Quality Assurance Reviewer.
-Your task is to review a provided JSON array of questions and identify any mistakes.
+    const reviewSystemPrompt = `You are an expert Math and Science Exam Reviewer.
+Your task is to SOLVE each question and verify if the options and 'correct_option' are accurate.
 
 ### REVIEW CRITERIA
-1. Check if the 'correct_option' (A, B, C, or D) actually matches the conceptually correct answer among the given options (option_a, option_b, option_c, option_d).
-2. Check if the correct answer is present in the options AT ALL. If it is missing, correct the text of one of the options (preferably the 'correct_option' one) to include the right answer.
-3. If the 'correct_option' letter points to the wrong text but another option has the right answer, update the 'correct_option' letter to point to the right one.
+1. SOLVE the question yourself to find the true answer.
+2. Check if your solved answer matches the designated 'correct_option'.
+3. If the 'correct_option' points to the wrong option, but another option has the right answer, update the 'correct_option' to the correct letter (A, B, C, or D).
+4. If the correct answer is NOT present in any of the options, update the text of one option (preferably the one marked as 'correct_option') to include the right answer.
 
 ### CRITICAL OUTPUT RULES
 - Return ONLY the questions that HAVE MISTAKES.
-- For each returned question, you MUST provide the CORRECTED values for all fields (e.g. if you found a mistake in correct_option, return the newly updated correct_option).
+- For each returned question, provide the CORRECTED values for all fields.
+- KEEP 'review_notes' VERY SHORT AND SIMPLE. Max 1-2 sentences. Examples: "Correct answer is 12, changed correct_option from A to C." or "Correct answer is 5, updated option_a to 5."
+- DO NOT provide long explanations, step-by-step solutions, or assumptions in the notes. Just state the correct answer and what you changed.
 - If all questions are perfect, return an empty array: <questions_json>[]</questions_json>
-- For questions with mistakes, include a new field "review_notes" explaining what was wrong and what you changed.
 - **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
 - **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
 
@@ -551,7 +553,7 @@ Your task is to review a provided JSON array of questions and identify any mista
     "question_text": "...",
     "option_a": "...", "option_b": "...", "option_c": "...", "option_d": "...",
     "correct_option": "A|B|C|D",
-    "review_notes": "The correct option was listed as A, but option B contained the actual right answer. I updated correct_option to B."
+    "review_notes": "Correct answer is 10. Updated correct_option to B."
   }
 ]`;
 
