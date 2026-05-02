@@ -45,6 +45,8 @@ interface Subject {
   name: string;
 }
 
+type LlmMode = 'groq' | 'gemini' | 'both';
+
 type AuditReport = {
   exam_id: string;
   total_questions: number;
@@ -59,6 +61,7 @@ type AuditReport = {
   }>;
   markdownSummary: string;
   gemini_used: boolean;
+  groq_used?: boolean;
 };
 
 export default function AIQuestionAssistant() {
@@ -72,7 +75,7 @@ export default function AIQuestionAssistant() {
     {
       role: 'assistant',
       content:
-        "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more (Groq)\n• Optional Gemini cross-check on generated MCQs when GEMINI_API_KEY is set on the server\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n• **Quality check (all questions)** — validates every saved question for the selected exam (options, correct letter, answers)\n\nUpload a PDF/Image or type a request to get started!",
+        "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both (Groq draft + Gemini merge). I can:\n\n• Generate MCQs with four solid options and one correct key\n• Extract from PDFs / diagrams\n• **Quality check (all questions)** — loads every saved row (paginated), rules + AI per small batch\n\nUpload a PDF or type a request to start.",
     },
   ]);
   const [input, setInput] = useState('');
@@ -87,6 +90,7 @@ export default function AIQuestionAssistant() {
   const [chatHistoryId, setChatHistoryId] = useState<string | null>(null);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [llmMode, setLlmMode] = useState<LlmMode>('groq');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -97,7 +101,7 @@ export default function AIQuestionAssistant() {
       {
         role: 'assistant',
         content:
-          "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more (Groq)\n• Optional Gemini cross-check on generated MCQs when GEMINI_API_KEY is set on the server\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n• **Quality check (all questions)** — validates every saved question for the selected exam\n\nUpload a PDF/Image or type a request to get started!",
+          "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both. I can generate MCQs, extract from PDFs, and run a **quality check on every saved question** for the exam.\n\nUpload a PDF or type a request to start.",
       },
     ]);
     setInput('');
@@ -459,6 +463,7 @@ export default function AIQuestionAssistant() {
         file_url: fileUrl || undefined,
         exam_id: selectedExam,
         subject_id: selectedSubject,
+        llm_mode: llmMode,
       });
 
       if (error) throw error;
@@ -643,19 +648,24 @@ export default function AIQuestionAssistant() {
       const { data, error } = await invokeExternalFunction<{
         content?: string;
         audit?: AuditReport;
-        meta?: { gemini_used?: boolean };
+        meta?: { gemini_used?: boolean; groq_used?: boolean; llm_mode?: string };
       }>('ai-question-assistant', {
         messages: [{ role: 'user', content: 'Run full exam quality audit.' }],
         exam_id: selectedExam,
         action: 'audit_exam',
+        llm_mode: llmMode,
       });
       if (error) throw error;
       if (!data?.audit) {
         throw new Error('No audit data returned');
       }
       setAuditReport(data.audit);
-      const summaryLine = `Quality check: ${data.audit.total_questions} question(s), ${data.audit.questions_with_issues} with issues${
-        data.meta?.gemini_used ? ' (includes Gemini review)' : ' (rules only — add GEMINI_API_KEY on the function for deeper checks)'
+      const aiBits = [
+        data.meta?.groq_used ? 'Groq' : '',
+        data.meta?.gemini_used ? 'Gemini' : '',
+      ].filter(Boolean);
+      const summaryLine = `Quality check (${llmMode}): ${data.audit.total_questions} question(s) scanned, ${data.audit.questions_with_issues} with issues${
+        aiBits.length ? ` — AI: ${aiBits.join(' + ')}` : ' — rules only (set API keys for selected model)'
       }.`;
       const assistantBody = `${summaryLine}\n\n${typeof data.content === 'string' ? data.content : ''}`.trim();
       let toSave: Message[] = [];
@@ -906,6 +916,19 @@ export default function AIQuestionAssistant() {
                 ))}
               </select>
             </div>
+            <div className="w-44 min-w-[10rem]">
+              <Label className="text-xs text-muted-foreground sr-only">Model</Label>
+              <select
+                className="w-full p-2 border rounded-md text-sm"
+                value={llmMode}
+                onChange={(e) => setLlmMode(e.target.value as LlmMode)}
+                title="Chat & quality-check backend"
+              >
+                <option value="groq">Groq</option>
+                <option value="gemini">Gemini</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
             <Button
               type="button"
               variant="secondary"
@@ -942,6 +965,11 @@ export default function AIQuestionAssistant() {
                     No issues
                   </Badge>
                 )}
+                {auditReport.groq_used && (
+                  <Badge variant="outline" className="font-normal">
+                    Groq review
+                  </Badge>
+                )}
                 {auditReport.gemini_used && (
                   <Badge variant="outline" className="font-normal">
                     Gemini review
@@ -953,7 +981,7 @@ export default function AIQuestionAssistant() {
                 <code className="text-xs">correct_option</code> matches the right choice, and the answer exists in the options.
               </CardDescription>
             </CardHeader>
-            <CardContent className="max-h-64 overflow-y-auto px-4 pb-4 [-webkit-overflow-scrolling:touch] touch-pan-y">
+            <CardContent className="max-h-[28rem] overflow-y-auto px-4 pb-4 [-webkit-overflow-scrolling:touch] touch-pan-y">
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
@@ -1012,7 +1040,7 @@ export default function AIQuestionAssistant() {
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <BrainCircuit className="h-4 w-4 text-primary" />
-                  AI Assistant (Groq + optional Gemini)
+                  AI Assistant ({llmMode === 'groq' ? 'Groq' : llmMode === 'gemini' ? 'Gemini' : 'Groq + Gemini'})
                 </CardTitle>
                 <Button
                   type="button"

@@ -21,6 +21,8 @@ interface AssistantRequest {
   exam_id?: string;
   subject_id?: string;
   action?: 'generate' | 'review' | 'audit_exam';
+  /** Chat + audit LLM routing: groq | gemini | both (Groq draft + Gemini merge). */
+  llm_mode?: 'groq' | 'gemini' | 'both';
 }
 
 type GroqChatCompletion = {
@@ -284,7 +286,8 @@ async function callGeminiRaw(
   apiKey: string,
   systemInstruction: string,
   userText: string,
-  preferJson: boolean
+  preferJson: boolean,
+  maxOutputTokens?: number
 ): Promise<string> {
   const model = (Deno.env.get('GEMINI_MODEL') || 'gemini-2.0-flash').trim();
   const url =
@@ -293,7 +296,7 @@ async function callGeminiRaw(
   const doReq = (jsonMode: boolean) => {
     const generationConfig: Record<string, unknown> = {
       temperature: 0.15,
-      maxOutputTokens: 8192,
+      maxOutputTokens: maxOutputTokens ?? 8192,
     };
     if (jsonMode) generationConfig.responseMimeType = 'application/json';
     return fetch(url, {
@@ -332,15 +335,102 @@ async function callGeminiRaw(
 async function callGeminiJson(
   apiKey: string,
   systemInstruction: string,
-  userText: string
+  userText: string,
+  maxOutputTokens?: number
 ): Promise<unknown> {
-  const raw = await callGeminiRaw(apiKey, systemInstruction, userText, true);
+  const raw = await callGeminiRaw(apiKey, systemInstruction, userText, true, maxOutputTokens);
   try {
     return JSON.parse(raw) as unknown;
   } catch {
     const m = raw.match(/\{[\s\S]*\}/);
     if (m) return JSON.parse(m[0]) as unknown;
     throw new Error('Gemini JSON parse failed');
+  }
+}
+
+async function callGroqApi(
+  groqKey: string,
+  messages: { role: string; content: string }[],
+  temperature = 0.2,
+  max_tokens = 8000
+): Promise<GroqChatCompletion> {
+  const maxRetries = 3;
+  let lastError: unknown = undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${groqKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages,
+        temperature,
+        max_tokens,
+      }),
+    });
+
+    const text = await resp.text();
+    if (!resp.ok) {
+      let errJson: unknown = undefined;
+      try {
+        errJson = JSON.parse(text) as unknown;
+      } catch (_e) {
+        void _e;
+      }
+      const errMsg = (() => {
+        if (typeof errJson !== 'object' || !errJson) return text;
+        const maybeError = (errJson as Record<string, unknown>).error;
+        if (typeof maybeError !== 'object' || !maybeError) return text;
+        const maybeMsg = (maybeError as Record<string, unknown>).message;
+        return typeof maybeMsg === 'string' && maybeMsg.trim() ? maybeMsg : text;
+      })();
+
+      const isRateLimit = /Rate limit reached/i.test(errMsg) || resp.status === 429;
+      if (isRateLimit && attempt < maxRetries) {
+        const waitMatch = errMsg.match(/try again in\s*([0-9.]+)s/i);
+        const waitSeconds = waitMatch ? Number.parseFloat(waitMatch[1]) : 2.5;
+        const waitMs = Math.max(0, Math.ceil(waitSeconds * 1000)) + 500;
+        console.warn('[callGroqApi] Groq rate limit. Retrying in', waitMs, 'ms...');
+        await new Promise((r) => setTimeout(r, waitMs));
+        lastError = errMsg;
+        continue;
+      }
+
+      throw new Error(`Groq API Error: ${errMsg}`);
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error('Invalid JSON response from Groq API');
+    }
+    return json as GroqChatCompletion;
+  }
+
+  throw new Error(`Groq call failed after retries: ${String(lastError)}`);
+}
+
+function parseAuditItemsFromLlmText(text: string): Array<{ id?: string; findings?: unknown }> {
+  const t = (text || '').trim();
+  if (!t) return [];
+  try {
+    const parsed = JSON.parse(t) as { items?: Array<{ id?: string; findings?: unknown }> };
+    return Array.isArray(parsed.items) ? parsed.items : [];
+  } catch {
+    const m = t.match(/\{[\s\S]*"items"\s*:\s*\[[\s\S]*\][\s\S]*\}/);
+    if (m) {
+      try {
+        const parsed = JSON.parse(m[0]) as { items?: Array<{ id?: string; findings?: unknown }> };
+        return Array.isArray(parsed.items) ? parsed.items : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
   }
 }
 
@@ -398,6 +488,23 @@ Include ONLY questions that need changes. If none, return {"fixes":[]}.`;
   return out;
 }
 
+async function applyGeminiRefinementsToQuestionsChunked(
+  questions: Record<string, unknown>[],
+  apiKey: string,
+  chunkSize = 6
+): Promise<Record<string, unknown>[]> {
+  if (questions.length === 0) return questions;
+  const out = questions.map((q) => ({ ...q }));
+  for (let i = 0; i < out.length; i += chunkSize) {
+    const slice = out.slice(i, i + chunkSize) as Record<string, unknown>[];
+    const patched = await applyGeminiRefinementsToQuestions(slice, apiKey);
+    for (let j = 0; j < patched.length; j++) {
+      out[i + j] = patched[j] as Record<string, unknown>;
+    }
+  }
+  return out;
+}
+
 type ExamQuestionRow = {
   id: string;
   question_number: number;
@@ -422,6 +529,9 @@ function normalizeMcqLetter(s: string | null | undefined): string | null {
 
 function heuristicExamIssues(q: ExamQuestionRow): string[] {
   const issues: string[] = [];
+  if (q.marks != null && Number(q.marks) <= 0) {
+    issues.push('Marks should be a positive number.');
+  }
   const qt = (q.question_type || 'MCQ').toUpperCase();
   const isNumerical =
     qt.includes('NUMERICAL') || qt.includes('FILL') || qt.includes('BLANK');
@@ -464,14 +574,165 @@ function heuristicExamIssues(q: ExamQuestionRow): string[] {
     issues.push('Two or more options have identical text (ambiguous).');
   }
 
+  const lens = opts.map((o) => (o ? String(o).trim().length : 0));
+  if (lens.every((n) => n > 0) && lens.every((n) => n <= 2)) {
+    issues.push('All MCQ options are very short — verify they are not placeholders.');
+  }
+
   return issues;
+}
+
+async function fetchAllQuestionsForExam(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  examId: string
+): Promise<ExamQuestionRow[]> {
+  const sel =
+    'id, question_number, section_name, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, correct_answer, marks';
+  const pageSize = 500;
+  const acc: ExamQuestionRow[] = [];
+
+  for (let offset = 0; ; offset += pageSize) {
+    let res = await supabase
+      .from('questions')
+      .select(sel)
+      .eq('exam_id', examId)
+      .order('question_number', { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (res.error) {
+      console.warn('[Audit] order() query failed, retrying without order:', res.error.message);
+      res = await supabase.from('questions').select(sel).eq('exam_id', examId).range(offset, offset + pageSize - 1);
+      if (res.error) throw new Error(`Failed to load questions: ${res.error.message}`);
+    }
+
+    const batch = (res.data || []) as ExamQuestionRow[];
+    acc.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+
+  acc.sort((a, b) => (a.question_number || 0) - (b.question_number || 0));
+  console.log('[Audit] Loaded question rows:', acc.length);
+  return acc;
+}
+
+function mergeAuditFindings(
+  items: Array<{ id: string; issues: string[]; severity: 'ok' | 'warning' | 'error' }>,
+  byId: Map<string, string[]>,
+  prefix: string
+) {
+  for (const item of items) {
+    const extra = byId.get(item.id) || [];
+    for (const e of extra) {
+      if (!e.trim()) continue;
+      const tagged = e.startsWith('[') ? e : `${prefix} ${e}`;
+      if (!item.issues.includes(tagged)) item.issues.push(tagged);
+    }
+    if (extra.length > 0 && item.severity === 'ok') item.severity = 'warning';
+  }
+}
+
+function buildAuditPayloadRow(q: ExamQuestionRow) {
+  return {
+    id: q.id,
+    question_number: q.question_number,
+    question_type: q.question_type,
+    stem: String(q.question_text || '').slice(0, 3500),
+    options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
+    correct_option: q.correct_option,
+    correct_answer: q.correct_answer,
+    heuristic_issues: heuristicExamIssues(q),
+  };
+}
+
+async function geminiAuditSlice(
+  geminiKey: string,
+  slice: ExamQuestionRow[],
+  expectedIds: string[]
+): Promise<Map<string, string[]>> {
+  const byId = new Map<string, string[]>();
+  const system = `You are a strict exam-paper reviewer.
+You MUST return JSON: {"items":[{"id":"<EXACT_UUID>","findings":["..."]}]}
+with EXACTLY one object per id in REQUIRED_IDS, same order, same ids.
+For each MCQ: verify correct_option (A-D) matches the only correct answer for the stem; flag wrong key, missing answer among options, or ambiguous stem/options.
+For NUMERICAL/FILL: verify correct_answer is present and plausible.
+findings: max 6 short bullets; use [] if nothing beyond heuristic_issues.`;
+
+  const payload = slice.map((q) => buildAuditPayloadRow(q));
+  const userBlock = `REQUIRED_IDS (must all appear in output.items in this order):\n${JSON.stringify(expectedIds)}\n\nQUESTIONS_JSON:\n${JSON.stringify(payload)}`;
+
+  const parsed = (await callGeminiJson(geminiKey, system, userBlock, 16384)) as {
+    items?: Array<{ id?: string; findings?: unknown }>;
+  };
+
+  for (const it of parsed.items || []) {
+    const id = typeof it.id === 'string' ? it.id : '';
+    if (!id) continue;
+    const findings = Array.isArray(it.findings) ? it.findings.map((x) => String(x)).filter(Boolean) : [];
+    byId.set(id, findings);
+  }
+
+  for (const id of expectedIds) {
+    if (byId.has(id)) continue;
+    const q = slice.find((x) => x.id === id);
+    if (!q) continue;
+    try {
+      const one = buildAuditPayloadRow(q);
+      const p2 = (await callGeminiJson(
+        geminiKey,
+        system,
+        `Return ONLY valid JSON: {"items":[{"id":"${id}","findings":[]}]}\n\nSingle question:\n${JSON.stringify(one)}`,
+        8192
+      )) as { items?: Array<{ id?: string; findings?: unknown }> };
+      const it0 = (p2.items || [])[0];
+      const findings = Array.isArray(it0?.findings)
+        ? (it0.findings as unknown[]).map((x) => String(x)).filter(Boolean)
+        : [];
+      byId.set(id, findings);
+      await new Promise((r) => setTimeout(r, 120));
+    } catch (e) {
+      console.warn('[Audit] Gemini single-question fallback failed', id, e);
+      byId.set(id, ['[Gemini] Automated review incomplete for this row (API error).']);
+    }
+  }
+
+  return byId;
+}
+
+async function groqAuditSlice(groqKey: string, slice: ExamQuestionRow[]): Promise<Map<string, string[]>> {
+  const byId = new Map<string, string[]>();
+  const payload = slice.map((q) => buildAuditPayloadRow(q));
+  const system = `Return ONLY JSON: {"items":[{"id":"uuid","findings":["note"]}]}
+One entry per input question (same ids). MCQ: check correct_option vs stem; numerical: check correct_answer. Max 5 findings each.`;
+
+  const data = await callGroqApi(
+    groqKey,
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: JSON.stringify(payload) },
+    ],
+    0.1,
+    6000
+  );
+  const text = data.choices?.[0]?.message?.content ?? '';
+  for (const it of parseAuditItemsFromLlmText(text)) {
+    const id = typeof it.id === 'string' ? it.id : '';
+    if (!id) continue;
+    const findings = Array.isArray(it.findings) ? it.findings.map((x) => String(x)).filter(Boolean) : [];
+    byId.set(id, findings);
+  }
+  return byId;
 }
 
 async function runExamQualityAudit(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   examId: string,
-  geminiKey: string
+  opts: {
+    groqKey: string;
+    geminiKey: string;
+    llmMode: 'groq' | 'gemini' | 'both';
+  }
 ): Promise<{
   exam_id: string;
   total_questions: number;
@@ -486,18 +747,21 @@ async function runExamQualityAudit(
   }>;
   markdownSummary: string;
   gemini_used: boolean;
+  groq_used: boolean;
 }> {
-  const { data: rows, error } = await supabase
-    .from('questions')
-    .select(
-      'id, question_number, section_name, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, correct_answer, marks'
-    )
-    .eq('exam_id', examId)
-    .order('question_number', { ascending: true });
+  const { groqKey, geminiKey, llmMode } = opts;
 
-  if (error) throw new Error(`Failed to load questions: ${error.message}`);
+  if (llmMode === 'gemini' && !geminiKey) {
+    throw new Error('GEMINI_API_KEY required for Gemini quality mode');
+  }
+  if (llmMode === 'groq' && !groqKey) {
+    throw new Error('GROQ_API_KEY required for Groq quality mode');
+  }
+  if (llmMode === 'both' && (!geminiKey || !groqKey)) {
+    throw new Error('Both quality mode requires GROQ_API_KEY and GEMINI_API_KEY');
+  }
 
-  const list = (rows || []) as ExamQuestionRow[];
+  const list = await fetchAllQuestionsForExam(supabase, examId);
   const items = list.map((q) => {
     const issues = heuristicExamIssues(q);
     const hasErr = issues.some(
@@ -519,71 +783,58 @@ async function runExamQualityAudit(
   });
 
   let gemini_used = false;
-  if (geminiKey && list.length > 0) {
-    const chunkSize = 6;
-    for (let start = 0; start < list.length; start += chunkSize) {
-      const slice = list.slice(start, start + chunkSize);
-      const payload = slice.map((q) => {
-        const hi = heuristicExamIssues(q);
-        return {
-          id: q.id,
-          question_number: q.question_number,
-          question_type: q.question_type,
-          stem: String(q.question_text || '').slice(0, 4000),
-          options: {
-            A: q.option_a,
-            B: q.option_b,
-            C: q.option_c,
-            D: q.option_d,
-          },
-          correct_option: q.correct_option,
-          correct_answer: q.correct_answer,
-          heuristic_issues: hi,
-        };
-      });
+  let groq_used = false;
+  const chunkAi = 3;
+  const useGemini = (llmMode === 'gemini' || llmMode === 'both') && !!geminiKey;
+  const useGroq = (llmMode === 'groq' || llmMode === 'both') && !!groqKey;
 
-      const system = `You are a strict exam-paper reviewer.
-For each MCQ: check whether correct_option (A-D) matches the option text that is actually correct for the stem. Flag if the true answer is missing from the four options, or if the wrong letter is marked.
-For NUMERICAL/FILL types: check that correct_answer is present and plausible; options may be empty.
-Return ONLY JSON: {"items":[{"id":"uuid","findings":["short bullet",...]}]}. Use findings: [] when there are no problems beyond heuristic_issues. Max 4 findings per question.`;
+  for (let start = 0; start < list.length; start += chunkAi) {
+    const slice = list.slice(start, start + chunkAi);
+    const expectedIds = slice.map((q) => q.id);
 
+    if (useGemini) {
       try {
-        const parsed = (await callGeminiJson(geminiKey, system, JSON.stringify(payload))) as {
-          items?: Array<{ id?: string; findings?: unknown }>;
-        };
+        const map = await geminiAuditSlice(geminiKey, slice, expectedIds);
+        mergeAuditFindings(items, map, '[Gemini]');
         gemini_used = true;
-        const byId = new Map<string, string[]>();
-        for (const it of parsed.items || []) {
-          const id = typeof it.id === 'string' ? it.id : '';
-          if (!id) continue;
-          const findings = Array.isArray(it.findings)
-            ? it.findings.map((x) => String(x)).filter(Boolean)
-            : [];
-          byId.set(id, findings);
-        }
-        for (const item of items) {
-          const extra = byId.get(item.id) || [];
-          for (const e of extra) {
-            if (!e.trim()) continue;
-            const tagged = e.startsWith('[AI]') ? e : `[AI review] ${e}`;
-            if (!item.issues.includes(tagged)) item.issues.push(tagged);
-          }
-          if (extra.length > 0 && item.severity === 'ok') {
-            item.severity = 'warning';
-          }
-        }
       } catch (e) {
-        console.warn('[Assistant] Gemini exam audit chunk failed:', e);
+        console.warn('[Audit] Gemini chunk failed:', e);
       }
+      await new Promise((r) => setTimeout(r, 180));
     }
+
+    if (useGroq) {
+      try {
+        const mapG = await groqAuditSlice(groqKey, slice);
+        mergeAuditFindings(items, mapG, '[Groq]');
+        groq_used = true;
+      } catch (e) {
+        console.warn('[Audit] Groq chunk failed:', e);
+      }
+      await new Promise((r) => setTimeout(r, 180));
+    }
+  }
+
+  for (const it of items) {
+    const hasErr = it.issues.some(
+      (x) =>
+        x.includes('empty') ||
+        x.includes('missing') ||
+        x.includes('not A/B/C/D') ||
+        /wrong (letter|option|key)/i.test(x)
+    );
+    if (it.issues.length === 0) it.severity = 'ok';
+    else if (hasErr) it.severity = 'error';
+    else it.severity = 'warning';
   }
 
   const questions_with_issues = items.filter((i) => i.issues.length > 0).length;
   const lines: string[] = [
     `## Exam quality check`,
     ``,
-    `- Total questions: **${list.length}**`,
+    `- Total questions loaded: **${list.length}**`,
     `- With at least one issue: **${questions_with_issues}**`,
+    `- AI passes: **${[useGroq && groq_used ? 'Groq' : '', useGemini && gemini_used ? 'Gemini' : ''].filter(Boolean).join(' + ') || 'none'}**`,
     ``,
   ];
   for (const it of items) {
@@ -593,7 +844,7 @@ Return ONLY JSON: {"items":[{"id":"uuid","findings":["short bullet",...]}]}. Use
     lines.push('');
   }
   if (questions_with_issues === 0) {
-    lines.push('No structural issues detected. Optionally re-run with GEMINI_API_KEY for deeper answer verification.');
+    lines.push('No issues reported after rules + selected AI review.');
   }
 
   return {
@@ -603,6 +854,7 @@ Return ONLY JSON: {"items":[{"id":"uuid","findings":["short bullet",...]}]}. Use
     items,
     markdownSummary: lines.join('\n'),
     gemini_used,
+    groq_used,
   };
 }
 
@@ -611,8 +863,11 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    let { messages, file_url, exam_id, subject_id, action } = body as AssistantRequest;
+    const { messages, file_url, exam_id, subject_id, action, llm_mode: llmModeBody } = body as AssistantRequest;
     const geminiKey = (Deno.env.get('GEMINI_API_KEY') || '').trim();
+    const groqKey = (Deno.env.get('GROQ_API_KEY') || '').trim();
+    const llm_mode: 'groq' | 'gemini' | 'both' =
+      llmModeBody === 'gemini' || llmModeBody === 'both' ? llmModeBody : 'groq';
 
     if (action === 'audit_exam') {
       if (!exam_id) {
@@ -624,8 +879,8 @@ Deno.serve(async (req) => {
         throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured');
       }
       const supabase = createClient(supabaseUrl, supabaseKey);
-      const audit = await runExamQualityAudit(supabase, exam_id, geminiKey);
-      const BUILD_MARKER = 'ai-question-assistant@2026-05-02.audit';
+      const audit = await runExamQualityAudit(supabase, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
+      const BUILD_MARKER = 'ai-question-assistant@2026-05-03.audit';
       return new Response(
         JSON.stringify({
           content: audit.markdownSummary,
@@ -634,19 +889,26 @@ Deno.serve(async (req) => {
           meta: {
             build: BUILD_MARKER,
             gemini_used: audit.gemini_used,
+            groq_used: audit.groq_used,
             questions_count: 0,
+            llm_mode: llm_mode,
           },
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const groqKey = Deno.env.get('GROQ_API_KEY');
     const mathpixId = Deno.env.get('MATHPIX_APP_ID');
     const mathpixKey = Deno.env.get('MATHPIX_APP_KEY');
 
-    if (!groqKey) {
+    if (llm_mode === 'groq' && !groqKey) {
       throw new Error('GROQ_API_KEY not configured');
+    }
+    if (llm_mode === 'gemini' && !geminiKey) {
+      throw new Error('GEMINI_API_KEY not configured');
+    }
+    if (llm_mode === 'both' && (!groqKey || !geminiKey)) {
+      throw new Error('Both mode requires GROQ_API_KEY and GEMINI_API_KEY');
     }
 
     if (!messages || !Array.isArray(messages)) {
@@ -659,6 +921,7 @@ Deno.serve(async (req) => {
       exam_id,
       subject_id,
       action: action || 'generate',
+      llm_mode,
     });
 
     if (!messages || messages.length === 0) {
@@ -840,15 +1103,16 @@ Generate or extract high-quality questions based on the provided context or prom
 
 ### DIAGRAM / IMAGE HANDLING
 - If the OCR text contains image references like \`![...](...) \` or \`\\includegraphics{...}\` or \`[IMAGE]\` or Mathpix image URLs, you MUST:
-  1. Set \"has_image\": true for that question.
-  2. Put the image URL (if present in OCR) in \"image_url\" field.
-  3. Put a description in \"image_description\" field.
+  1. Set "has_image": true for that question.
+  2. Put the image URL (if present in OCR) in "image_url" field.
+  3. Put a description in "image_description" field.
 - Common Mathpix image URL patterns: \`https://cdn.mathpix.com/...\` — preserve these URLs exactly.
 - If a question references a figure/diagram/graph/circuit but no URL is found, still set has_image: true and describe it.
 
 ### CRITICAL OUTPUT RULES
 - **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output EXACTLY N question objects. Do not output more or fewer than requested.
 - **DOUBLE CHECK ANSWERS**: You MUST solve the generated question internally and verify that the correct answer is actually present in one of the 4 options (option_a, option_b, option_c, option_d).
+- **ADMIN MCQ STANDARD**: Each MCQ must have four suitable, distinct options (no placeholders) and exactly ONE defensible correct answer; correct_option must be A/B/C/D matching that option only.
 - **CORRECT OPTION MATCH**: Ensure the 'correct_option' field correctly points to the letter (A, B, C, or D) that holds the right answer.
 - **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
 - **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
@@ -923,74 +1187,61 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
       ...trimmedMessages
     ];
 
-    async function callGroq(
+    const callGroq = (messages: { role: string; content: string }[], temperature = 0.2) =>
+      callGroqApi(groqKey!, messages, temperature, 8000);
+
+    const callLlmFlex = async (
       messages: { role: string; content: string }[],
-      temperature = 0.2
-    ): Promise<GroqChatCompletion> {
-      const maxRetries = 3;
-      let lastError: unknown = undefined;
-
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages,
-            temperature,
-            max_tokens: 8000,
-          }),
-        });
-
-        const text = await resp.text();
-        if (!resp.ok) {
-          let errJson: unknown = undefined;
-          try {
-            errJson = JSON.parse(text) as unknown;
-          } catch (_e) {
-            void _e;
-          }
-          const errMsg = (() => {
-            if (typeof errJson !== 'object' || !errJson) return text;
-            const maybeError = (errJson as Record<string, unknown>).error;
-            if (typeof maybeError !== 'object' || !maybeError) return text;
-            const maybeMsg = (maybeError as Record<string, unknown>).message;
-            return typeof maybeMsg === 'string' && maybeMsg.trim() ? maybeMsg : text;
-          })();
-
-          const isRateLimit = /Rate limit reached/i.test(errMsg) || resp.status === 429;
-          if (isRateLimit && attempt < maxRetries) {
-            const waitMatch = errMsg.match(/try again in\s*([0-9.]+)s/i);
-            const waitSeconds = waitMatch ? Number.parseFloat(waitMatch[1]) : 2.5;
-            const waitMs = Math.max(0, Math.ceil(waitSeconds * 1000)) + 500;
-            console.warn('[Assistant] Groq rate limit. Retrying in', waitMs, 'ms...');
-            await new Promise((r) => setTimeout(r, waitMs));
-            lastError = errMsg;
-            continue;
-          }
-
-          throw new Error(`Groq API Error: ${errMsg}`);
-        }
-
-        let json: unknown;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          throw new Error('Invalid JSON response from Groq API');
-        }
-        return json as GroqChatCompletion;
+      temperature: number,
+      maxTok = 8000
+    ): Promise<string> => {
+      if (llm_mode === 'gemini') {
+        const sys = messages.find((m) => m.role === 'system')?.content || '';
+        const rest = messages.filter((m) => m.role !== 'system');
+        const convo = rest.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+        return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
       }
+      if (llm_mode === 'both') {
+        const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+        const draft = g.choices?.[0]?.message?.content ?? '';
+        const sys = messages.find((m) => m.role === 'system')?.content || '';
+        const merged = await callGeminiRaw(
+          geminiKey,
+          sys,
+          `Polish this assistant output (fix <questions_json> / JSON only if needed; keep meaning):\n${draft.slice(0, 80000)}`,
+          false,
+          8192
+        );
+        return merged.trim() ? merged : draft;
+      }
+      const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+      return g.choices?.[0]?.message?.content ?? '';
+    };
 
-      throw new Error(`Groq call failed after retries: ${String(lastError)}`);
+    let assistantContent = '';
+    if (llm_mode === 'groq') {
+      console.log('[Assistant] LLM mode: Groq (llama-3.3-70b-versatile)');
+      const groqData = await callGroq(groqMessages, 0.2);
+      assistantContent = groqData.choices?.[0]?.message?.content ?? '';
+    } else if (llm_mode === 'gemini') {
+      console.log('[Assistant] LLM mode: Gemini');
+      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+      assistantContent = await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
+    } else {
+      console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
+      const groqData = await callGroq(groqMessages, 0.2);
+      const draft = groqData.choices?.[0]?.message?.content ?? '';
+      const refineUser = `Another model (Groq) produced the draft below. Improve it:
+(1) Preserve intent, language, and any OCR-derived text.
+(2) For every MCQ inside <questions_json>, ensure four suitable distinct options, exactly one correct answer, and correct_option is A/B/C/D matching that option.
+(3) Fix broken JSON or obvious LaTeX JSON issues.
+(4) Output ONLY the complete final assistant message (same format as the draft), including <questions_json>...</questions_json> when the draft had questions.
+
+DRAFT:
+${draft.slice(0, 120000)}`;
+      const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
+      assistantContent = merged.trim() ? merged : draft;
     }
-
-    console.log('[Assistant] Calling Groq with model: llama-3.3-70b-versatile');
-    const groqData = await callGroq(groqMessages, 0.2);
-
-    const assistantContent = groqData.choices?.[0]?.message?.content ?? '';
     console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
     // Track the best "raw" LLM text we have (may include <questions_json>).
     // If parsing into `questions` fails, we will return this text in `content` so the UI can still parse it.
@@ -1160,8 +1411,7 @@ ${assistantContentForFix}`;
         { role: 'user', content: fixPrompt },
       ];
 
-      const fixed = await callGroq(fixMessages, 0.0);
-      const fixedText = fixed.choices?.[0]?.message?.content ?? '';
+      const fixedText = await callLlmFlex(fixMessages, 0.0, 8000);
       console.log('[Assistant] FIXED RAW CONTENT:', fixedText.substring(0, 500) + '...');
       if (fixedText && fixedText.trim()) bestRawTextForUi = fixedText;
       const fixedQuestions = extractQuestionsFromText(fixedText);
@@ -1250,8 +1500,7 @@ ${assistantContentForFix}`;
 REQUEST:
 ${lastUser}${ocrSnippetForForce}`;
       const forceMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: forcePrompt }];
-      const forced = await callGroq(forceMessages, 0.0);
-      const forcedText = forced.choices?.[0]?.message?.content ?? '';
+      const forcedText = await callLlmFlex(forceMessages, 0.0, 8000);
       if (forcedText && forcedText.trim()) bestRawTextForUi = forcedText;
       const forcedQuestions = extractQuestionsFromText(forcedText);
       if (Array.isArray(forcedQuestions) && forcedQuestions.length > 0) {
@@ -1306,23 +1555,25 @@ ${lastUser}${ocrSnippetForForce}`;
     let geminiPostUsed = false;
     if (
       geminiKey &&
+      llm_mode === 'groq' &&
       Array.isArray(exportQuestions) &&
       exportQuestions.length > 0 &&
       action !== 'review'
     ) {
       try {
-        exportQuestions = (await applyGeminiRefinementsToQuestions(
+        exportQuestions = (await applyGeminiRefinementsToQuestionsChunked(
           exportQuestions as Record<string, unknown>[],
-          geminiKey
+          geminiKey,
+          6
         )) as unknown[];
         geminiPostUsed = true;
-        console.log('[Assistant] Gemini cross-check applied to generated questions.');
+        console.log('[Assistant] Optional Gemini post-check applied (Groq mode + GEMINI_API_KEY).');
       } catch (e) {
-        console.warn('[Assistant] Gemini cross-check skipped:', e);
+        console.warn('[Assistant] Gemini post-check skipped:', e);
       }
     }
 
-    const BUILD_MARKER = 'ai-question-assistant@2026-05-02.gen';
+    const BUILD_MARKER = 'ai-question-assistant@2026-05-03.gen';
     return new Response(
       JSON.stringify({
         content: contentWithOcrNote,
@@ -1333,6 +1584,7 @@ ${lastUser}${ocrSnippetForForce}`;
           processed_pages: processedPagesCount,
           requested_pages: pageSpecToUse,
           gemini_post_check: geminiPostUsed,
+          llm_mode,
         },
       }),
       {
