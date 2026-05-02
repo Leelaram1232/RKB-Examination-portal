@@ -39,6 +39,7 @@ const Index = () => {
   useEffect(() => {
     const fetchExams = async () => {
       const now = new Date();
+      // Use full ISO string for debugging, but compare using Date objects for timezone robustness
       const nowIso = now.toISOString();
       const today = nowIso.split('T')[0];
       
