@@ -146,6 +146,7 @@ const QuestionManagement = () => {
   const [isReviewingAI, setIsReviewingAI] = useState(false);
   const [reviewResults, setReviewResults] = useState<(Question & { review_notes?: string })[] | null>(null);
   const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const [isApplyingFixes, setIsApplyingFixes] = useState(false);
 
   const fetchExams = async () => {
     const { data, error } = await supabase
@@ -523,6 +524,57 @@ const QuestionManagement = () => {
       toast.error(error.message || 'Failed to complete AI review');
     } finally {
       setIsReviewingAI(false);
+    }
+  };
+
+  const handleApplyAIFixes = async () => {
+    if (!reviewResults || reviewResults.length === 0) return;
+    
+    setIsApplyingFixes(true);
+    try {
+      const updates = reviewResults.map(q => ({
+        id: q.id,
+        question_text: q.question_text,
+        option_a: q.option_a,
+        option_b: q.option_b,
+        option_c: q.option_c,
+        option_d: q.option_d,
+        correct_option: q.correct_option,
+        correct_answer: q.correct_answer,
+      }));
+
+      // Perform updates individually to avoid potential constraints / required fields issues
+      for (const update of updates) {
+        const { error } = await supabase
+          .from('questions')
+          .update({
+            question_text: update.question_text,
+            option_a: update.option_a,
+            option_b: update.option_b,
+            option_c: update.option_c,
+            option_d: update.option_d,
+            correct_option: update.correct_option,
+            correct_answer: update.correct_answer,
+          })
+          .eq('id', update.id);
+          
+        if (error) {
+          console.error(`Failed to apply fix for question ${update.id}:`, error);
+          throw error;
+        }
+      }
+
+      toast.success(`Successfully applied fixes to ${updates.length} questions`);
+      setShowReviewDialog(false);
+      setReviewResults(null);
+      if (selectedExamId) {
+        fetchExamAndQuestions(selectedExamId);
+      }
+    } catch (error: any) {
+      console.error('Error applying fixes:', error);
+      toast.error('Failed to apply some fixes automatically.');
+    } finally {
+      setIsApplyingFixes(false);
     }
   };
 
@@ -1603,8 +1655,21 @@ const QuestionManagement = () => {
               </div>
             )}
 
-            <DialogFooter className="mt-6">
-              <Button onClick={() => setShowReviewDialog(false)}>Close</Button>
+            <DialogFooter className="mt-6 flex justify-between sm:justify-between items-center w-full">
+              <div>
+                {reviewResults && reviewResults.length > 0 && (
+                  <Button 
+                    variant="default" 
+                    onClick={handleApplyAIFixes} 
+                    disabled={isApplyingFixes}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    {isApplyingFixes ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                    Allow & Apply Fixes
+                  </Button>
+                )}
+              </div>
+              <Button variant="outline" onClick={() => setShowReviewDialog(false)}>Close</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

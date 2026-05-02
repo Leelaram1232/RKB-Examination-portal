@@ -532,13 +532,14 @@ Your task is to review a provided JSON array of questions and identify any mista
 
 ### REVIEW CRITERIA
 1. Check if the 'correct_option' (A, B, C, or D) actually matches the conceptually correct answer among the given options (option_a, option_b, option_c, option_d).
-2. Check for glaring typographical or logical errors in the question text or options.
-3. Check if all options are identical (which is a mistake).
+2. Check if the correct answer is present in the options AT ALL. If it is missing, correct the text of one of the options (preferably the 'correct_option' one) to include the right answer.
+3. If the 'correct_option' letter points to the wrong text but another option has the right answer, update the 'correct_option' letter to point to the right one.
 
 ### CRITICAL OUTPUT RULES
 - Return ONLY the questions that HAVE MISTAKES.
+- For each returned question, you MUST provide the CORRECTED values for all fields (e.g. if you found a mistake in correct_option, return the newly updated correct_option).
 - If all questions are perfect, return an empty array: <questions_json>[]</questions_json>
-- For questions with mistakes, include a new field "review_notes" explaining what is wrong.
+- For questions with mistakes, include a new field "review_notes" explaining what was wrong and what you changed.
 - **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
 - **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
 
@@ -550,7 +551,7 @@ Your task is to review a provided JSON array of questions and identify any mista
     "question_text": "...",
     "option_a": "...", "option_b": "...", "option_c": "...", "option_d": "...",
     "correct_option": "A|B|C|D",
-    "review_notes": "The correct option is listed as A, but option B contains the actual right answer."
+    "review_notes": "The correct option was listed as A, but option B contained the actual right answer. I updated correct_option to B."
   }
 ]`;
 
