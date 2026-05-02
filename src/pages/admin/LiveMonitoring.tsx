@@ -23,8 +23,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { externalSupabase } from '@/lib/externalSupabase';
-import * as Livekit from 'livekit-client';
-import type { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
+import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
 import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface ActiveSession {
@@ -442,7 +441,8 @@ const LiveMonitoring = () => {
           return;
         }
 
-        const room = await Livekit.connect(data.url, data.token);
+        const room = new Room();
+        await room.connect(data.url, data.token);
         livekitRoomRef.current = room;
 
         const handleTrack = (pub: RemoteTrackPublication) => {

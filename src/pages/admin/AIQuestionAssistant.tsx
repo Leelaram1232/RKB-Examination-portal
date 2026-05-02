@@ -210,7 +210,7 @@ export default function AIQuestionAssistant() {
       );
   };
 
-  const safeParseQuestionsJson = (raw: string): any[] => {
+    const safeParseQuestionsJson = (raw: string): any[] => {
     const cleaned = String(raw || '')
       .replace(/```(?:json)?/gi, '')
       .replace(/```/g, '')
@@ -218,161 +218,56 @@ export default function AIQuestionAssistant() {
     if (!cleaned) return [];
 
     const sanitizeControlChars = (s: string) => {
-      // Mirror backend sanitization for control characters that can break JSON or LaTeX rendering.
       return s
-        .split(String.fromCharCode(8))
-        .join('\\b') // backspace -> \b
-        .split(String.fromCharCode(12))
-        .join('\\f') // form feed -> \f
-        .split(String.fromCharCode(13))
-        .join('\\r') // carriage return -> \r
-        .split(String.fromCharCode(9))
-        .join('\\t') // tab -> \t
-        .split(String.fromCharCode(11))
-        .join('\\v'); // vertical tab -> \v
+        .split(String.fromCharCode(8)).join('\\b')
+        .split(String.fromCharCode(12)).join('\\f')
+        .split(String.fromCharCode(13)).join('\\r')
+        .split(String.fromCharCode(9)).join('\\t')
+        .split(String.fromCharCode(11)).join('\\v');
     };
-
-    // Repair backslashes so the JSON inside <questions_json> becomes parseable.
-    // The AI output often contains LaTeX commands like \frac, \left, \operatorname, etc.
-    // Those backslashes are NOT valid JSON escapes, so JSON.parse throws "Bad escaped character".
-    //
-    // We scan and when we see a backslash:
-    // - If it's a valid JSON escape (\", \\, \/, \b \f \n \r \t, or \uXXXX), keep it,
-    //   BUT for \b/\f/\n/\r/\t we treat it as LaTeX when followed by a letter (e.g. \beta, \tan).
-    // - Otherwise, we escape the backslash (turn \X into \\X) so it becomes valid JSON.
-    const repairJsonBackslashesForLaTeX = (s: string) => {
-      const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
-      const isLetter = (ch: string) => /[A-Za-z]/.test(ch);
-
-      let out = '';
-      for (let i = 0; i < s.length; i++) {
-        const ch = s[i];
-        if (ch !== '\\') {
-          out += ch;
-          continue;
-        }
-
-        const next = s[i + 1] ?? '';
-        if (!next) {
-          out += '\\';
-          continue;
-        }
-
-        // Unicode escape: only if followed by 4 hex digits
-        if (next === 'u') {
-          const h1 = s[i + 2] ?? '';
-          const h2 = s[i + 3] ?? '';
-          const h3 = s[i + 4] ?? '';
-          const h4 = s[i + 5] ?? '';
-          if (h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4)) {
-            out += `\\u${h1}${h2}${h3}${h4}`;
-            i += 5; // consumed \ u + 4 digits => total 6 chars
-            continue;
-          }
-
-          // Invalid \u... (likely LaTeX). Escape backslash.
-          out += `\\\\u`;
-          continue;
-        }
-
-        // JSON single-letter escapes that collide with LaTeX (b,f,n,r,t)
-        if (next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't') {
-          const after = s[i + 2] ?? '';
-          if (after && isLetter(after)) {
-            // LaTeX likely (e.g. \beta, \tan, \frac...). Escape backslash.
-            out += `\\\\${next}`;
-            i += 1;
-            continue;
-          }
-
-          // Real JSON escape
-          out += `\\${next}`;
-          i += 1;
-          continue;
-        }
-
-        // Valid JSON escapes for these starters
-        if (next === '"' || next === '\\' || next === '/') {
-          out += `\\${next}`;
-          i += 1;
-          continue;
-        }
-
-        // Anything else (e.g. \l, \o, \c, \left, \operatorname) => invalid JSON escape => escape it.
-        out += `\\\\${next}`;
-        i += 1;
-      }
-
-      return out;
-    };
-
-    const repairInvalidBackslashes = (s: string) =>
-      // Escape backslashes that are not valid JSON escape starters.
-      s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
 
     const repairBackslashesInJsonStrings = (s: string) => {
-      // String-aware variant of backslash repair:
-      // inside JSON string literals, escape backslashes that would otherwise create invalid escapes.
       let out = '';
       let inString = false;
       let escape = false;
       const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
       for (let i = 0; i < s.length; i++) {
         const ch = s[i];
-
         if (!inString) {
           out += ch;
-          if (ch === '"') inString = true;
+          if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) inString = true;
           continue;
         }
-
-        // inString
         if (escape) {
-          // previous char was a backslash; we already decided how to handle it
           out += ch;
           escape = false;
           continue;
         }
-
         if (ch === '\\') {
           const next = s[i + 1] ?? '';
           const next2 = s[i + 2] ?? '';
-
-          // Only treat as a true JSON escape when it really is one.
-          // This is important because LaTeX commands like \beta, \sqrt, \underset start with letters
-          // that overlap JSON escape starters (b, f, n, r, t, u).
           const isDefinitelyJsonEscape = (() => {
             if (!next) return false;
             if (next === '"' || next === '\\' || next === '/') return true;
             if (next === 'u') {
-              // Valid unicode escape must be \uXXXX (4 hex digits).
-              const h1 = s[i + 2] ?? '';
-              const h2 = s[i + 3] ?? '';
-              const h3 = s[i + 4] ?? '';
-              const h4 = s[i + 5] ?? '';
+              const h1 = s[i + 2] ?? '', h2 = s[i + 3] ?? '', h3 = s[i + 4] ?? '', h4 = s[i + 5] ?? '';
               return Boolean(h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4));
             }
             if (/[bfnrt]/.test(next)) {
-              // If followed by a letter, it's almost certainly LaTeX (\beta, \frac, \tan, etc),
-              // not an intended JSON escape like \n.
               if (next2 && /[A-Za-z]/.test(next2)) return false;
               return true;
             }
             return false;
           })();
-
-          // If it's not a real JSON escape, insert an extra backslash so JSON.parse can succeed.
           out += isDefinitelyJsonEscape ? '\\' : '\\\\';
           escape = true;
           continue;
         }
-
         if (ch === '"') {
           inString = false;
           out += ch;
           continue;
         }
-
         out += ch;
       }
       return out;
@@ -381,25 +276,12 @@ export default function AIQuestionAssistant() {
     const extractJsonArraySubstring = (s: string) => {
       const start = s.indexOf('[');
       if (start < 0) return s;
-
-      // Find matching closing ']' while respecting quoted strings/escapes.
-      let depth = 0;
-      let inString = false;
-      let escape = false;
+      let depth = 0, inString = false, escape = false;
       for (let i = start; i < s.length; i++) {
         const ch = s[i];
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        if (ch === '\\') {
-          escape = true;
-          continue;
-        }
-        if (ch === '"') {
-          inString = !inString;
-          continue;
-        }
+        if (escape) { escape = false; continue; }
+        if (ch === '\\') { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
         if (inString) continue;
         if (ch === '[') depth += 1;
         else if (ch === ']') {
@@ -407,31 +289,40 @@ export default function AIQuestionAssistant() {
           if (depth === 0) return s.slice(start, i + 1);
         }
       }
-
-      // No matching closing bracket found; return from '[' onward (best effort).
       return s.slice(start);
     };
 
+    const tryParseWithRecovery = (jsonText: string) => {
+      try {
+        return JSON.parse(jsonText);
+      } catch (e) {
+        // Truncation recovery: find the last complete object in the array
+        const lastBrace = jsonText.lastIndexOf('}');
+        if (lastBrace > 0) {
+          try {
+            const truncatedFixed = jsonText.substring(0, lastBrace + 1) + ']';
+            return JSON.parse(truncatedFixed);
+          } catch {
+            throw e; // throw original error if recovery fails
+          }
+        }
+        throw e;
+      }
+    };
+
+    const base = extractJsonArraySubstring(sanitizeControlChars(cleaned));
     try {
-      const parsed = JSON.parse(extractJsonArraySubstring(sanitizeControlChars(cleaned)));
+      const parsed = tryParseWithRecovery(base);
       return Array.isArray(parsed) ? parsed : [];
     } catch (e1) {
       try {
-        const base = extractJsonArraySubstring(sanitizeControlChars(cleaned));
-          const repaired = repairJsonBackslashesForLaTeX(base);
-        const parsed2 = JSON.parse(repaired);
+        const repaired = repairBackslashesInJsonStrings(base);
+        const parsed2 = tryParseWithRecovery(repaired);
         return Array.isArray(parsed2) ? parsed2 : [];
       } catch (e2) {
         const msg1 = e1 instanceof Error ? e1.message : String(e1);
         const msg2 = e2 instanceof Error ? e2.message : String(e2);
         console.error('Tagged questions_json parse failed:', msg1, msg2);
-        // Helpful snippet for debugging deployed edge cases (truncates to avoid noisy logs)
-        try {
-          const snippet = extractJsonArraySubstring(sanitizeControlChars(cleaned)).slice(0, 400);
-          console.error('[questions_json snippet]', snippet);
-        } catch {
-          // ignore
-        }
         return [];
       }
     }

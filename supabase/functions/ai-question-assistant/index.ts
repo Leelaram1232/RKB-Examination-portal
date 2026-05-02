@@ -607,58 +607,47 @@ Exam ID: ${exam_id || 'Not specified'}`;
       const tryParseJson = (jsonText: string) => {
         const repairLatexBackslashes = (s: string) => {
           let out = '';
+          let inString = false;
+          let escape = false;
+          const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
           for (let i = 0; i < s.length; i++) {
             const ch = s[i];
-            if (ch !== '\\') {
+            if (!inString) {
+              out += ch;
+              if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) inString = true;
+              continue;
+            }
+            if (escape) {
+              out += ch;
+              escape = false;
+              continue;
+            }
+            if (ch === '\\') {
+              const next = s[i + 1] ?? '';
+              const next2 = s[i + 2] ?? '';
+              const isDefinitelyJsonEscape = (() => {
+                if (!next) return false;
+                if (next === '"' || next === '\\' || next === '/') return true;
+                if (next === 'u') {
+                  const h1 = s[i + 2] ?? '', h2 = s[i + 3] ?? '', h3 = s[i + 4] ?? '', h4 = s[i + 5] ?? '';
+                  return Boolean(h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4));
+                }
+                if (/[bfnrt]/.test(next)) {
+                  if (next2 && /[A-Za-z]/.test(next2)) return false;
+                  return true;
+                }
+                return false;
+              })();
+              out += isDefinitelyJsonEscape ? '\\' : '\\\\';
+              escape = true;
+              continue;
+            }
+            if (ch === '"') {
+              inString = false;
               out += ch;
               continue;
             }
-
-            const next = s[i + 1] ?? '';
-            if (!next) {
-              out += '\\';
-              continue;
-            }
-
-            // Valid JSON escapes: " \ / 
-            if (next === '"' || next === '\\' || next === '/') {
-              out += '\\' + next;
-              i += 1;
-              continue;
-            }
-
-            // Unicode escape \uXXXX
-            if (next === 'u') {
-              const h = s.substring(i + 2, i + 6);
-              if (h.length === 4 && /^[0-9a-fA-F]{4}$/.test(h)) {
-                out += '\\u' + h;
-                i += 5;
-                continue;
-              }
-              // Not valid unicode — likely LaTeX like \underset
-              out += '\\\\' + next;
-              i += 1;
-              continue;
-            }
-
-            // JSON single-char escapes that collide with LaTeX: b, f, n, r, t
-            if ('bfnrt'.includes(next)) {
-              const after = s[i + 2] ?? '';
-              if (after && /[A-Za-z]/.test(after)) {
-                // LaTeX: \beta, \frac, \neq, \right, \theta, \tan, etc.
-                out += '\\\\' + next;
-                i += 1;
-                continue;
-              }
-              // Real JSON escape
-              out += '\\' + next;
-              i += 1;
-              continue;
-            }
-
-            // Any other char after backslash — not a valid JSON escape (e.g. \sqrt, \pi)
-            out += '\\\\' + next;
-            i += 1;
+            out += ch;
           }
           return out;
         };
@@ -674,7 +663,7 @@ Exam ID: ${exam_id || 'Not specified'}`;
             // Attempt to recover truncated JSON if the LLM stopped mid-generation
             try {
               const repaired = repairLatexBackslashes(jsonText);
-              // Find the last complete object in the array
+              // Aggressive truncation recovery: find the last complete object in the array
               const lastBrace = repaired.lastIndexOf('}');
               if (lastBrace > 0) {
                 const truncatedFixed = repaired.substring(0, lastBrace + 1) + ']';
@@ -685,7 +674,7 @@ Exam ID: ${exam_id || 'Not specified'}`;
                 }
               }
             } catch (e3) {
-              // Ignore recovery error
+              console.warn('[Assistant] Truncation recovery failed:', (e3 as Error).message);
             }
             
             const msg1 = e1 instanceof Error ? e1.message : String(e1);

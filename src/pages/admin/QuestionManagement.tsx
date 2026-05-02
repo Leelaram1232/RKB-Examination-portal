@@ -421,6 +421,30 @@ const QuestionManagement = () => {
     void loadImages();
   };
 
+  const reorderQuestions = async (id: string) => {
+    const { data: currentQuestions, error: fetchError } = await supabase
+      .from('questions')
+      .select('id, question_number')
+      .eq('exam_id', id)
+      .order('question_number');
+
+    if (fetchError || !currentQuestions) return;
+
+    const updates = currentQuestions
+      .map((q, index) => ({ id: q.id, question_number: index + 1 }))
+      .filter((u, index) => currentQuestions[index].question_number !== u.question_number);
+
+    if (updates.length === 0) return;
+
+    const { error: updateError } = await supabase
+      .from('questions')
+      .upsert(updates);
+
+    if (updateError) {
+      console.error('Failed to reorder questions:', updateError);
+    }
+  };
+
   const handleDeleteQuestion = async (id: string) => {
     const { error } = await supabase.from('questions').delete().eq('id', id);
 
@@ -428,7 +452,10 @@ const QuestionManagement = () => {
       toast.error('Failed to delete question');
     } else {
       toast.success('Question deleted');
-      fetchExamAndQuestions(selectedExamId);
+      if (selectedExamId) {
+        await reorderQuestions(selectedExamId);
+        fetchExamAndQuestions(selectedExamId);
+      }
     }
   };
 
@@ -619,7 +646,11 @@ const QuestionManagement = () => {
 
       toast.success(`Deleted ${selectedQuestionIds.size} questions`);
       setSelectedQuestionIds(new Set());
-      fetchExamAndQuestions(selectedExamId);
+      
+      if (selectedExamId) {
+        await reorderQuestions(selectedExamId);
+        fetchExamAndQuestions(selectedExamId);
+      }
     } catch (error) {
       console.error('Bulk delete error:', error);
       toast.error('Failed to delete questions');
