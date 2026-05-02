@@ -27,7 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
 import { parseQuestionText } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
-import { EXTERNAL_SUPABASE_URL, EXTERNAL_SUPABASE_ANON_KEY, invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -62,6 +62,14 @@ type AuditReport = {
   markdownSummary: string;
   gemini_used: boolean;
   groq_used?: boolean;
+  warnings?: string[];
+};
+
+/** Last audit response meta from edge (deploy / DB source debugging). */
+type AuditRunMeta = {
+  build?: string;
+  question_fetch?: 'primary' | 'external' | 'primary_fallback';
+  audit_warnings?: string[];
 };
 
 export default function AIQuestionAssistant() {
@@ -89,8 +97,12 @@ export default function AIQuestionAssistant() {
   const [isLoading, setIsLoading] = useState(true);
   const [chatHistoryId, setChatHistoryId] = useState<string | null>(null);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [auditRunMeta, setAuditRunMeta] = useState<AuditRunMeta | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [llmMode, setLlmMode] = useState<LlmMode>('groq');
+
+  /** Bump when you ship frontend changes so production visibly differs from stale CDN. */
+  const UI_ASSISTANT_REV = '2026-05-04';
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -648,7 +660,15 @@ export default function AIQuestionAssistant() {
       const { data, error } = await invokeExternalFunction<{
         content?: string;
         audit?: AuditReport;
-        meta?: { gemini_used?: boolean; groq_used?: boolean; llm_mode?: string };
+        meta?: {
+          gemini_used?: boolean;
+          groq_used?: boolean;
+          llm_mode?: string;
+          build?: string;
+          question_fetch?: AuditRunMeta['question_fetch'];
+          audit_warnings?: string[];
+          questions_count?: number;
+        };
       }>('ai-question-assistant', {
         messages: [{ role: 'user', content: 'Run full exam quality audit.' }],
         exam_id: selectedExam,
@@ -660,6 +680,11 @@ export default function AIQuestionAssistant() {
         throw new Error('No audit data returned');
       }
       setAuditReport(data.audit);
+      setAuditRunMeta({
+        build: data.meta?.build,
+        question_fetch: data.meta?.question_fetch,
+        audit_warnings: data.meta?.audit_warnings,
+      });
       const aiBits = [
         data.meta?.groq_used ? 'Groq' : '',
         data.meta?.gemini_used ? 'Gemini' : '',
@@ -699,11 +724,20 @@ export default function AIQuestionAssistant() {
         }
       }
 
-      toast.success(
-        data.audit.questions_with_issues === 0
-          ? 'No issues found for saved questions.'
-          : `Found issues on ${data.audit.questions_with_issues} question(s). See report below.`
-      );
+      if (data.audit.total_questions === 0) {
+        toast.error(
+          'Quality check found 0 questions for this exam in the database the edge function used. ' +
+            'If questions live in another Supabase project, set EXTERNAL_SUPABASE_URL and EXTERNAL_SUPABASE_SERVICE_ROLE_KEY on the function, redeploy ai-question-assistant, and try again.'
+        );
+      } else if (data.audit.questions_with_issues === 0) {
+        toast.success('No issues found for saved questions.');
+      } else {
+        toast.success(`Found issues on ${data.audit.questions_with_issues} question(s). See report below.`);
+      }
+      const aw = data.meta?.audit_warnings ?? data.audit.warnings;
+      if (Array.isArray(aw) && aw.length > 0) {
+        toast.warning(`Some AI audit batches failed (${aw.length}). See “Partial audit” in the report.`);
+      }
     } catch (e: unknown) {
       console.error('Audit exam error:', e);
       toast.error(e instanceof Error ? e.message : 'Quality check failed');
@@ -892,6 +926,7 @@ export default function AIQuestionAssistant() {
                 onChange={(e) => {
                   setSelectedExam(e.target.value);
                   setAuditReport(null);
+                  setAuditRunMeta(null);
                 }}
               >
                 <option value="">Select Exam *</option>
@@ -916,6 +951,9 @@ export default function AIQuestionAssistant() {
                 ))}
               </select>
             </div>
+            <Badge variant="outline" className="font-mono text-[10px] shrink-0" title="Frontend bundle marker — if this never changes after deploy, the browser or host is serving an old build.">
+              UI {UI_ASSISTANT_REV}
+            </Badge>
             <Button
               type="button"
               variant="secondary"
@@ -963,9 +1001,45 @@ export default function AIQuestionAssistant() {
                   </Badge>
                 )}
               </CardTitle>
-              <CardDescription>
-                Fix issues in Admin → Questions for this exam. MCQ: ensure all four options have text,{' '}
-                <code className="text-xs">correct_option</code> matches the right choice, and the answer exists in the options.
+              <CardDescription className="space-y-2">
+                <p>
+                  Fix issues in Admin → Questions for this exam. MCQ: ensure all four options have text,{' '}
+                  <code className="text-xs">correct_option</code> matches the right choice, and the answer exists in the options.
+                </p>
+                {(auditRunMeta?.build || auditRunMeta?.question_fetch) && (
+                  <p className="text-xs font-mono text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
+                    {auditRunMeta.build && <span>edge: {auditRunMeta.build}</span>}
+                    {auditRunMeta.question_fetch && (
+                      <span>
+                        questions DB:{' '}
+                        {auditRunMeta.question_fetch === 'external'
+                          ? 'external Supabase'
+                          : auditRunMeta.question_fetch === 'primary_fallback'
+                            ? 'primary (fallback — external had 0 rows)'
+                            : 'primary'}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {(() => {
+                  const partial =
+                    auditRunMeta?.audit_warnings?.length
+                      ? auditRunMeta.audit_warnings
+                      : auditReport.warnings?.length
+                        ? auditReport.warnings
+                        : [];
+                  if (partial.length === 0) return null;
+                  return (
+                    <div className="rounded-md border border-amber-300/80 bg-amber-100/50 dark:bg-amber-950/40 dark:border-amber-800 p-2 text-xs">
+                      <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">Partial audit (some AI batches failed)</p>
+                      <ul className="list-disc pl-4 space-y-0.5 text-muted-foreground">
+                        {partial.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
               </CardDescription>
             </CardHeader>
             <CardContent className="max-h-[28rem] overflow-y-auto px-4 pb-4 [-webkit-overflow-scrolling:touch] touch-pan-y">

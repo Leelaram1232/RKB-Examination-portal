@@ -414,24 +414,53 @@ async function callGroqApi(
   throw new Error(`Groq call failed after retries: ${String(lastError)}`);
 }
 
+function extractLeadingJsonObject(text: string): string | null {
+  const t = (text || '').trim();
+  if (!t) return null;
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fence ? fence[1].trim() : t;
+  const start = body.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < body.length; i++) {
+    const ch = body[i]!;
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (inStr) {
+      if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return body.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function parseAuditItemsFromLlmText(text: string): Array<{ id?: string; findings?: unknown }> {
   const t = (text || '').trim();
   if (!t) return [];
-  try {
-    const parsed = JSON.parse(t) as { items?: Array<{ id?: string; findings?: unknown }> };
-    return Array.isArray(parsed.items) ? parsed.items : [];
-  } catch {
-    const m = t.match(/\{[\s\S]*"items"\s*:\s*\[[\s\S]*\][\s\S]*\}/);
-    if (m) {
-      try {
-        const parsed = JSON.parse(m[0]) as { items?: Array<{ id?: string; findings?: unknown }> };
-        return Array.isArray(parsed.items) ? parsed.items : [];
-      } catch {
-        return [];
-      }
+  const candidates = [extractLeadingJsonObject(t), t].filter(Boolean) as string[];
+  for (const blob of candidates) {
+    try {
+      const parsed = JSON.parse(blob) as { items?: Array<{ id?: string; findings?: unknown }> };
+      if (Array.isArray(parsed.items)) return parsed.items;
+    } catch {
+      /* try next */
     }
-    return [];
   }
+  return [];
 }
 
 async function applyGeminiRefinementsToQuestions(
@@ -699,11 +728,33 @@ findings: max 6 short bullets; use [] if nothing beyond heuristic_issues.`;
   return byId;
 }
 
+async function groqAuditSingle(groqKey: string, q: ExamQuestionRow): Promise<string[]> {
+  const one = buildAuditPayloadRow(q);
+  const system = `Return ONLY JSON: {"items":[{"id":"${q.id}","findings":["short note"]}]}
+findings max 5; [] if no issues. MCQ: verify correct_option; numerical: verify correct_answer.`;
+  const data = await callGroqApi(
+    groqKey,
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: JSON.stringify(one) },
+    ],
+    0.05,
+    3500
+  );
+  const text = data.choices?.[0]?.message?.content ?? '';
+  const items = parseAuditItemsFromLlmText(text);
+  const hit = items.find((x) => x.id === q.id);
+  const findings = Array.isArray(hit?.findings)
+    ? (hit!.findings as unknown[]).map((x) => String(x)).filter(Boolean)
+    : [];
+  return findings;
+}
+
 async function groqAuditSlice(groqKey: string, slice: ExamQuestionRow[]): Promise<Map<string, string[]>> {
   const byId = new Map<string, string[]>();
   const payload = slice.map((q) => buildAuditPayloadRow(q));
   const system = `Return ONLY JSON: {"items":[{"id":"uuid","findings":["note"]}]}
-One entry per input question (same ids). MCQ: check correct_option vs stem; numerical: check correct_answer. Max 5 findings each.`;
+One entry per input question (same ids). MCQ: check correct_option vs stem; numerical: check correct_answer. Max 5 findings each. No markdown, no prose outside JSON.`;
 
   const data = await callGroqApi(
     groqKey,
@@ -721,6 +772,19 @@ One entry per input question (same ids). MCQ: check correct_option vs stem; nume
     const findings = Array.isArray(it.findings) ? it.findings.map((x) => String(x)).filter(Boolean) : [];
     byId.set(id, findings);
   }
+
+  for (const q of slice) {
+    if (byId.has(q.id)) continue;
+    try {
+      const findings = await groqAuditSingle(groqKey, q);
+      byId.set(q.id, findings);
+      await new Promise((r) => setTimeout(r, 80));
+    } catch (e) {
+      console.warn('[Audit] Groq single-question fallback failed', q.id, e);
+      byId.set(q.id, ['[Groq] Review incomplete for this row (API/parse error).']);
+    }
+  }
+
   return byId;
 }
 
@@ -748,8 +812,10 @@ async function runExamQualityAudit(
   markdownSummary: string;
   gemini_used: boolean;
   groq_used: boolean;
+  warnings: string[];
 }> {
   const { groqKey, geminiKey, llmMode } = opts;
+  const warnings: string[] = [];
 
   if (llmMode === 'gemini' && !geminiKey) {
     throw new Error('GEMINI_API_KEY required for Gemini quality mode');
@@ -798,7 +864,9 @@ async function runExamQualityAudit(
         mergeAuditFindings(items, map, '[Gemini]');
         gemini_used = true;
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.warn('[Audit] Gemini chunk failed:', e);
+        warnings.push(`Gemini batch Q#${slice[0]?.question_number ?? '?'}–${slice[slice.length - 1]?.question_number ?? '?'}: ${msg}`);
       }
       await new Promise((r) => setTimeout(r, 180));
     }
@@ -809,7 +877,9 @@ async function runExamQualityAudit(
         mergeAuditFindings(items, mapG, '[Groq]');
         groq_used = true;
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.warn('[Audit] Groq chunk failed:', e);
+        warnings.push(`Groq batch Q#${slice[0]?.question_number ?? '?'}–${slice[slice.length - 1]?.question_number ?? '?'}: ${msg}`);
       }
       await new Promise((r) => setTimeout(r, 180));
     }
@@ -855,6 +925,7 @@ async function runExamQualityAudit(
     markdownSummary: lines.join('\n'),
     gemini_used,
     groq_used,
+    warnings,
   };
 }
 
@@ -878,9 +949,26 @@ Deno.serve(async (req) => {
       if (!supabaseUrl || !supabaseKey) {
         throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured');
       }
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      const audit = await runExamQualityAudit(supabase, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
-      const BUILD_MARKER = 'ai-question-assistant@2026-05-03.audit';
+      const extUrl = Deno.env.get('EXTERNAL_SUPABASE_URL')?.trim();
+      const extKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')?.trim();
+
+      let auditClient = createClient(supabaseUrl, supabaseKey);
+      let questionFetch: 'primary' | 'external' | 'primary_fallback' = 'primary';
+      if (extUrl && extKey) {
+        auditClient = createClient(extUrl, extKey);
+        questionFetch = 'external';
+        console.log('[Audit] Using EXTERNAL_SUPABASE_* for questions table');
+      }
+
+      let audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
+      if (audit.total_questions === 0 && questionFetch === 'external') {
+        console.warn('[Audit] 0 rows from external; retrying primary SUPABASE_URL');
+        auditClient = createClient(supabaseUrl, supabaseKey);
+        questionFetch = 'primary_fallback';
+        audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
+      }
+
+      const BUILD_MARKER = 'ai-question-assistant@2026-05-04.audit';
       return new Response(
         JSON.stringify({
           content: audit.markdownSummary,
@@ -890,8 +978,10 @@ Deno.serve(async (req) => {
             build: BUILD_MARKER,
             gemini_used: audit.gemini_used,
             groq_used: audit.groq_used,
-            questions_count: 0,
+            questions_count: audit.total_questions,
             llm_mode: llm_mode,
+            question_fetch: questionFetch,
+            audit_warnings: audit.warnings,
           },
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

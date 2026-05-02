@@ -10,13 +10,13 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/integrations/supabase/types';
 
+// Load primary client first so VITE_SUPABASE_* are validated before we build the external client.
 import { supabase } from '@/integrations/supabase/client';
 
-// Use environment variables if available, fallback to hardcoded values for legacy support
-export const EXTERNAL_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hwhhgprivdgdbnlqruln.supabase.co";
-export const EXTERNAL_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
+/** Same project as `supabase` client — edge functions + RLS data for this app. */
+export const EXTERNAL_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+export const EXTERNAL_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
 
-// Create the external Supabase client
 export const externalSupabase: SupabaseClient<Database> = createClient<Database>(
   EXTERNAL_SUPABASE_URL,
   EXTERNAL_SUPABASE_ANON_KEY,
