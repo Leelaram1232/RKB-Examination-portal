@@ -141,6 +141,11 @@ const QuestionManagement = () => {
   const [isReordering, setIsReordering] = useState(false);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
 
+  // AI Review state
+  const [isReviewingAI, setIsReviewingAI] = useState(false);
+  const [reviewResults, setReviewResults] = useState<(Question & { review_notes?: string })[] | null>(null);
+  const [showReviewDialog, setShowReviewDialog] = useState(false);
+
   const fetchExams = async () => {
     const { data, error } = await supabase
       .from('exams')
@@ -465,6 +470,58 @@ const QuestionManagement = () => {
       toast.error('Failed to rearrange question numbers');
     } finally {
       setIsReordering(false);
+    }
+  };
+
+  const handleAIReview = async () => {
+    if (questions.length === 0) {
+      toast.error('No questions to review');
+      return;
+    }
+
+    setIsReviewingAI(true);
+    try {
+      const payload = questions.map(q => ({
+        id: q.id,
+        question_number: q.question_number,
+        question_text: q.question_text,
+        question_type: q.question_type,
+        option_a: q.option_a,
+        option_b: q.option_b,
+        option_c: q.option_c,
+        option_d: q.option_d,
+        correct_option: q.correct_option,
+        correct_answer: q.correct_answer,
+      }));
+
+      const { data, error } = await invokeExternalFunction<any>('ai-question-assistant', {
+        action: 'review',
+        messages: [
+          {
+            role: 'user',
+            content: `Please review these questions for mistakes based on the system prompt instructions.\n\n${JSON.stringify(payload)}`
+          }
+        ],
+        exam_id: selectedExamId
+      });
+
+      if (error) throw error;
+      
+      const mistakes = data?.questions || [];
+      setReviewResults(mistakes);
+      setShowReviewDialog(true);
+      
+      if (mistakes.length === 0) {
+        toast.success('AI Review Complete. No mistakes found!');
+      } else {
+        toast.warning(`AI Review Complete. Found ${mistakes.length} potential mistakes.`);
+      }
+
+    } catch (error: any) {
+      console.error('AI review error:', error);
+      toast.error(error.message || 'Failed to complete AI review');
+    } finally {
+      setIsReviewingAI(false);
     }
   };
 
@@ -816,6 +873,12 @@ const QuestionManagement = () => {
                           </AlertDialog>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                    )}
+                    {questions.length > 0 && (
+                      <Button variant="outline" onClick={handleAIReview} disabled={isReviewingAI}>
+                        {isReviewingAI ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <BrainCircuit className="w-4 h-4 mr-2" />}
+                        AI Quality Check
+                      </Button>
                     )}
                     {questions.length > 0 && (
                       <Button variant="outline" onClick={handleManualReorder} disabled={isReordering}>
@@ -1458,6 +1521,89 @@ const QuestionManagement = () => {
                 {isBulkUpdating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Update {selectedQuestionIds.size} Questions
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* AI Review Results Dialog */}
+        <Dialog open={showReviewDialog} onOpenChange={setShowReviewDialog}>
+          <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <BrainCircuit className="w-5 h-5 text-primary" />
+                AI Quality Review Results
+              </DialogTitle>
+              <DialogDescription>
+                {reviewResults?.length === 0 
+                  ? "Great job! The AI didn't find any obvious mistakes in the questions."
+                  : `The AI flagged ${reviewResults?.length} question(s) that might contain errors.`}
+              </DialogDescription>
+            </DialogHeader>
+
+            {reviewResults && reviewResults.length > 0 && (
+              <div className="space-y-4 mt-4">
+                {reviewResults.map((q, idx) => (
+                  <Card key={q.id || idx} className="border-warning/50">
+                    <CardHeader className="py-3 bg-muted/30">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base font-medium flex items-center gap-2">
+                          Question {q.question_number}
+                        </CardTitle>
+                        <Button 
+                          size="sm" 
+                          variant="secondary"
+                          onClick={() => {
+                            const originalQuestion = questions.find(orig => orig.id === q.id);
+                            if (originalQuestion) {
+                              handleEditQuestion(originalQuestion);
+                            } else {
+                              handleEditQuestion(q as Question);
+                            }
+                          }}
+                        >
+                          <Edit className="w-4 h-4 mr-2" />
+                          Edit Question
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-4 space-y-3">
+                      <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md border border-destructive/20 font-medium">
+                        <span className="font-bold">AI Notes: </span> {q.review_notes || 'No specific notes provided.'}
+                      </div>
+                      
+                      <div>
+                        <span className="font-semibold text-sm text-muted-foreground block mb-1">Question Text:</span>
+                        <p className="text-sm border p-2 rounded-md bg-background">{q.question_text}</p>
+                      </div>
+
+                      {q.question_type !== 'NUMERICAL' ? (
+                        <div className="grid grid-cols-2 gap-2 text-sm mt-2">
+                          <div className={cn("p-2 border rounded-md", q.correct_option === 'A' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
+                            <span className="font-semibold mr-2">A.</span> {q.option_a}
+                          </div>
+                          <div className={cn("p-2 border rounded-md", q.correct_option === 'B' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
+                            <span className="font-semibold mr-2">B.</span> {q.option_b}
+                          </div>
+                          <div className={cn("p-2 border rounded-md", q.correct_option === 'C' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
+                            <span className="font-semibold mr-2">C.</span> {q.option_c}
+                          </div>
+                          <div className={cn("p-2 border rounded-md", q.correct_option === 'D' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
+                            <span className="font-semibold mr-2">D.</span> {q.option_d}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-sm mt-2 p-2 border rounded-md border-green-500 bg-green-50 dark:bg-green-950/20">
+                          <span className="font-semibold mr-2">Correct Answer:</span> {q.correct_answer}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            <DialogFooter className="mt-6">
+              <Button onClick={() => setShowReviewDialog(false)}>Close</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

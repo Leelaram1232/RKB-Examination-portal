@@ -20,6 +20,7 @@ interface AssistantRequest {
   file_url?: string;
   exam_id?: string;
   subject_id?: string;
+  action?: 'generate' | 'review';
 }
 
 type GroqChatCompletion = {
@@ -290,7 +291,13 @@ Deno.serve(async (req) => {
       throw new Error('GROQ_API_KEY not configured');
     }
 
-    const { messages, file_url, exam_id, subject_id } = await req.json() as AssistantRequest;
+    const body = await req.json();
+    let { messages, file_url, exam_id, subject_id, action } = body as AssistantRequest;
+
+    if (!messages || !Array.isArray(messages)) {
+      throw new Error('No messages provided');
+    }
+
     console.log('[Assistant] Request received:', { 
       messageCount: messages?.length, 
       hasFile: !!file_url,
@@ -462,7 +469,7 @@ Deno.serve(async (req) => {
       // Keep only the most recent part of the conversation (older messages add tokens but usually don't help extraction).
       .slice(-(file_url ? 2 : 6));
 
-    const systemPrompt = `You are an expert Exam Question Assistant for JEE/NEET and regional-language exams.
+    const generateSystemPrompt = `You are an expert Exam Question Assistant for JEE/NEET and regional-language exams.
 Generate or extract high-quality questions based on the provided context or prompt.
 
 ### LANGUAGE SUPPORT
@@ -519,6 +526,35 @@ Current context:
 ${ocrContext ? `OCR Extracted Content: \n${truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS)}` : 'No file uploaded.'}
 Subject ID: ${subject_id || 'Not specified'}
 Exam ID: ${exam_id || 'Not specified'}`;
+
+    const reviewSystemPrompt = `You are an expert Exam Quality Assurance Reviewer.
+Your task is to review a provided JSON array of questions and identify any mistakes.
+
+### REVIEW CRITERIA
+1. Check if the 'correct_option' (A, B, C, or D) actually matches the conceptually correct answer among the given options (option_a, option_b, option_c, option_d).
+2. Check for glaring typographical or logical errors in the question text or options.
+3. Check if all options are identical (which is a mistake).
+
+### CRITICAL OUTPUT RULES
+- Return ONLY the questions that HAVE MISTAKES.
+- If all questions are perfect, return an empty array: <questions_json>[]</questions_json>
+- For questions with mistakes, include a new field "review_notes" explaining what is wrong.
+- **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
+- **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
+
+### JSON SCHEMA FOR MISTAKES
+[
+  {
+    "id": "original_id",
+    "question_number": 1,
+    "question_text": "...",
+    "option_a": "...", "option_b": "...", "option_c": "...", "option_d": "...",
+    "correct_option": "A|B|C|D",
+    "review_notes": "The correct option is listed as A, but option B contains the actual right answer."
+  }
+]`;
+
+    const systemPrompt = action === 'review' ? reviewSystemPrompt : generateSystemPrompt;
 
     const groqMessages = [
       { role: 'system', content: systemPrompt },

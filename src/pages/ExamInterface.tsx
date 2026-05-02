@@ -283,6 +283,45 @@ export default function ExamInterface() {
     };
   }, [examId, navigate, toast]);
 
+  // Real-time questions update subscription
+  useEffect(() => {
+    if (!session?.exam?.id) return;
+
+    const channel = supabase
+      .channel(`public:questions:exam_id=eq.${session.exam.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'questions',
+          filter: `exam_id=eq.${session.exam.id}`,
+        },
+        (payload) => {
+          console.log('[Real-time] Question updated from admin:', payload.new);
+          setQuestions((prevQuestions) => {
+            const updatedIndex = prevQuestions.findIndex((q) => q.id === payload.new.id);
+            if (updatedIndex === -1) return prevQuestions;
+            
+            const newQuestions = [...prevQuestions];
+            // Merge payload.new while preserving joined fields like subject_name
+            newQuestions[updatedIndex] = { ...prevQuestions[updatedIndex], ...payload.new as any };
+            return newQuestions;
+          });
+          
+          toast({
+            title: 'Question Updated',
+            description: 'A question was just updated by the administrator.',
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.exam?.id, toast]);
+
   // Start LiveKit camera streaming once we have a valid session + exam id
   useEffect(() => {
     if (!session?.session_id || !session.exam?.id) return;
