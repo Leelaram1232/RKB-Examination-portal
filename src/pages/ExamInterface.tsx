@@ -620,6 +620,17 @@ export default function ExamInterface() {
   const handleViolation = useCallback((type: string) => {
     if (isBlocked) return;
     
+    // Prevent double-counting: if a violation occurred within the last 2 seconds, ignore this one.
+    // (e.g. Escaping fullscreen triggers 'fullscreenchange' AND 'blur' almost instantly)
+    const now = Date.now();
+    const lastViolationTime = violationsRef.current.length > 0 
+      ? new Date(violationsRef.current[violationsRef.current.length - 1].timestamp).getTime() 
+      : 0;
+      
+    if (now - lastViolationTime < 2000) {
+      return;
+    }
+    
     violationRef.current += 1;
     const newCount = violationRef.current;
     
