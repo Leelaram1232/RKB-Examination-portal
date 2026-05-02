@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -137,7 +137,8 @@ const QuestionManagement = () => {
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const [dragActionType, setDragActionType] = useState<'select' | 'deselect'>('select');
-  const [mouseY, setMouseY] = useState<number>(0);
+  const mouseYRef = useRef<number>(0);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
 
   const fetchExams = async () => {
     const { data, error } = await supabase
@@ -503,26 +504,30 @@ const QuestionManagement = () => {
     if (!isDraggingSelection) return;
 
     let rafId: number;
-    const scrollSpeed = 15;
-    const scrollThreshold = 100; // px from top/bottom
+    const scrollSpeed = 20;
+    const scrollThreshold = 120; // Slightly larger threshold for easier triggering
 
     const handleMouseMove = (e: MouseEvent) => {
-      setMouseY(e.clientY);
+      mouseYRef.current = e.clientY;
     };
 
     const autoScroll = () => {
-      const scrollContainer = document.querySelector('main');
-      if (!scrollContainer) return;
-
-      const viewportHeight = window.innerHeight;
-      const rect = scrollContainer.getBoundingClientRect();
+      if (!scrollContainerRef.current) {
+        scrollContainerRef.current = document.querySelector('main');
+      }
       
-      if (mouseY > rect.bottom - scrollThreshold) {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const currentY = mouseYRef.current;
+      
+      if (currentY > rect.bottom - scrollThreshold) {
         // Scroll down
-        scrollContainer.scrollTop += scrollSpeed;
-      } else if (mouseY < rect.top + scrollThreshold) {
+        container.scrollTop += scrollSpeed;
+      } else if (currentY < rect.top + scrollThreshold) {
         // Scroll up
-        scrollContainer.scrollTop -= scrollSpeed;
+        container.scrollTop -= scrollSpeed;
       }
       
       rafId = requestAnimationFrame(autoScroll);
@@ -535,7 +540,7 @@ const QuestionManagement = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(rafId);
     };
-  }, [isDraggingSelection, mouseY]);
+  }, [isDraggingSelection]);
 
   const onMouseEnterRow = (id: string, index: number) => {
     if (!isDraggingSelection) return;
