@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -131,6 +132,11 @@ const QuestionManagement = () => {
   const [bulkEditField, setBulkEditField] = useState<'section' | 'subject' | 'marks'>('section');
   const [bulkEditValue, setBulkEditValue] = useState<string>('');
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  
+  // Advanced selection state
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const [isDraggingSelection, setIsDraggingSelection] = useState(false);
+  const [dragActionType, setDragActionType] = useState<'select' | 'deselect'>('select');
 
   const fetchExams = async () => {
     const { data, error } = await supabase
@@ -442,14 +448,67 @@ const QuestionManagement = () => {
     }
   };
 
-  const handleSelectQuestion = (id: string, checked: boolean) => {
+  const handleSelectQuestion = (id: string, checked: boolean, index: number, isShiftKey: boolean = false) => {
     const newSelected = new Set(selectedQuestionIds);
-    if (checked) {
+    
+    if (isShiftKey && lastSelectedIndex !== null) {
+      // Range selection
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      
+      const rangeIds = questions.slice(start, end + 1).map(q => q.id);
+      
+      if (checked) {
+        rangeIds.forEach(rangeId => newSelected.add(rangeId));
+      } else {
+        rangeIds.forEach(rangeId => newSelected.delete(rangeId));
+      }
+    } else {
+      // Single selection
+      if (checked) {
+        newSelected.add(id);
+      } else {
+        newSelected.delete(id);
+      }
+    }
+    
+    setSelectedQuestionIds(newSelected);
+    setLastSelectedIndex(index);
+  };
+
+  const startDragSelection = (id: string, currentlySelected: boolean, index: number) => {
+    setIsDraggingSelection(true);
+    const newAction = currentlySelected ? 'deselect' : 'select';
+    setDragActionType(newAction);
+    
+    const newSelected = new Set(selectedQuestionIds);
+    if (newAction === 'select') {
       newSelected.add(id);
     } else {
       newSelected.delete(id);
     }
     setSelectedQuestionIds(newSelected);
+    setLastSelectedIndex(index);
+
+    // Add global mouseup listener to stop dragging
+    const stopDragging = () => {
+      setIsDraggingSelection(false);
+      window.removeEventListener('mouseup', stopDragging);
+    };
+    window.addEventListener('mouseup', stopDragging);
+  };
+
+  const onMouseEnterRow = (id: string, index: number) => {
+    if (!isDraggingSelection) return;
+
+    const newSelected = new Set(selectedQuestionIds);
+    if (dragActionType === 'select') {
+      newSelected.add(id);
+    } else {
+      newSelected.delete(id);
+    }
+    setSelectedQuestionIds(newSelected);
+    setLastSelectedIndex(index);
   };
 
   const handleBulkUpdate = async () => {
@@ -695,18 +754,38 @@ const QuestionManagement = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {questions.map((question) => {
+                        {questions.map((question, index) => {
                           const questionSubject = subjects.find(s => s.id === question.subject_id);
                           return (
                             <TableRow 
                               key={question.id}
-                              className={selectedQuestionIds.has(question.id) ? 'bg-muted/50' : ''}
+                              className={cn(
+                                "transition-colors cursor-default select-none",
+                                selectedQuestionIds.has(question.id) ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/50'
+                              )}
+                              onMouseEnter={() => onMouseEnterRow(question.id, index)}
                             >
-                              <TableCell>
-                                <Checkbox
-                                  checked={selectedQuestionIds.has(question.id)}
-                                  onCheckedChange={(checked) => handleSelectQuestion(question.id, !!checked)}
-                                />
+                              <TableCell className="w-12">
+                                <div 
+                                  className="flex items-center justify-center h-full w-full py-3"
+                                  onMouseDown={(e) => {
+                                    // Don't start drag if clicking the checkbox directly (let handleSelectQuestion handle it)
+                                    // but we want to allow dragging from the cell
+                                    startDragSelection(question.id, selectedQuestionIds.has(question.id), index);
+                                  }}
+                                >
+                                  <Checkbox
+                                    checked={selectedQuestionIds.has(question.id)}
+                                    onCheckedChange={(checked) => {
+                                      // Note: native Event is not available in onCheckedChange, 
+                                      // so we might need a workaround for shift-click or just use onMouseDown
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectQuestion(question.id, !selectedQuestionIds.has(question.id), index, e.shiftKey);
+                                    }}
+                                  />
+                                </div>
                               </TableCell>
                               <TableCell className="font-medium">{question.question_number}</TableCell>
                               <TableCell className="max-w-md truncate">

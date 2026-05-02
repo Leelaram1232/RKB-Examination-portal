@@ -1,4 +1,3 @@
-console.log('DEBUG: StudentAnswerReview.tsx LOADED - VERSION 2');
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, CheckCircle, XCircle, Minus, RefreshCw, Loader2 } from 'lucide-react';

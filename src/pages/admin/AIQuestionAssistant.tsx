@@ -53,7 +53,7 @@ export default function AIQuestionAssistant() {
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: "Hello! I'm your AI Question Assistant. How can I help you prepare questions today? You can ask me to generate questions or upload a PDF/Image for me to analyze." }
+    { role: 'assistant', content: "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n\nUpload a PDF/Image or type a request to get started!" }
   ]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -75,7 +75,7 @@ export default function AIQuestionAssistant() {
       {
         role: 'assistant',
         content:
-          "Hello! I'm your AI Question Assistant. How can I help you prepare questions today? You can ask me to generate questions or upload a PDF/Image for me to analyze.",
+          "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n\nUpload a PDF/Image or type a request to get started!",
       },
     ]);
     setInput('');
@@ -673,6 +673,8 @@ export default function AIQuestionAssistant() {
           correctOption: q.correct_option,
           correctAnswer: q.correct_answer,
           marks: q.marks || 4,
+          // Preserve diagram/figure image URL from AI extraction
+          imageUrl: q.image_url || null,
         }));
         setGeneratedQuestions(prev => [...prev, ...newQuestions]);
         toast.success(`Generated ${newQuestions.length} questions!`);
@@ -1000,12 +1002,14 @@ export default function AIQuestionAssistant() {
                     className="hidden" 
                     ref={fileInputRef} 
                     onChange={handleFileUpload}
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.gif"
                   />
                   <Button 
                     variant="outline" 
                     size="icon" 
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading || isSending}
+                    title="Upload PDF or Image (supports Telugu, Hindi, English)"
                   >
                     <Upload className="h-4 w-4" />
                   </Button>

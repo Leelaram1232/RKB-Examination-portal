@@ -26,6 +26,10 @@ from pydantic import BaseModel
 # Configure Tesseract path for Windows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
+# Directory to save extracted images from PDFs
+EXTRACTED_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extracted_images")
+os.makedirs(EXTRACTED_IMAGES_DIR, exist_ok=True)
+
 
 class ExtractRequest(BaseModel):
     upload_id: str
@@ -64,6 +68,8 @@ class ExtractResponse(BaseModel):
     images: List[ExtractedImage]
 
 
+from fastapi.staticfiles import StaticFiles
+
 app = FastAPI()
 
 # Enable CORS for local testing
@@ -74,6 +80,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve extracted images as static files
+app.mount("/images", StaticFiles(directory=EXTRACTED_IMAGES_DIR), name="extracted_images")
 
 
 def pdf_to_text(pdf_bytes: bytes) -> tuple[str, List[ExtractedImage]]:
@@ -91,25 +100,59 @@ def pdf_to_text(pdf_bytes: bytes) -> tuple[str, List[ExtractedImage]]:
             img_data = pix.tobytes("png")
             img = Image.open(io.BytesIO(img_data)).convert("RGB")
             
-            # Using PSM 6 (Assume a single uniform block of text) or 3 (Fully automatic)
+            # Use multi-language OCR: English + Telugu + Hindi
+            # Install Telugu with: tesseract --list-langs or download tel.traineddata
+            langs = 'eng'
+            available_langs = []
+            try:
+                available_langs = pytesseract.get_languages()
+            except Exception:
+                pass
+            if 'tel' in available_langs:
+                langs = 'eng+tel'
+            if 'hin' in available_langs:
+                langs = langs + '+hin'
+            
             custom_config = r'--oem 3 --psm 6'
-            text = pytesseract.image_to_string(img, lang="eng", config=custom_config)
-            print(f"Page {i+1}: Extracted {len(text)} characters.")
-            texts.append(text)
+            text = pytesseract.image_to_string(img, lang=langs, config=custom_config)
+            print(f"Page {i+1}: Extracted {len(text)} characters (langs: {langs}).")
+            texts.append(f"[PAGE {i+1}]\n{text}")
 
             # 2. Find actual images in PDF
             page_images = page.get_images(full=True)
             if page_images:
                 print(f"Page {i+1}: Found {len(page_images)} raw images.")
-                for img_info in page_images:
-                    # We don't save the actual file since we don't have a public URL to serve it
-                    # but we mark its existence for the UI to know it needs an image placeholder
-                    extracted_images.append(ExtractedImage(
-                        question_number=0, # Will be mapped later or left as 0
-                        image_type="diagram",
-                        description=f"Image found on PDF page {i+1}",
-                        position=f"Page {i+1}"
-                    ))
+                for img_idx, img_info in enumerate(page_images):
+                    try:
+                        xref = img_info[0]
+                        base_image = doc.extract_image(xref)
+                        if base_image:
+                            image_bytes = base_image["image"]
+                            image_ext = base_image.get("ext", "png")
+                            # Save extracted image to disk
+                            img_filename = f"page{i+1}_img{img_idx+1}.{image_ext}"
+                            img_path = os.path.join(EXTRACTED_IMAGES_DIR, img_filename)
+                            with open(img_path, "wb") as img_file:
+                                img_file.write(image_bytes)
+                            # Create a local URL for the image
+                            img_url = f"http://localhost:8001/images/{img_filename}"
+                            extracted_images.append(ExtractedImage(
+                                question_number=0,
+                                image_type="diagram",
+                                description=f"Image from PDF page {i+1} (image {img_idx+1})",
+                                position=f"Page {i+1}"
+                            ))
+                            # Add image reference to text so parser can link it
+                            texts.append(f"[IMAGE: {img_url} - Diagram/Figure from page {i+1}]")
+                            print(f"  Saved image: {img_filename} ({len(image_bytes)} bytes)")
+                    except Exception as img_err:
+                        print(f"  Failed to extract image {img_idx}: {img_err}")
+                        extracted_images.append(ExtractedImage(
+                            question_number=0,
+                            image_type="diagram",
+                            description=f"Image found on PDF page {i+1} (extraction failed)",
+                            position=f"Page {i+1}"
+                        ))
             
         doc.close()
         return "\n\n".join(texts), extracted_images

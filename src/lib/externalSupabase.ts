@@ -12,10 +12,9 @@ import type { Database } from '@/integrations/supabase/types';
 
 import { supabase } from '@/integrations/supabase/client';
 
-// Hardcoded external Supabase credentials
-// These bypass Lovable Cloud's runtime injection
-export const EXTERNAL_SUPABASE_URL = "https://hwhhgprivdgdbnlqruln.supabase.co";
-export const EXTERNAL_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
+// Use environment variables if available, fallback to hardcoded values for legacy support
+export const EXTERNAL_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://hwhhgprivdgdbnlqruln.supabase.co";
+export const EXTERNAL_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGhncHJpdmRnZGJubHFydWxuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDI5NzMsImV4cCI6MjA4MjY3ODk3M30.aLofF1z4cd7fbg-bSOVMj-bRo5uyEaNYDBL7XvFhwLg";
 
 // Create the external Supabase client
 export const externalSupabase: SupabaseClient<Database> = createClient<Database>(

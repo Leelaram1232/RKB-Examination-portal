@@ -221,7 +221,7 @@ const ExamForm = () => {
           .select('*')
           .eq('id', id)
           .single();
-
+        
         if (error) {
           toast.error('Failed to fetch exam details');
           navigate('/admin/exams');
@@ -289,7 +289,11 @@ const ExamForm = () => {
       marks_per_question: data.marks_per_question,
       marks_per_wrong: data.marks_per_wrong,
       registration_start: new Date(data.registration_start).toISOString(),
-      registration_end: new Date(data.registration_end).toISOString(),
+      registration_end: (() => {
+        const d = new Date(data.registration_end);
+        d.setHours(23, 59, 59, 999);
+        return d.toISOString();
+      })(),
       eligibility_class: data.eligibility_class || null,
       eligibility_category: data.eligibility_category || null,
       eligibility_year: data.eligibility_year || null,

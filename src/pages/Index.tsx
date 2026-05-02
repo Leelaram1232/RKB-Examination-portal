@@ -42,14 +42,28 @@ const Index = () => {
       const nowIso = now.toISOString();
       const today = nowIso.split('T')[0];
       
-      // Fetch exams where registration is currently open (datetime-based)
-      const { data: regExams } = await externalSupabase
+      // Broad debug fetch: Get everything from exams table to see what RLS allows us to see
+      const { data: allExams, error: debugError } = await externalSupabase
         .from('exams')
-        .select('*')
-        .eq('is_active', true)
-        .lte('registration_start', nowIso)
-        .gte('registration_end', nowIso)
-        .order('exam_date', { ascending: true });
+        .select('*');
+
+      if (debugError) console.error('Error fetching exams:', debugError);
+
+      // Filter registration exams (only show during registration window)
+      const filteredRegExams = (allExams || []).filter(exam => {
+        const startDate = new Date(exam.registration_start);
+        const endDate = new Date(exam.registration_end);
+        
+        // Use the 'now' Date object we created at the start of fetchExams
+        const isWithinWindow = startDate <= now && endDate >= now;
+        
+        // Explicitly check is_active (handle potential null/undefined)
+        const isActive = exam.is_active === true;
+        
+        return isWithinWindow && isActive;
+      });
+      
+      setRegistrationExams(filteredRegExams);
 
       // Fetch exams where exam date is today (for live exam filtering)
       const { data: todayExams } = await externalSupabase
@@ -60,9 +74,6 @@ const Index = () => {
         .not('status', 'in', '("draft","results_published")')
         .order('exam_time', { ascending: true });
 
-      // Filter registration exams (only show during registration window)
-      if (regExams) setRegistrationExams(regExams);
-      
       // Filter live exams (only show during exam time window)
       if (todayExams) {
         const availableNow = todayExams.filter(exam => {

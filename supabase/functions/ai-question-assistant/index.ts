@@ -45,6 +45,11 @@ async function callMathpixPdf(
     conversion_formats: { md: true },
     enable_tables_fallback: true,
     include_diagram_text: true,
+    // Enable multi-language OCR including Telugu, Hindi, Tamil, etc.
+    languages: ['en', 'te', 'hi', 'ta', 'kn'],
+    // Preserve images as URLs so we can attach them to questions
+    include_smiles: false,
+    include_asciimath: false,
   };
 
   if (pageRanges) {
@@ -457,12 +462,26 @@ Deno.serve(async (req) => {
       // Keep only the most recent part of the conversation (older messages add tokens but usually don't help extraction).
       .slice(-(file_url ? 2 : 6));
 
-    const systemPrompt = `You are an expert Exam Question Assistant for JEE/NEET.
+    const systemPrompt = `You are an expert Exam Question Assistant for JEE/NEET and regional-language exams.
 Generate or extract high-quality questions based on the provided context or prompt.
+
+### LANGUAGE SUPPORT
+- You MUST support **Telugu (తెలుగు)**, Hindi, Tamil, Kannada and English.
+- If the OCR text contains Telugu or other regional language text, preserve it EXACTLY as-is in the question_text and options.
+- Do NOT translate regional language text to English unless explicitly asked.
+- Mixed-language questions (e.g. English + Telugu) are common — preserve them.
 
 ### QUESTION TYPES
 1. **MCQ**: Default. 4 options (option_a to option_d), correct_option (A/B/C/D).
 2. **FILL_BLANK**: Only if requested. No options required. Needs correct_answer.
+
+### DIAGRAM / IMAGE HANDLING
+- If the OCR text contains image references like \`![...](...) \` or \`\\includegraphics{...}\` or \`[IMAGE]\` or Mathpix image URLs, you MUST:
+  1. Set \"has_image\": true for that question.
+  2. Put the image URL (if present in OCR) in \"image_url\" field.
+  3. Put a description in \"image_description\" field.
+- Common Mathpix image URL patterns: \`https://cdn.mathpix.com/...\` — preserve these URLs exactly.
+- If a question references a figure/diagram/graph/circuit but no URL is found, still set has_image: true and describe it.
 
 ### CRITICAL OUTPUT RULES
 - **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output N question objects (never output only an intro sentence).
@@ -483,13 +502,16 @@ Generate or extract high-quality questions based on the provided context or prom
 ### JSON SCHEMA
 [
   {
-    "question_text": "text with LaTeX $...$",
+    "question_text": "text with LaTeX $...$ or Telugu తెలుగు",
     "question_type": "MCQ" | "FILL_BLANK",
     "option_a": "Text...", "option_b": "Text...", "option_c": "Text...", "option_d": "Text...",
     "correct_option": "A|B|C|D",
     "correct_answer": "Numerical/Textual answer",
     "section_name": "Section A",
-    "marks": 4
+    "marks": 4,
+    "has_image": false,
+    "image_url": null,
+    "image_description": null
   }
 ]
 
@@ -521,6 +543,7 @@ Exam ID: ${exam_id || 'Not specified'}`;
             model: 'llama-3.3-70b-versatile',
             messages,
             temperature,
+            max_tokens: 8000,
           }),
         });
 
@@ -582,19 +605,89 @@ Exam ID: ${exam_id || 'Not specified'}`;
         .trim();
 
       const tryParseJson = (jsonText: string) => {
-        // Some models return LaTeX like \sqrt, \theta inside JSON strings without escaping.
-        // That breaks strict JSON parsing ("Bad escaped character"). We repair by escaping
-        // backslashes that are not valid JSON escape starters.
-        const repairInvalidBackslashes = (s: string) =>
-          s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+        const repairLatexBackslashes = (s: string) => {
+          let out = '';
+          for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (ch !== '\\') {
+              out += ch;
+              continue;
+            }
+
+            const next = s[i + 1] ?? '';
+            if (!next) {
+              out += '\\';
+              continue;
+            }
+
+            // Valid JSON escapes: " \ / 
+            if (next === '"' || next === '\\' || next === '/') {
+              out += '\\' + next;
+              i += 1;
+              continue;
+            }
+
+            // Unicode escape \uXXXX
+            if (next === 'u') {
+              const h = s.substring(i + 2, i + 6);
+              if (h.length === 4 && /^[0-9a-fA-F]{4}$/.test(h)) {
+                out += '\\u' + h;
+                i += 5;
+                continue;
+              }
+              // Not valid unicode — likely LaTeX like \underset
+              out += '\\\\' + next;
+              i += 1;
+              continue;
+            }
+
+            // JSON single-char escapes that collide with LaTeX: b, f, n, r, t
+            if ('bfnrt'.includes(next)) {
+              const after = s[i + 2] ?? '';
+              if (after && /[A-Za-z]/.test(after)) {
+                // LaTeX: \beta, \frac, \neq, \right, \theta, \tan, etc.
+                out += '\\\\' + next;
+                i += 1;
+                continue;
+              }
+              // Real JSON escape
+              out += '\\' + next;
+              i += 1;
+              continue;
+            }
+
+            // Any other char after backslash — not a valid JSON escape (e.g. \sqrt, \pi)
+            out += '\\\\' + next;
+            i += 1;
+          }
+          return out;
+        };
 
         try {
           return JSON.parse(jsonText) as unknown;
         } catch (e1) {
           try {
-            const repaired = repairInvalidBackslashes(jsonText);
-            return JSON.parse(repaired) as unknown;
+            const repaired = repairLatexBackslashes(jsonText);
+            const fixedCommas = repaired.replace(/,(\s*[\]}])/g, '$1');
+            return JSON.parse(fixedCommas) as unknown;
           } catch (e2) {
+            // Attempt to recover truncated JSON if the LLM stopped mid-generation
+            try {
+              const repaired = repairLatexBackslashes(jsonText);
+              // Find the last complete object in the array
+              const lastBrace = repaired.lastIndexOf('}');
+              if (lastBrace > 0) {
+                const truncatedFixed = repaired.substring(0, lastBrace + 1) + ']';
+                const parsed = JSON.parse(truncatedFixed);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  console.warn('[Assistant] Recovered truncated JSON array. Length:', parsed.length);
+                  return parsed;
+                }
+              }
+            } catch (e3) {
+              // Ignore recovery error
+            }
+            
             const msg1 = e1 instanceof Error ? e1.message : String(e1);
             const msg2 = e2 instanceof Error ? e2.message : String(e2);
             console.error('[Assistant] JSON parse failed after repair:', { msg1, msg2 });
@@ -603,9 +696,9 @@ Exam ID: ${exam_id || 'Not specified'}`;
         }
       };
 
-      // 1) Preferred: <questions_json>...</questions_json>
-      const tagMatch = cleaned.match(/<questions_json>\s*([\s\S]*?)\s*<\/questions_json>/i);
-      if (tagMatch) {
+      // 1) Preferred: <questions_json>...</questions_json> (tolerate missing closing tag if truncated)
+      const tagMatch = cleaned.match(/<questions_json>\s*([\s\S]*?)(?:<\/questions_json>|$)/i);
+      if (tagMatch && tagMatch[1].trim()) {
         try {
           return tryParseJson(tagMatch[1].trim());
         } catch (e) {
@@ -613,8 +706,8 @@ Exam ID: ${exam_id || 'Not specified'}`;
         }
       }
 
-      // 2) Best-effort: first JSON array in the text
-      const arrMatch = cleaned.match(/(\[[\s\S]*\])/);
+      // 2) Best-effort: first JSON array in the text (tolerate missing closing bracket if truncated)
+      const arrMatch = cleaned.match(/(\[[\s\S]*)/);
       if (arrMatch) {
         try {
           return tryParseJson(arrMatch[1]);
@@ -812,7 +905,7 @@ ${lastUser}${ocrSnippetForForce}`;
 
     const cleanedContent =
       (Array.isArray(questions) && questions.length > 0
-        ? bestRawTextForUi.replace(/<questions_json>[\s\S]*?<\/questions_json>/i, '').trim()
+        ? bestRawTextForUi.replace(/<questions_json>[\s\S]*?(?:<\/questions_json>|$)/i, '').trim()
         : bestRawTextForUi.trim());
 
     const contentWithOcrNote =
