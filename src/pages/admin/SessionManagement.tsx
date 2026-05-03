@@ -273,20 +273,27 @@ const SessionManagement = () => {
         });
         setSessions(transformedSessions);
       }
-    } else {
-      // If internal sessions are empty, fallback to external sessions.
-      const sessionsToUse = (sessionsData || []).length
-        ? sessionsData
-        : await externalSupabase
+      // Merge logic: prefer external data if it has more info/violations
+      const internalSessionsData = sessionsData || [];
+      const externalSessionsData = await externalSupabase
             .from('exam_sessions')
-            .select(
-              'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
-            )
+            .select('id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at')
             .in('registration_id', regIds)
             .order('start_time', { ascending: false })
             .then((r) => r.data || []);
 
-      const transformedSessions = (sessionsToUse || []).map((s: any) => {
+      const sessionMap = new Map<string, any>();
+      internalSessionsData.forEach(s => sessionMap.set(s.id, s));
+      externalSessionsData.forEach(s => {
+        const existing = sessionMap.get(s.id);
+        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
+          sessionMap.set(s.id, s);
+        }
+      });
+
+      const sessionsToUse = Array.from(sessionMap.values());
+
+      const transformedSessions = sessionsToUse.map((s: any) => {
         const reg = regMap.get(s.registration_id);
         const profile = reg?.student_id ? profileMap.get(reg.student_id) : null;
         return {
@@ -309,6 +316,22 @@ const SessionManagement = () => {
 
   useEffect(() => {
     fetchData();
+
+    // Subscribe to real-time updates for violations
+    const channel = supabase
+      .channel('session-mgmt-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
+      .subscribe();
+
+    const externalChannel = externalSupabase
+      .channel('session-mgmt-realtime-ext')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      externalSupabase.removeChannel(externalChannel);
+    };
   }, [examId, navigate]);
 
   const handleAllowContinue = async () => {
@@ -688,123 +711,121 @@ const SessionManagement = () => {
                 <MessageSquare className="w-4 h-4" />
                 Send Msg ({selectedSessions.length})
               </Button>
-              <Button variant="outline" onClick={fetchData} className="flex-1 sm:flex-none">
-                <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
             </div>
           </CardHeader>
           <CardContent className="p-0 sm:p-6">
             {sessions.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-12 text-muted-foreground">
                 No exam sessions found
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[50px]">
-                        <Checkbox 
-                          checked={selectedSessions.length === activeSessions.length && activeSessions.length > 0}
-                          onCheckedChange={handleSelectAllActive}
-                          aria-label="Select all active"
-                        />
-                      </TableHead>
-                      <TableHead>Student</TableHead>
-                      <TableHead>Registration #</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Violations</TableHead>
-                      <TableHead>Started</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sessions.map((session) => (
-                      <TableRow key={session.id}>
-                        <TableCell>
+              <>
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[50px]">
                           <Checkbox 
-                            checked={selectedSessions.includes(session.id)}
-                            onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
-                            disabled={session.is_completed}
-                            aria-label={`Select ${session.registration.student.full_name}`}
+                            checked={selectedSessions.length === activeSessions.length && activeSessions.length > 0}
+                            onCheckedChange={handleSelectAllActive}
+                            aria-label="Select all active"
                           />
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{session.registration.student.full_name}</p>
-                            <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{session.registration.registration_number}</TableCell>
-                        <TableCell>{getStatusBadge(session)}</TableCell>
-                        <TableCell>
-                          <Badge variant={session.violation_count > 0 ? "destructive" : "secondary"}>
-                            {session.violation_count || 0}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {session.start_time ? format(new Date(session.start_time), 'PPp') : 'Not started'}
-                        </TableCell>
-                        <TableCell className="text-right space-x-2">
-                          {!session.is_completed && session.start_time && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setIndividualTargetId(session.id);
-                                setMessageTarget('individual');
-                                setShowMessageDialog(true);
-                              }}
-                              title="Send Message to Student"
-                            >
-                              <MessageSquare className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {session.violation_count > 0 && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setSelectedSession(session);
-                                setShowViolationsDialog(true);
-                              }}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {!session.is_completed && session.start_time && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => {
-                                setSelectedSession(session);
-                                setShowEndExamDialog(true);
-                              }}
-                            >
-                              <StopCircle className="w-4 h-4 mr-1" />
-                              End Exam
-                            </Button>
-                          )}
-                          {session.is_completed && (
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={() => {
-                                setSelectedSession(session);
-                                setShowAllowContinueDialog(true);
-                              }}
-                            >
-                              <Play className="w-4 h-4 mr-1" />
-                              Allow Continue
-                            </Button>
-                          )}
-                        </TableCell>
+                        </TableHead>
+                        <TableHead>Student</TableHead>
+                        <TableHead>Registration #</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Violations</TableHead>
+                        <TableHead>Started</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {sessions.map((session) => (
+                        <TableRow key={session.id}>
+                          <TableCell>
+                            <Checkbox 
+                              checked={selectedSessions.includes(session.id)}
+                              onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
+                              disabled={session.is_completed}
+                              aria-label={`Select ${session.registration.student.full_name}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{session.registration.student.full_name}</p>
+                              <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{session.registration.registration_number}</TableCell>
+                          <TableCell>{getStatusBadge(session)}</TableCell>
+                          <TableCell>
+                            <Badge variant={session.violation_count > 0 ? "destructive" : "secondary"}>
+                              {session.violation_count || 0}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {session.start_time ? format(new Date(session.start_time), 'PPp') : 'Not started'}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <SessionActions session={session} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Mobile Card View */}
+                <div className="md:hidden space-y-4">
+                  {sessions.map((session) => (
+                    <Card key={session.id} className={cn(
+                      "overflow-hidden border-l-4",
+                      session.is_completed ? "border-l-green-500" : 
+                      session.start_time ? "border-l-blue-500" : "border-l-gray-300"
+                    )}>
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-start gap-3">
+                            <Checkbox 
+                              checked={selectedSessions.includes(session.id)}
+                              onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
+                              disabled={session.is_completed}
+                              className="mt-1"
+                            />
+                            <div>
+                              <p className="font-bold">{session.registration.student.full_name}</p>
+                              <p className="text-xs text-muted-foreground">{session.registration.registration_number}</p>
+                            </div>
+                          </div>
+                          {getStatusBadge(session)}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+                          <div>
+                            <p className="text-muted-foreground text-xs uppercase font-semibold">Violations</p>
+                            <Badge variant={session.violation_count > 0 ? "destructive" : "secondary"} className="mt-1">
+                              {session.violation_count || 0} / {exam?.max_violations || 3}
+                            </Badge>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs uppercase font-semibold">Started At</p>
+                            <p className="mt-1 text-xs">
+                              {session.start_time ? format(new Date(session.start_time), 'MMM d, h:mm a') : 'Not started'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 pt-3 border-t border-dashed">
+                          <SessionActions session={session} isMobile />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

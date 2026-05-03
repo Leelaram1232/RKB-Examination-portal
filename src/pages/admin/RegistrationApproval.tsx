@@ -38,6 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 // Interface for registration with profile data joined
 interface Registration {

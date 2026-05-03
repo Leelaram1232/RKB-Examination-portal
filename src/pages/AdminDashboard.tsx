@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase } from '@/lib/externalSupabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 
 interface DashboardStats {
@@ -33,44 +34,44 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     const fetchStats = async () => {
-      // Fetch exam counts
-      const { count: totalExams } = await supabase
-        .from('exams')
-        .select('*', { count: 'exact', head: true });
+      // Fetch stats from both projects
+      const fetchFromClient = async (client: any) => {
+        const [
+          { count: totalExams },
+          { count: activeExams },
+          { count: totalRegs },
+          { count: pendingAppr },
+          { count: approvedRegs },
+          { count: totalStuds }
+        ] = await Promise.all([
+          client.from('exams').select('*', { count: 'exact', head: true }),
+          client.from('exams').select('*', { count: 'exact', head: true }).eq('is_active', true),
+          client.from('registrations').select('*', { count: 'exact', head: true }),
+          client.from('registrations').select('*', { count: 'exact', head: true }).eq('approval_status', 'pending'),
+          client.from('registrations').select('*', { count: 'exact', head: true }).eq('approval_status', 'approved'),
+          client.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'student'),
+        ]);
 
-      const { count: activeExams } = await supabase
-        .from('exams')
-        .select('*', { count: 'exact', head: true })
-        .eq('is_active', true);
+        return {
+          totalExams: totalExams || 0,
+          activeExams: activeExams || 0,
+          totalRegistrations: totalRegs || 0,
+          pendingApprovals: pendingAppr || 0,
+          approvedRegistrations: approvedRegs || 0,
+          totalStudents: totalStuds || 0,
+        };
+      };
 
-      // Fetch registration counts
-      const { count: totalRegistrations } = await supabase
-        .from('registrations')
-        .select('*', { count: 'exact', head: true });
-
-      const { count: pendingApprovals } = await supabase
-        .from('registrations')
-        .select('*', { count: 'exact', head: true })
-        .eq('approval_status', 'pending');
-
-      const { count: approvedRegistrations } = await supabase
-        .from('registrations')
-        .select('*', { count: 'exact', head: true })
-        .eq('approval_status', 'approved');
-
-      // Fetch student count
-      const { count: totalStudents } = await supabase
-        .from('user_roles')
-        .select('*', { count: 'exact', head: true })
-        .eq('role', 'student');
+      const internalStats = await fetchFromClient(supabase);
+      const externalStats = await fetchFromClient(externalSupabase);
 
       setStats({
-        totalExams: totalExams || 0,
-        activeExams: activeExams || 0,
-        totalRegistrations: totalRegistrations || 0,
-        pendingApprovals: pendingApprovals || 0,
-        approvedRegistrations: approvedRegistrations || 0,
-        totalStudents: totalStudents || 0,
+        totalExams: Math.max(internalStats.totalExams, externalStats.totalExams),
+        activeExams: Math.max(internalStats.activeExams, externalStats.activeExams),
+        totalRegistrations: Math.max(internalStats.totalRegistrations, externalStats.totalRegistrations),
+        pendingApprovals: Math.max(internalStats.pendingApprovals, externalStats.pendingApprovals),
+        approvedRegistrations: Math.max(internalStats.approvedRegistrations, externalStats.approvedRegistrations),
+        totalStudents: Math.max(internalStats.totalStudents, externalStats.totalStudents),
       });
 
       setIsLoading(false);

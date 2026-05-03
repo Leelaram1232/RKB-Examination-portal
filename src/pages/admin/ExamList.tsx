@@ -27,6 +27,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 interface Exam {
   id: string;
@@ -137,96 +138,176 @@ const ExamList = () => {
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>All Examinations</CardTitle>
-              <CardDescription>View and manage all examination records</CardDescription>
-            </CardHeader>
-            <CardContent className="p-0 sm:p-6">
-              <div className="overflow-x-auto">
-                <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Exam Details</TableHead>
-                    <TableHead>Date & Time</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Marks</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {exams.map((exam) => (
-                    <TableRow key={exam.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{exam.exam_name}</p>
-                          <p className="text-sm text-muted-foreground">{exam.exam_code}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-sm">{format(new Date(exam.exam_date), 'MMM dd, yyyy')}</p>
-                            <p className="text-xs text-muted-foreground">{exam.exam_time}</p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-4 h-4 text-muted-foreground" />
-                          <span>{exam.duration_minutes} min</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{exam.total_marks}</TableCell>
-                      <TableCell>
-                        <Badge className={statusColors[exam.status] || 'bg-muted'}>
-                          {formatStatus(exam.status)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" asChild>
-                            <Link to={`/admin/exams/${exam.id}`}>
-                              <Eye className="w-4 h-4" />
-                            </Link>
-                          </Button>
-                          <Button variant="ghost" size="icon" asChild>
-                            <Link to={`/admin/exams/${exam.id}/edit`}>
-                              <Edit className="w-4 h-4" />
-                            </Link>
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="text-destructive">
-                                <Trash2 className="w-4 h-4" />
+          <>
+            {/* Desktop View */}
+            <Card className="hidden md:block">
+              <CardHeader>
+                <CardTitle>All Examinations</CardTitle>
+                <CardDescription>View and manage all examination records</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0 sm:p-6">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Exam Details</TableHead>
+                        <TableHead>Date & Time</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Marks</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {exams.map((exam) => (
+                        <TableRow key={exam.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{exam.exam_name}</p>
+                              <code className="text-xs text-muted-foreground bg-muted px-1 rounded">{exam.exam_code}</code>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-4 h-4 text-muted-foreground" />
+                              <div>
+                                <p className="text-sm">{format(new Date(exam.exam_date), 'MMM dd, yyyy')}</p>
+                                <p className="text-xs text-muted-foreground">{exam.exam_time}</p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-4 h-4 text-muted-foreground" />
+                              <span>{exam.duration_minutes} min</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>{exam.total_marks}</TableCell>
+                          <TableCell>
+                            <Badge className={cn("capitalize", statusColors[exam.status] || 'bg-muted')}>
+                              {formatStatus(exam.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" asChild>
+                                <Link to={`/admin/exams/${exam.id}/sessions`}>
+                                  <Users className="w-4 h-4 mr-1.5" />
+                                  Sessions
+                                </Link>
                               </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete Examination</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Are you sure you want to delete "{exam.exam_name}"? This action cannot be undone.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(exam.id)}>
-                                  Delete
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              </div>
-            </CardContent>
-          </Card>
+                              <Button variant="ghost" size="icon" asChild>
+                                <Link to={`/admin/exams/${exam.id}/edit`}>
+                                  <Edit className="w-4 h-4" />
+                                </Link>
+                              </Button>
+                              <Button variant="ghost" size="icon" asChild>
+                                <Link to={`/admin/exams/${exam.id}`}>
+                                  <Eye className="w-4 h-4" />
+                                </Link>
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="text-destructive">
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Examination</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete "{exam.exam_name}"? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleDelete(exam.id)}>
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Mobile View */}
+            <div className="md:hidden space-y-4">
+              {exams.map((exam) => (
+                <Card key={exam.id} className="overflow-hidden border-l-4 border-l-primary">
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <h3 className="font-bold text-lg">{exam.exam_name}</h3>
+                        <code className="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                          {exam.exam_code}
+                        </code>
+                      </div>
+                      <Badge className={cn("capitalize", statusColors[exam.status] || 'bg-secondary')}>
+                        {formatStatus(exam.status)}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-muted-foreground" />
+                        <span>{format(new Date(exam.exam_date), 'MMM dd')}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-muted-foreground" />
+                        <span>{exam.exam_time}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-3 border-t border-dashed">
+                      <Button variant="outline" size="sm" className="flex-1" asChild>
+                        <Link to={`/admin/exams/${exam.id}/sessions`}>
+                          <Users className="w-4 h-4 mr-1.5" />
+                          Sessions
+                        </Link>
+                      </Button>
+                      <div className="flex gap-2 w-full">
+                        <Button variant="secondary" size="sm" className="flex-1" asChild>
+                          <Link to={`/admin/exams/${exam.id}/edit`}>
+                            <Edit className="w-4 h-4 mr-1.5" />
+                            Edit
+                          </Link>
+                        </Button>
+                        <Button variant="ghost" size="icon" asChild title="View Details">
+                          <Link to={`/admin/exams/${exam.id}`}>
+                            <Eye className="w-4 h-4" />
+                          </Link>
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="text-destructive">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Exam</AlertDialogTitle>
+                              <AlertDialogDescription>Delete "{exam.exam_name}"?</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDelete(exam.id)}>Delete</AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </AdminLayout>

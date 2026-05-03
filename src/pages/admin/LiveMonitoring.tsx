@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { externalSupabase } from '@/lib/externalSupabase';
 import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
 import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { cn } from '@/lib/utils';
 
 interface ActiveSession {
   id: string;
@@ -401,10 +402,15 @@ const LiveMonitoring = () => {
     const internalSessions = await fetchActiveSessions(supabase);
     const externalSessions = await fetchActiveSessions(externalSupabase as any);
 
-    // Deduplicate by session id; prefer internal version if both exist.
+    // Deduplicate by session id; prefer version with more info/violations.
     const byId = new Map<string, ActiveSession>();
     for (const s of internalSessions) byId.set(s.id, s);
-    for (const s of externalSessions) if (!byId.has(s.id)) byId.set(s.id, s);
+    for (const s of externalSessions) {
+      const existing = byId.get(s.id);
+      if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
+        byId.set(s.id, s);
+      }
+    }
 
     const merged = Array.from(byId.values()).sort((a, b) => {
       const at = a.start_time ? new Date(a.start_time).getTime() : 0;
@@ -490,24 +496,35 @@ const LiveMonitoring = () => {
       .channel('exam-sessions-realtime')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'exam_sessions'
-        },
+        { event: '*', schema: 'public', table: 'exam_sessions' },
         (payload) => {
-          console.log('Realtime update:', payload);
-          // Refetch to get complete data with joins
+          console.log('Internal Realtime update:', payload);
           fetchData();
         }
       )
       .subscribe((status) => {
-        console.log('Subscription status:', status);
-        setIsConnected(status === 'SUBSCRIBED');
+        console.log('Internal subscription status:', status);
+        if (status === 'SUBSCRIBED') setIsConnected(true);
+      });
+
+    const externalChannel = externalSupabase
+      .channel('exam-sessions-realtime-ext')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'exam_sessions' },
+        (payload) => {
+          console.log('External Realtime update:', payload);
+          fetchData();
+        }
+      )
+      .subscribe((status) => {
+        console.log('External subscription status:', status);
+        if (status === 'SUBSCRIBED') setIsConnected(true);
       });
 
     return () => {
       supabase.removeChannel(channel);
+      externalSupabase.removeChannel(externalChannel);
     };
   }, [examId]);
 
@@ -700,13 +717,14 @@ const LiveMonitoring = () => {
             {sessions.map((session) => (
               <Card 
                 key={session.id} 
-                className={`relative overflow-hidden ${
+                className={cn(
+                  "relative overflow-hidden transition-all duration-300 hover:shadow-lg",
                   session.violation_count >= (exam?.max_violations || 3) 
-                    ? 'border-red-500 border-2' 
+                    ? "border-2 border-destructive animate-pulse shadow-destructive/20" 
                     : session.violation_count > 0 
-                      ? 'border-amber-500' 
-                      : ''
-                }`}
+                    ? "border-2 border-amber-500 shadow-amber-500/10" 
+                    : "border-border hover:border-primary/50"
+                )}
               >
                 {/* Camera Preview (LiveKit video) */}
                 <div className="relative aspect-video bg-muted">
@@ -717,6 +735,14 @@ const LiveMonitoring = () => {
                     playsInline
                     className="w-full h-full object-cover bg-black"
                   />
+                  
+                  {/* Violation Overlay */}
+                  {session.violation_count > 0 && (
+                    <div className="absolute top-2 right-2 flex items-center gap-1 bg-destructive text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg animate-bounce z-10">
+                      <AlertTriangle className="w-3 h-3" />
+                      {session.violation_count}
+                    </div>
+                  )}
                   
                   {/* Live indicator - use camera_heartbeat_at when available, otherwise fall back to snapshot info */}
                   {(() => {
@@ -774,8 +800,16 @@ const LiveMonitoring = () => {
                   <div className="flex items-center justify-between text-sm">
                     {/* Violations */}
                     <div className="flex items-center gap-2">
-                      <AlertTriangle className={`w-4 h-4 ${session.violation_count > 0 ? 'text-amber-500' : 'text-muted-foreground'}`} />
-                      <span className={session.violation_count > 0 ? 'font-medium text-amber-600' : ''}>
+                      <AlertTriangle className={cn(
+                        "w-4 h-4",
+                        session.violation_count >= (exam?.max_violations || 3) ? "text-destructive" :
+                        session.violation_count > 0 ? "text-amber-500" : "text-muted-foreground"
+                      )} />
+                      <span className={cn(
+                        "font-bold",
+                        session.violation_count >= (exam?.max_violations || 3) ? "text-destructive" :
+                        session.violation_count > 0 ? "text-amber-600" : "text-muted-foreground"
+                      )}>
                         {session.violation_count}/{exam?.max_violations || 3}
                       </span>
                     </div>
