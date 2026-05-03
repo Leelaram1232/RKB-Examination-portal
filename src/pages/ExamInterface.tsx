@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare, Eye, RefreshCw, User, Clock, Shield, CheckSquare, Check, Cloud, Loader2, WifiOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';

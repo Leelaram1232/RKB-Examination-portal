@@ -1,4 +1,4 @@
-import { User, FileText, AlertTriangle, CloudCheck, Loader2, WifiOff } from 'lucide-react';
+import { User, FileText, AlertTriangle, Cloud, Check, Loader2, WifiOff } from 'lucide-react';
 import { ExamTimer } from './ExamTimer';
 import { Badge } from '@/components/ui/badge';
 
@@ -52,7 +52,7 @@ export function ExamHeader({
             <div className="flex items-center gap-2">
               {syncStatus === 'synced' && (
                 <span className="flex items-center gap-1 text-[10px] bg-green-500/20 px-2 py-0.5 rounded-full text-green-300 border border-green-500/30">
-                  <CloudCheck className="h-3 w-3" />
+                  <Check className="h-3 w-3" />
                   All answers saved
                 </span>
               )}
@@ -65,7 +65,7 @@ export function ExamHeader({
               {syncStatus === 'offline' && (
                 <span className="flex items-center gap-1 text-[10px] bg-amber-500/20 px-2 py-0.5 rounded-full text-amber-300 border border-amber-500/30">
                   <WifiOff className="h-3 w-3" />
-                  Offline - Saving to backup
+                  Offline - Saving locally
                 </span>
               )}
               {syncStatus === 'error' && (
