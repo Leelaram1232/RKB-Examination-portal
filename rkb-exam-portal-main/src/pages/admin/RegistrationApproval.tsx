@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw, Mail, Bell } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -256,17 +256,9 @@ const RegistrationApproval = () => {
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-<<<<<<< HEAD
-          const emailPromise = invokeExternalFunction('finalize-registration', {
+          const emailPromise = invokeExternalFunction('send-notification-email', {
             type: 'registration_approved',
             registration_id: selectedRegistration.id,
-=======
-          const emailPromise = lovableSupabase.functions.invoke('finalize-registration', {
-            body: {
-              type: 'registration_approved',
-              registration_id: selectedRegistration.id,
-            },
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
           });
 
           const timeoutPromise = new Promise<{ data: unknown; error: Error }>((resolve) =>
@@ -334,7 +326,7 @@ const RegistrationApproval = () => {
         if (!shouldNotify) return { regId, success: true, skipped: true };
         
         try {
-          const { data, error } = await invokeExternalFunction('finalize-registration', {
+          const { data, error } = await invokeExternalFunction('send-notification-email', {
             type: 'registration_approved',
             registration_id: regId,
           });
@@ -404,43 +396,6 @@ const RegistrationApproval = () => {
     } else {
       toast.success(`Password regenerated: ${newPassword}`);
       fetchRegistrations();
-    }
-  };
-
-  const resendApprovalEmail = async (registration: Registration) => {
-    setIsProcessing(true);
-    toast.info(`Sending approval email to ${registration.full_name}...`);
-    try {
-      const { error } = await invokeExternalFunction('finalize-registration', {
-        type: 'registration_approved',
-        registration_id: registration.id,
-        force_resend: true
-      });
-      if (error) throw error;
-      toast.success('Approval email sent successfully!');
-    } catch (err) {
-      console.error('Failed to send email:', err);
-      toast.error('Failed to send email. Check logs.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const sendReminderEmail = async (registration: Registration) => {
-    setIsProcessing(true);
-    toast.info(`Sending exam reminder to ${registration.full_name}...`);
-    try {
-      const { error } = await invokeExternalFunction('finalize-registration', {
-        type: 'exam_reminder',
-        registration_id: registration.id,
-      });
-      if (error) throw error;
-      toast.success('Exam reminder sent successfully!');
-    } catch (err) {
-      console.error('Failed to send reminder:', err);
-      toast.error('Failed to send reminder. Check logs.');
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -759,34 +714,6 @@ const RegistrationApproval = () => {
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>Regenerate Password</TooltipContent>
-                              </Tooltip>
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => resendApprovalEmail(reg)}
-                                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                  >
-                                    <Mail className="w-4 h-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Resend Approval Email</TooltipContent>
-                              </Tooltip>
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => sendReminderEmail(reg)}
-                                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                                  >
-                                    <Bell className="w-4 h-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Send Exam Reminder</TooltipContent>
                               </Tooltip>
                             </>
                           )}

@@ -1,0 +1,17 @@
+﻿src/components/admin/QuestionUpload.tsx(2,158): error TS2307: Cannot find module 'lucide-react' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(3,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(4,75): error TS2307: Cannot find module '@/components/ui/card' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(5,23): error TS2307: Cannot find module '@/components/ui/input' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(6,23): error TS2307: Cannot find module '@/components/ui/label' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(7,26): error TS2307: Cannot find module '@/components/ui/textarea' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(8,26): error TS2307: Cannot find module '@/components/ui/checkbox' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(9,23): error TS2307: Cannot find module '@/components/ui/badge' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(16,8): error TS2307: Cannot find module '@/components/ui/select' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(24,8): error TS2307: Cannot find module '@/components/ui/table' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(32,8): error TS2307: Cannot find module '@/components/ui/dialog' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(38,8): error TS2307: Cannot find module '@/components/ui/tooltip' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(39,26): error TS2307: Cannot find module '@/integrations/supabase/client' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(40,23): error TS2307: Cannot find module 'sonner' or its corresponding type declarations.
+src/components/admin/QuestionUpload.tsx(41,26): error TS2307: Cannot find module '@/components/ui/progress' or its corresponding type declarations.
+src/components/ui/badge.tsx(2,40): error TS2307: Cannot find module 'class-variance-authority' or its corresponding type declarations.
+src/components/ui/badge.tsx(4,20): error TS2307: Cannot find module '@/lib/utils' or its corresponding type declarations.
