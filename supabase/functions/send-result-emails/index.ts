@@ -128,62 +128,7 @@ Deno.serve(async (req) => {
       if (!profile || !profile.email) continue;
 
       const subject = `Results Published: ${exam.exam_name}`;
-      const htmlBody = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px; }
-            .header { background: #f8f9fa; padding: 20px; text-align: center; border-bottom: 3px solid #1a73e8; border-radius: 8px 8px 0 0; }
-            .content { padding: 20px; }
-            .footer { font-size: 12px; color: #777; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }
-            .details-box { background: #f1f8ff; padding: 15px; border-radius: 6px; margin: 20px 0; border: 1px solid #cce5ff; }
-            .btn { display: inline-block; padding: 12px 24px; background: #1a73e8; color: white !important; text-decoration: none; border-radius: 4px; font-weight: bold; margin-top: 15px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h2 style="margin:0; color: #1a73e8;">Results Published</h2>
-            </div>
-            <div class="content">
-              <p>Dear <strong>${profile.full_name}</strong>,</p>
-              
-              <p>The results for <strong>${exam.exam_name}</strong> have been successfully <strong>published by the exam administration</strong>.</p>
-              
-              <div class="details-box">
-                <h3 style="margin-top:0; font-size: 16px;">Student Details:</h3>
-                <ul style="list-style: none; padding: 0; margin: 0;">
-                  <li><strong>Name:</strong> ${profile.full_name}</li>
-                  <li><strong>Student ID:</strong> ${reg.registration_number || 'N/A'}</li>
-                </ul>
-                
-                <h3 style="margin-top:15px; font-size: 16px;">Exam Information:</h3>
-                <ul style="list-style: none; padding: 0; margin: 0;">
-                  <li><strong>Exam Name:</strong> ${exam.exam_name}</li>
-                  <li><strong>Result Status:</strong> Available</li>
-                </ul>
-              </div>
-              
-              <p>You can now log in to your account to view your score and detailed performance.</p>
-              
-              <p>Please review your results at your earliest convenience.</p>
-              
-              <p>Wishing you continued success.</p>
-              
-              <p>Regards,<br/>
-              <strong>${institutionName}</strong><br/>
-              Support Contact: ${supportContact}</p>
-            </div>
-            <div class="footer">
-              <p>This is an automated message from RKB Education Management System. Please do not reply to this email.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `;
+      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.6;color:#333}.container{max-width:600px;margin:0 auto;padding:20px;border:1px solid #eee;border-radius:8px}.header{background:#f8f9fa;padding:20px;text-align:center;border-bottom:3px solid #1a73e8;border-radius:8px 8px 0 0}.content{padding:20px}.footer{font-size:12px;color:#777;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.details-box{background:#f1f8ff;padding:15px;border-radius:6px;margin:20px 0;border:1px solid #cce5ff}</style></head><body><div class="container"><div class="header"><h2 style="margin:0;color:#1a73e8">Results Published</h2></div><div class="content"><p>Dear <strong>${profile.full_name}</strong>,</p><p>The results for <strong>${exam.exam_name}</strong> have been successfully <strong>published by the exam administration</strong>.</p><div class="details-box"><h3 style="margin-top:0;font-size:16px">Student Details:</h3><ul style="list-style:none;padding:0;margin:0"><li><strong>Name:</strong> ${profile.full_name}</li><li><strong>Student ID:</strong> ${reg.registration_number || 'N/A'}</li></ul><h3 style="margin-top:15px;font-size:16px">Exam Information:</h3><ul style="list-style:none;padding:0;margin:0"><li><strong>Exam Name:</strong> ${exam.exam_name}</li><li><strong>Result Status:</strong> Available</li></ul></div><p>You can now log in to your account to view your score and detailed performance.</p><p>Please review your results at your earliest convenience.</p><p>Wishing you continued success.</p><p>Regards,<br/><strong>${institutionName}</strong><br/>Support Contact: ${supportContact}</p></div><div class="footer"><p>This is an automated message from RKB Education Management System. Please do not reply to this email.</p></div></div></body></html>`.trim();
 
       const success = await sendSmtpEmail(profile.email, subject, htmlBody);
       if (success) sentCount++;
