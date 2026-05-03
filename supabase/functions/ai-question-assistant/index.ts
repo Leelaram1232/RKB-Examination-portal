@@ -312,6 +312,34 @@ async function callGeminiRaw(
 
   let resp = await doReq(preferJson);
   let txt = await resp.text();
+  
+  // Model Fallback Logic: if 2.0-flash is overloaded/out-of-quota, try 1.5-flash
+  const isQuotaError = resp.status === 429 || (resp.status === 400 && txt.includes('quota'));
+  const is20Flash = model.includes('2.0-flash');
+  
+  if (!resp.ok && isQuotaError && is20Flash) {
+    console.warn(`[Gemini] ${model} quota exceeded. Retrying with gemini-1.5-flash fallback...`);
+    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const doFallbackReq = (jsonMode: boolean) => {
+      const generationConfig: Record<string, unknown> = {
+        temperature: 0.15,
+        maxOutputTokens: maxOutputTokens ?? 8192,
+      };
+      if (jsonMode) generationConfig.responseMimeType = 'application/json';
+      return fetch(fallbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemInstruction }] },
+          contents: [{ role: 'user', parts: [{ text: userText }] }],
+          generationConfig,
+        }),
+      });
+    };
+    resp = await doFallbackReq(preferJson);
+    txt = await resp.text();
+  }
+
   if (!resp.ok && preferJson) {
     resp = await doReq(false);
     txt = await resp.text();
@@ -1296,34 +1324,72 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
         const sys = messages.find((m) => m.role === 'system')?.content || '';
         const rest = messages.filter((m) => m.role !== 'system');
         const convo = rest.map((m) => `${m.role}: ${m.content}`).join('\n\n');
-        return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        try {
+          return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        } catch (e) {
+          if (groqKey && (e instanceof Error && (e.message.includes('429') || e.message.includes('quota')))) {
+            console.warn('[callLlmFlex] Gemini failed, falling back to Groq...');
+            const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+            return g.choices?.[0]?.message?.content ?? '';
+          }
+          throw e;
+        }
       }
       if (llm_mode === 'both') {
-        const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
-        const draft = g.choices?.[0]?.message?.content ?? '';
+        let draft = '';
+        try {
+          const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+          draft = g.choices?.[0]?.message?.content ?? '';
+        } catch (e) {
+          console.warn('[callLlmFlex] Groq draft failed, trying Gemini direct...', e);
+          const sys = messages.find((m) => m.role === 'system')?.content || '';
+          const rest = messages.filter((m) => m.role !== 'system');
+          const convo = rest.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+          return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        }
+
         const sys = messages.find((m) => m.role === 'system')?.content || '';
-        const merged = await callGeminiRaw(
-          geminiKey,
-          sys,
-          `Polish this assistant output (fix <questions_json> / JSON only if needed; keep meaning):\n${draft.slice(0, 80000)}`,
-          false,
-          8192
-        );
-        return merged.trim() ? merged : draft;
+        try {
+          const merged = await callGeminiRaw(
+            geminiKey,
+            sys,
+            `Polish this assistant output (fix <questions_json> / JSON only if needed; keep meaning):\n${draft.slice(0, 80000)}`,
+            false,
+            8192
+          );
+          return merged.trim() ? merged : draft;
+        } catch (e) {
+          console.warn('[callLlmFlex] Gemini refinement failed, returning raw Groq draft.', e);
+          return draft;
+        }
       }
       const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
       return g.choices?.[0]?.message?.content ?? '';
     };
 
     let assistantContent = '';
+    const tryGemini = async () => {
+      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+      return await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
+    };
+
     if (llm_mode === 'groq') {
       console.log('[Assistant] LLM mode: Groq (llama-3.3-70b-versatile)');
       const groqData = await callGroq(groqMessages, 0.2);
       assistantContent = groqData.choices?.[0]?.message?.content ?? '';
     } else if (llm_mode === 'gemini') {
       console.log('[Assistant] LLM mode: Gemini');
-      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
-      assistantContent = await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
+      try {
+        assistantContent = await tryGemini();
+      } catch (e) {
+        if (groqKey && (e instanceof Error && (e.message.includes('429') || e.message.includes('quota')))) {
+          console.warn('[Assistant] Gemini Quota Exceeded. EMERGENCY FALLBACK to Groq...');
+          const groqData = await callGroq(groqMessages, 0.2);
+          assistantContent = `[NOTICE: Gemini Quota Exceeded. Using Llama-3 Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
+        } else {
+          throw e;
+        }
+      }
     } else {
       console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
       const groqData = await callGroq(groqMessages, 0.2);
@@ -1338,8 +1404,14 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
 
 DRAFT:
 ${draft.slice(0, 120000)}`;
-      const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
-      assistantContent = merged.trim() ? merged : draft;
+      
+      try {
+        const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
+        assistantContent = merged.trim() ? merged : draft;
+      } catch (e) {
+        console.warn('[Assistant] Gemini refinement failed (Quota/API). Using raw Groq draft.', e);
+        assistantContent = `[NOTICE: Gemini Refinement Unavailable. Using Draft]\n\n` + draft;
+      }
     }
     console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
     // Track the best "raw" LLM text we have (may include <questions_json>).
