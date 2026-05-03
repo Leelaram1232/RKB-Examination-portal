@@ -1,4 +1,4 @@
-import { User, FileText, AlertTriangle } from 'lucide-react';
+import { User, FileText, AlertTriangle, CloudCheck, Loader2, WifiOff } from 'lucide-react';
 import { ExamTimer } from './ExamTimer';
 import { Badge } from '@/components/ui/badge';
 
@@ -9,6 +9,8 @@ interface ExamHeaderProps {
   endTime: Date;
   onTimeUp: () => void;
   violationCount?: number;
+  syncStatus?: 'synced' | 'syncing' | 'offline' | 'error';
+  unsyncedCount?: number;
 }
 
 export function ExamHeader({
@@ -18,6 +20,8 @@ export function ExamHeader({
   endTime,
   onTimeUp,
   violationCount = 0,
+  syncStatus = 'synced',
+  unsyncedCount = 0,
 }: ExamHeaderProps) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-primary text-primary-foreground shadow-lg">
@@ -32,15 +36,45 @@ export function ExamHeader({
             </div>
           </div>
 
-          {/* Center: Timer and Violations */}
-          <div className="flex items-center gap-4">
-            <ExamTimer endTime={endTime} onTimeUp={onTimeUp} />
-            {violationCount > 0 && (
-              <Badge variant="destructive" className="gap-1 animate-pulse">
-                <AlertTriangle className="h-3 w-3" />
-                Warnings: {violationCount}/3
-              </Badge>
-            )}
+          {/* Center: Timer, Violations, and Sync Status */}
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-4">
+              <ExamTimer endTime={endTime} onTimeUp={onTimeUp} />
+              {violationCount > 0 && (
+                <Badge variant="destructive" className="gap-1 animate-pulse">
+                  <AlertTriangle className="h-3 w-3" />
+                  Warnings: {violationCount}/3
+                </Badge>
+              )}
+            </div>
+            
+            {/* Sync Status Indicator */}
+            <div className="flex items-center gap-2">
+              {syncStatus === 'synced' && (
+                <span className="flex items-center gap-1 text-[10px] bg-green-500/20 px-2 py-0.5 rounded-full text-green-300 border border-green-500/30">
+                  <CloudCheck className="h-3 w-3" />
+                  All answers saved
+                </span>
+              )}
+              {syncStatus === 'syncing' && (
+                <span className="flex items-center gap-1 text-[10px] bg-blue-500/20 px-2 py-0.5 rounded-full text-blue-300 border border-blue-500/30 animate-pulse">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Syncing {unsyncedCount} answer(s)...
+                </span>
+              )}
+              {syncStatus === 'offline' && (
+                <span className="flex items-center gap-1 text-[10px] bg-amber-500/20 px-2 py-0.5 rounded-full text-amber-300 border border-amber-500/30">
+                  <WifiOff className="h-3 w-3" />
+                  Offline - Saving to backup
+                </span>
+              )}
+              {syncStatus === 'error' && (
+                <span className="flex items-center gap-1 text-[10px] bg-red-500/20 px-2 py-0.5 rounded-full text-red-300 border border-red-500/30">
+                  <AlertTriangle className="h-3 w-3" />
+                  Sync Error - Retrying...
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Right: Student Info */}
