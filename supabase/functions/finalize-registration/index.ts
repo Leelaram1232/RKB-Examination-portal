@@ -384,6 +384,29 @@ Deno.serve(async (req) => {
 </html>`;
     } else if (type === 'registration_approved') {
       subject = `🎉 Registration Approved - ${exam.exam_name}`;
+      
+      // Calculate reporting time (15 mins before exam_time if possible)
+      let reportingTime = exam.exam_time;
+      if (exam.exam_time && typeof exam.exam_time === 'string' && exam.exam_time.includes(':')) {
+        try {
+          const [hoursStr, minutesStr] = exam.exam_time.split(':');
+          let hours = parseInt(hoursStr);
+          let minutes = parseInt(minutesStr);
+          
+          let date = new Date();
+          date.setHours(hours, minutes, 0);
+          date.setMinutes(date.getMinutes() - 15);
+          
+          let ampm = date.getHours() >= 12 ? 'PM' : 'AM';
+          let h = date.getHours() % 12;
+          h = h ? h : 12;
+          let m = date.getMinutes().toString().padStart(2, '0');
+          reportingTime = `${h}:${m} ${ampm}`;
+        } catch(e) {
+          reportingTime = '15 minutes before exam';
+        }
+      }
+
       htmlBody = `
 <!DOCTYPE html>
 <html>
@@ -399,8 +422,7 @@ Deno.serve(async (req) => {
           <!-- Header -->
           <tr>
             <td style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 30px; text-align: center;">
-              <div style="font-size: 48px; margin-bottom: 10px;">🎉</div>
-              <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Registration Approved!</h1>
+              <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Registration Approved</h1>
             </td>
           </tr>
           <!-- Content -->
@@ -410,66 +432,80 @@ Deno.serve(async (req) => {
                 Dear <strong>${registration.full_name}</strong>,
               </p>
               <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 25px 0;">
-                Congratulations! Your registration for the examination has been <strong style="color: #4CAF50;">approved</strong>. Please find your exam details and login credentials below.
+                This is to inform you that your application for the <strong>${exam.exam_name}</strong> has been <strong style="color: #4CAF50;">successfully approved</strong>.
               </p>
               
-              <!-- Exam Details Box -->
-              <table width="100%" cellpadding="15" cellspacing="0" style="background-color: #f8f9fa; border-radius: 8px; margin-bottom: 20px;">
-                <tr>
-                  <td>
-                    <h3 style="margin: 0 0 15px 0; color: #333; font-size: 16px; border-bottom: 2px solid #2196F3; padding-bottom: 8px;">📋 Exam Details</h3>
-                    <table width="100%" cellpadding="5" cellspacing="0">
-                      <tr><td style="color: #666; width: 40%;">Exam Name:</td><td style="color: #333; font-weight: 500;">${exam.exam_name}</td></tr>
-                      <tr><td style="color: #666;">Registration No:</td><td style="color: #333; font-weight: 600; font-family: monospace; font-size: 15px;">${registration.registration_number}</td></tr>
-                      <tr><td style="color: #666;">Exam Date:</td><td style="color: #333; font-weight: 500;">${examDateFormatted}</td></tr>
-                      <tr><td style="color: #666;">Exam Time:</td><td style="color: #333; font-weight: 500;">${exam.exam_time}</td></tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 15px 0;">
+                Please review your exam details carefully:
+              </p>
+
+              <!-- Student Info -->
+              <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">Student Information:</h3>
+              <ul style="margin: 0 0 20px 0; padding-left: 20px; color: #555; line-height: 1.8;">
+                <li><strong>Name:</strong> ${registration.full_name}</li>
+                <li><strong>Student ID:</strong> ${registration.registration_number}</li>
+                <li><strong>Course/Batch:</strong> ${exam.exam_name}</li>
+              </ul>
+
+              <!-- Exam Schedule -->
+              <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">Exam Schedule:</h3>
+              <ul style="margin: 0 0 20px 0; padding-left: 20px; color: #555; line-height: 1.8;">
+                <li><strong>Date:</strong> ${examDateFormatted}</li>
+                <li><strong>Reporting Time:</strong> ${reportingTime}</li>
+                <li><strong>Exam Start Time:</strong> ${exam.exam_time}</li>
+                <li><strong>Duration:</strong> As per exam rules</li>
+                <li><strong>Platform:</strong> Online Proctored Examination System</li>
+              </ul>
               
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 20px 0;">
+                You are required to log in <strong style="color: #E65100;">before the reporting time</strong>. The exam window will begin strictly as scheduled, and <strong style="color: #E65100;">late access may result in disqualification from the exam</strong>.
+              </p>
+
               <!-- Credentials Box -->
-              <table width="100%" cellpadding="20" cellspacing="0" style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); border-radius: 8px; margin-bottom: 25px; border: 2px dashed #2196F3;">
+              <table width="100%" cellpadding="15" cellspacing="0" style="background: #E3F2FD; border-radius: 8px; margin-bottom: 25px; border: 1px solid #90CAF9;">
                 <tr>
-                  <td align="center">
-                    <h3 style="margin: 0 0 15px 0; color: #1565C0; font-size: 18px;">🔐 Your Login Credentials</h3>
-                    <table cellpadding="8" cellspacing="0">
+                  <td>
+                    <h3 style="margin: 0 0 15px 0; color: #1565C0; font-size: 16px; text-align: center;">🔐 Your Login Credentials</h3>
+                    <table width="100%" cellpadding="5" cellspacing="0">
                       <tr>
-                        <td style="color: #555; text-align: right; padding-right: 10px;">Registration No:</td>
-                        <td style="background: #fff; padding: 8px 15px; border-radius: 4px; font-family: monospace; font-weight: 700; font-size: 16px; color: #333;">${registration.registration_number}</td>
+                        <td style="color: #555; text-align: right; width: 50%; padding-right: 10px;">Login ID:</td>
+                        <td style="font-family: monospace; font-weight: 700; font-size: 16px; color: #333;">${registration.registration_number}</td>
                       </tr>
                       <tr>
-                        <td style="color: #555; text-align: right; padding-right: 10px;">Password:</td>
-                        <td style="background: #fff; padding: 8px 15px; border-radius: 4px; font-family: monospace; font-weight: 700; font-size: 16px; color: #333;">${registration.exam_password || 'Contact Admin'}</td>
+                        <td style="color: #555; text-align: right; width: 50%; padding-right: 10px;">Password:</td>
+                        <td style="font-family: monospace; font-weight: 700; font-size: 16px; color: #333;">${registration.exam_password || 'Contact Admin'}</td>
                       </tr>
                     </table>
                   </td>
                 </tr>
               </table>
-              
+
               <!-- Instructions -->
-              <table width="100%" cellpadding="15" cellspacing="0" style="background-color: #FFF3E0; border-radius: 8px; border-left: 4px solid #FF9800;">
-                <tr>
-                  <td>
-                    <h4 style="margin: 0 0 10px 0; color: #E65100;">⚠️ Important Instructions</h4>
-                    <ul style="margin: 0; padding-left: 20px; color: #555; line-height: 1.8;">
-                      <li>Keep your credentials <strong>confidential</strong></li>
-                      <li>Login <strong>15 minutes before</strong> the exam starts</li>
-                      <li>Ensure stable <strong>internet connection</strong></li>
-                      <li>Use a <strong>laptop/desktop with webcam</strong></li>
-                      <li>Sit in a <strong>well-lit, quiet room</strong></li>
-                    </ul>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <!-- Footer -->
-          <tr>
-            <td style="background-color: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #eee;">
-              <p style="margin: 0 0 5px 0; font-size: 13px; color: #666;">For any queries, please contact the examination authority.</p>
-              <p style="margin: 0; font-size: 12px; color: #999;">This is an automated message. Please do not reply.</p>
-              <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">© ${new Date().getFullYear()} RKB Education Management System</p>
+              <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">Important Instructions:</h3>
+              <ul style="margin: 0 0 20px 0; padding-left: 20px; color: #555; line-height: 1.8;">
+                <li>Keep your camera and microphone enabled throughout the exam.</li>
+                <li>Ensure you are seated in a quiet, well-lit environment.</li>
+                <li>Do not use any unauthorized devices or materials.</li>
+                <li>Follow all proctoring guidelines during the exam.</li>
+              </ul>
+
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 15px 0;">
+                This exam is an important assessment—please treat it with full seriousness and responsibility.
+              </p>
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 25px 0;">
+                We recommend checking your device, internet connection, and login credentials in advance to avoid disruptions.
+              </p>
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 25px 0;">
+                Wishing you success in your examination.
+              </p>
+
+              <p style="font-size: 15px; color: #333; line-height: 1.6; margin: 0;">
+                Regards,<br/>
+                <strong>Leela Ram Samavedam</strong><br/>
+                Exam Coordinator<br/>
+                RKB Teja Coaching Center<br/>
+                Support Contact: 9640140444
+              </p>
             </td>
           </tr>
         </table>
