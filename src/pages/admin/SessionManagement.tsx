@@ -711,6 +711,8 @@ const SessionManagement = () => {
                 <MessageSquare className="w-4 h-4" />
                 Send Msg ({selectedSessions.length})
               </Button>
+              <Button variant="outline" onClick={fetchData} className="flex-1 sm:flex-none">
+                <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
             </div>
