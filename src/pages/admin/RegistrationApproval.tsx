@@ -575,38 +575,41 @@ const RegistrationApproval = () => {
         {selectedIds.size > 0 && (
           <Card className="bg-primary/5 border-primary/20">
             <CardContent className="py-4">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <span className="font-medium text-sm">
                   {selectedIds.size} registration(s) selected
                 </span>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                   <Button
                     variant="outline"
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => setSelectedIds(new Set())}
                   >
-                    Clear Selection
+                    Clear
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => {
                       setBulkActionType('reject');
                       setShowBulkActionDialog(true);
                     }}
                   >
                     <XCircle className="w-4 h-4 mr-2" />
-                    Reject Selected
+                    Reject
                   </Button>
                   <Button
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => {
                       setBulkActionType('approve');
                       setShowBulkActionDialog(true);
                     }}
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Approve Selected
+                    Approve
                   </Button>
                 </div>
               </div>
@@ -622,7 +625,7 @@ const RegistrationApproval = () => {
               {filteredRegistrations.length} registration{filteredRegistrations.length !== 1 ? 's' : ''} found
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0 sm:p-6">
             {filteredRegistrations.length === 0 ? (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
@@ -636,16 +639,17 @@ const RegistrationApproval = () => {
                 </p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={pendingFiltered.length > 0 && selectedIds.size === pendingFiltered.length}
-                        onCheckedChange={toggleSelectAll}
-                        disabled={pendingFiltered.length === 0}
-                      />
-                    </TableHead>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={pendingFiltered.length > 0 && selectedIds.size === pendingFiltered.length}
+                          onCheckedChange={toggleSelectAll}
+                          disabled={pendingFiltered.length === 0}
+                        />
+                      </TableHead>
                     <TableHead>Student</TableHead>
                     <TableHead>Exam</TableHead>
                     <TableHead>Reg. Number</TableHead>
@@ -705,7 +709,7 @@ const RegistrationApproval = () => {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex justify-end items-center gap-1 min-w-[120px]">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -819,8 +823,9 @@ const RegistrationApproval = () => {
                   ))}
                 </TableBody>
               </Table>
-            )}
-          </CardContent>
+            </div>
+          )}
+        </CardContent>
         </Card>
 
         {/* Details Dialog */}

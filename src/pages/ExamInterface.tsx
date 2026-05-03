@@ -343,6 +343,21 @@ export default function ExamInterface() {
           }
         }
       )
+      .on(
+        'broadcast',
+        { event: 'force_end' },
+        (payload) => {
+          console.log('[Real-time] Force end received:', payload);
+          if (payload.payload?.sessionId === session.session_id) {
+            toast({
+              title: 'Exam Terminated',
+              description: 'Your exam session has been ended by the administrator.',
+              variant: 'destructive',
+            });
+            handleSubmit(false, true);
+          }
+        }
+      )
       .subscribe();
 
     return () => {
@@ -572,7 +587,7 @@ export default function ExamInterface() {
 
   // Submit exam
   const handleSubmit = useCallback(
-    async (isAutoSubmit = false) => {
+    async (isAutoSubmit = false, isTerminatedByAdmin = false) => {
       if (!session) return;
       
       if (currentQuestion?.question_type === 'NUMERICAL') {
@@ -586,6 +601,7 @@ export default function ExamInterface() {
         const { data: result, error: invocationError } = await invokeExternalFunction<any>('submit-exam', {
           session_id: session.session_id,
           is_auto_submit: isAutoSubmit,
+          is_terminated_by_admin: isTerminatedByAdmin,
         });
 
         if (invocationError) {
@@ -611,7 +627,7 @@ export default function ExamInterface() {
             .from('exam_sessions')
             .update({
               is_completed: true,
-              exam_status: 'finally_submitted',
+              exam_status: isTerminatedByAdmin ? 'terminated_by_admin' : 'finally_submitted',
               submitted_at: new Date().toISOString()
             })
             .eq('id', session.session_id);

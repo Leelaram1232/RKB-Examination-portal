@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { AdminLayout } from '@/components/admin/AdminLayout';
 
 interface DashboardStats {
   totalExams: number;
@@ -85,46 +86,11 @@ const AdminDashboard = () => {
       </div>
     );
   }
-
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Admin Header */}
-      <header className="official-header shadow-lg">
-        <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 bg-primary-foreground/20 rounded-lg">
-                <Shield className="w-6 h-6 text-primary-foreground" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-primary-foreground tracking-tight">
-                  Admin Dashboard
-                </h1>
-                <p className="text-xs text-primary-foreground/80">
-                  RKB Examination Management
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-primary-foreground/80">
-                {user?.email}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={signOut}
-                className="bg-transparent border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
-              >
-                Sign Out
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="container mx-auto px-4 py-8">
+    return (
+    <AdminLayout title="Admin Dashboard" description="Overview of your examination system">
+      <div className="space-y-8">
         {/* Welcome Section */}
-        <div className="mb-8">
+        <div>
           <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-2">
             Welcome, Administrator
           </h2>
@@ -134,10 +100,10 @@ const AdminDashboard = () => {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Button asChild className="h-auto py-4" variant="default">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <Button asChild className="h-auto py-4 justify-start px-6" variant="default">
             <Link to="/admin/exams/new" className="flex items-center gap-3">
-              <PlusCircle className="w-5 h-5" />
+              <PlusCircle className="w-5 h-5 shrink-0" />
               <div className="text-left">
                 <p className="font-semibold">Create New Exam</p>
                 <p className="text-xs opacity-80">Add a new examination</p>
@@ -145,9 +111,9 @@ const AdminDashboard = () => {
             </Link>
           </Button>
 
-          <Button asChild className="h-auto py-4" variant="secondary">
+          <Button asChild className="h-auto py-4 justify-start px-6" variant="secondary">
             <Link to="/admin/registrations" className="flex items-center gap-3">
-              <Users className="w-5 h-5" />
+              <Users className="w-5 h-5 shrink-0" />
               <div className="text-left">
                 <p className="font-semibold">Review Registrations</p>
                 <p className="text-xs opacity-80">{stats.pendingApprovals} pending approvals</p>
@@ -155,9 +121,9 @@ const AdminDashboard = () => {
             </Link>
           </Button>
 
-          <Button asChild className="h-auto py-4" variant="outline">
+          <Button asChild className="h-auto py-4 justify-start px-6" variant="outline">
             <Link to="/admin/exams" className="flex items-center gap-3">
-              <BookOpen className="w-5 h-5" />
+              <BookOpen className="w-5 h-5 shrink-0" />
               <div className="text-left">
                 <p className="font-semibold">Manage Exams</p>
                 <p className="text-xs opacity-80">View all examinations</p>
@@ -167,7 +133,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -203,10 +169,10 @@ const AdminDashboard = () => {
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 Pending Approvals
               </CardTitle>
-              <Clock className="w-4 h-4 text-warning" />
+              <Clock className="w-4 h-4 text-yellow-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-warning">{stats.pendingApprovals}</div>
+              <div className="text-3xl font-bold text-yellow-600">{stats.pendingApprovals}</div>
               <p className="text-xs text-muted-foreground mt-1">
                 Require review
               </p>
@@ -218,10 +184,10 @@ const AdminDashboard = () => {
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 Approved Registrations
               </CardTitle>
-              <CheckCircle className="w-4 h-4 text-success" />
+              <CheckCircle className="w-4 h-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-success">{stats.approvedRegistrations}</div>
+              <div className="text-3xl font-bold text-green-600">{stats.approvedRegistrations}</div>
               <p className="text-xs text-muted-foreground mt-1">
                 Ready for examination
               </p>
@@ -248,10 +214,10 @@ const AdminDashboard = () => {
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 System Status
               </CardTitle>
-              <BarChart3 className="w-4 h-4 text-success" />
+              <BarChart3 className="w-4 h-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-success">Active</div>
+              <div className="text-3xl font-bold text-green-600">Active</div>
               <p className="text-xs text-muted-foreground mt-1">
                 All systems operational
               </p>
@@ -273,12 +239,12 @@ const AdminDashboard = () => {
               >
                 <div className="flex items-center gap-3">
                   <BookOpen className="w-5 h-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Examination Management</p>
-                    <p className="text-sm text-muted-foreground">Create, edit, and manage exams</p>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">Examination Management</p>
+                    <p className="text-sm text-muted-foreground truncate">Create, edit, and manage exams</p>
                   </div>
                 </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </Link>
 
               <Link
@@ -287,12 +253,12 @@ const AdminDashboard = () => {
               >
                 <div className="flex items-center gap-3">
                   <Users className="w-5 h-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Registration Approvals</p>
-                    <p className="text-sm text-muted-foreground">Review and approve applications</p>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">Registration Approvals</p>
+                    <p className="text-sm text-muted-foreground truncate">Review and approve applications</p>
                   </div>
                 </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </Link>
 
               <Link
@@ -301,12 +267,12 @@ const AdminDashboard = () => {
               >
                 <div className="flex items-center gap-3">
                   <FileText className="w-5 h-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Question Bank</p>
-                    <p className="text-sm text-muted-foreground">Manage exam questions</p>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">Question Bank</p>
+                    <p className="text-sm text-muted-foreground truncate">Manage exam questions</p>
                   </div>
                 </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </Link>
 
               <Link
@@ -315,18 +281,18 @@ const AdminDashboard = () => {
               >
                 <div className="flex items-center gap-3">
                   <BarChart3 className="w-5 h-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Results & Analytics</p>
-                    <p className="text-sm text-muted-foreground">View performance reports</p>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">Results & Analytics</p>
+                    <p className="text-sm text-muted-foreground truncate">View performance reports</p>
                   </div>
                 </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </Link>
             </div>
           </CardContent>
         </Card>
       </div>
-    </div>
+    </AdminLayout>
   );
 };
 

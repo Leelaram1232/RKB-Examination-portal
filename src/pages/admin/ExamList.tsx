@@ -103,13 +103,13 @@ const ExamList = () => {
     <AdminLayout title="Examinations" description="Manage all examinations">
       <div className="space-y-6">
         {/* Actions */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <p className="text-muted-foreground">
               {exams.length} examination{exams.length !== 1 ? 's' : ''} found
             </p>
           </div>
-          <Button asChild>
+          <Button asChild className="w-full sm:w-auto">
             <Link to="/admin/exams/new">
               <Plus className="w-4 h-4 mr-2" />
               Create New Exam
@@ -142,8 +142,9 @@ const ExamList = () => {
               <CardTitle>All Examinations</CardTitle>
               <CardDescription>View and manage all examination records</CardDescription>
             </CardHeader>
-            <CardContent>
-              <Table>
+            <CardContent className="p-0 sm:p-6">
+              <div className="overflow-x-auto">
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Exam Details</TableHead>
@@ -223,6 +224,7 @@ const ExamList = () => {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}

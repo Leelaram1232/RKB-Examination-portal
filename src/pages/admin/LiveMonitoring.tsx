@@ -603,26 +603,26 @@ const LiveMonitoring = () => {
     >
       <div className="space-y-6">
         {/* Header Actions */}
-        <div className="flex justify-between items-center">
-          <Button variant="ghost" onClick={() => navigate(`/admin/exams/${examId}`)}>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <Button variant="ghost" onClick={() => navigate(`/admin/exams/${examId}`)} className="pl-0">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Exam
           </Button>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
+            <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-full">
               {isConnected ? (
                 <>
                   <Wifi className="w-4 h-4 text-green-500" />
-                  <span className="text-sm text-green-600">Live</span>
+                  <span className="text-sm font-medium text-green-600">Live Connection</span>
                 </>
               ) : (
                 <>
                   <WifiOff className="w-4 h-4 text-red-500" />
-                  <span className="text-sm text-red-600">Disconnected</span>
+                  <span className="text-sm font-medium text-red-600">Disconnected</span>
                 </>
               )}
             </div>
-            <Button variant="outline" onClick={fetchData}>
+            <Button variant="outline" onClick={fetchData} className="flex-1 sm:flex-none">
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
             </Button>
@@ -630,55 +630,55 @@ const LiveMonitoring = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="p-4 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Active Sessions</p>
-                  <p className="text-2xl font-bold text-blue-600">{sessions.length}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Active</p>
+                  <p className="text-xl sm:text-2xl font-bold text-blue-600">{sessions.length}</p>
                 </div>
-                <User className="w-8 h-8 text-blue-500" />
+                <User className="w-6 h-6 sm:w-8 h-8 text-blue-500" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="p-4 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">With Violations</p>
-                  <p className="text-2xl font-bold text-amber-600">
+                  <p className="text-xs sm:text-sm text-muted-foreground">Alerts</p>
+                  <p className="text-xl sm:text-2xl font-bold text-amber-600">
                     {sessions.filter(s => s.violation_count > 0).length}
                   </p>
                 </div>
-                <AlertTriangle className="w-8 h-8 text-amber-500" />
+                <AlertTriangle className="w-6 h-6 sm:w-8 h-8 text-amber-500" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="p-4 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Camera Active</p>
-                  <p className="text-2xl font-bold text-green-600">
+                  <p className="text-xs sm:text-sm text-muted-foreground">Video</p>
+                  <p className="text-xl sm:text-2xl font-bold text-green-600">
                     {sessions.filter(s => s.latest_snapshot_url).length}
                   </p>
                 </div>
-                <Video className="w-8 h-8 text-green-500" />
+                <Video className="w-6 h-6 sm:w-8 h-8 text-green-500" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="p-4 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Max Violations</p>
-                  <p className="text-2xl font-bold">{exam?.max_violations || 3}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Max Viol.</p>
+                  <p className="text-xl sm:text-2xl font-bold">{exam?.max_violations || 3}</p>
                 </div>
-                <Shield className="w-8 h-8 text-primary" />
+                <Shield className="w-6 h-6 sm:w-8 h-8 text-primary" />
               </div>
             </CardContent>
           </Card>

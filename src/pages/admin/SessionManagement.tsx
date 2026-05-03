@@ -61,6 +61,7 @@ interface ExamSession {
   is_auto_submitted: boolean;
   violation_count: number;
   proctoring_violations: Json;
+  exam_status: string | null;
   submitted_at: string | null;
   registration: {
     registration_number: string;
@@ -166,7 +167,7 @@ const SessionManagement = () => {
       const { data: externalSessionsData } = await externalSupabase
         .from('exam_sessions')
         .select(
-          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, submitted_at'
+          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
         )
         .order('start_time', { ascending: false })
         .limit(200);
@@ -236,7 +237,7 @@ const SessionManagement = () => {
     const { data: sessionsData, error: sessionsError } = await sessionsClient
       .from('exam_sessions')
       .select(
-        'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, submitted_at'
+        'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
       )
       .in('registration_id', regIds)
       .order('start_time', { ascending: false });
@@ -247,7 +248,7 @@ const SessionManagement = () => {
       const { data: extSessionsData, error: extSessionsError } = await (usingExternalRegistrations ? supabase : (externalSupabase as any))
         .from('exam_sessions')
         .select(
-          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, submitted_at'
+          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
         )
         .in('registration_id', regIds)
         .order('start_time', { ascending: false });
@@ -279,7 +280,7 @@ const SessionManagement = () => {
         : await externalSupabase
             .from('exam_sessions')
             .select(
-              'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, submitted_at'
+              'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
             )
             .in('registration_id', regIds)
             .order('start_time', { ascending: false })
@@ -378,7 +379,8 @@ const SessionManagement = () => {
       // Call the edge function to properly grade and end the exam, instead of just updating the table
       const { data, error } = await invokeExternalFunction<any>('submit-exam', {
         session_id: selectedSession.id,
-        is_auto_submit: true, // admin forcing end
+        is_auto_submit: false, 
+        is_terminated_by_admin: true,
       });
 
       if (error) {
@@ -387,6 +389,20 @@ const SessionManagement = () => {
 
       if (!data?.success) {
         throw new Error(data?.error || 'Submission failed');
+      }
+
+      // Signal the student's browser to submit and close immediately
+      try {
+        const channel = supabase.channel(`exam_messages_${examId}`);
+        await channel.send({
+          type: 'broadcast',
+          event: 'force_end',
+          payload: {
+            sessionId: selectedSession.id
+          }
+        });
+      } catch (broadcastErr) {
+        console.warn('Failed to send force_end broadcast:', broadcastErr);
       }
 
       toast.success('Exam has been ended for this student and results calculated');
@@ -487,6 +503,9 @@ const SessionManagement = () => {
   };
 
   const getStatusBadge = (session: ExamSession) => {
+    if (session.exam_status === 'terminated_by_admin') {
+      return <Badge variant="destructive">Terminated by Admin</Badge>;
+    }
     if (session.is_auto_submitted) {
       return <Badge variant="destructive">Auto-Submitted (Violations)</Badge>;
     }
@@ -588,158 +607,35 @@ const SessionManagement = () => {
                 You can allow them to continue or keep the exam ended.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Student</TableHead>
-                    <TableHead>Registration #</TableHead>
-                    <TableHead>Violations</TableHead>
-                    <TableHead>Auto-Submitted At</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {autoSubmittedSessions.map((session) => (
-                    <TableRow key={session.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{session.registration.student.full_name}</p>
-                          <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{session.registration.registration_number}</TableCell>
-                      <TableCell>
-                        <Badge variant="destructive">{session.violation_count || 0}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {session.submitted_at ? format(new Date(session.submitted_at), 'PPp') : 'N/A'}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedSession(session);
-                            setShowViolationsDialog(true);
-                          }}
-                        >
-                          <Eye className="w-4 h-4 mr-1" />
-                          View
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => {
-                            setSelectedSession(session);
-                            setShowAllowContinueDialog(true);
-                          }}
-                        >
-                          <Play className="w-4 h-4 mr-1" />
-                          Allow Continue
-                        </Button>
-                      </TableCell>
+            <CardContent className="p-0 sm:p-6">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Student</TableHead>
+                      <TableHead>Registration #</TableHead>
+                      <TableHead>Violations</TableHead>
+                      <TableHead>Auto-Submitted At</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* All Sessions */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>All Exam Sessions</CardTitle>
-              <CardDescription>View and manage all student exam sessions</CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setMessageTarget('selected');
-                  setShowMessageDialog(true);
-                }}
-                disabled={selectedSessions.length === 0}
-                className="gap-2"
-              >
-                <MessageSquare className="w-4 h-4" />
-                Send Msg ({selectedSessions.length})
-              </Button>
-              <Button variant="outline" onClick={fetchData}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {sessions.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No exam sessions found
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[50px]">
-                      <Checkbox 
-                        checked={selectedSessions.length === activeSessions.length && activeSessions.length > 0}
-                        onCheckedChange={handleSelectAllActive}
-                        aria-label="Select all active"
-                      />
-                    </TableHead>
-                    <TableHead>Student</TableHead>
-                    <TableHead>Registration #</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Violations</TableHead>
-                    <TableHead>Started</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sessions.map((session) => (
-                    <TableRow key={session.id}>
-                      <TableCell>
-                        <Checkbox 
-                          checked={selectedSessions.includes(session.id)}
-                          onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
-                          disabled={session.is_completed}
-                          aria-label={`Select ${session.registration.student.full_name}`}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{session.registration.student.full_name}</p>
-                          <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{session.registration.registration_number}</TableCell>
-                      <TableCell>{getStatusBadge(session)}</TableCell>
-                      <TableCell>
-                        <Badge variant={session.violation_count > 0 ? "destructive" : "secondary"}>
-                          {session.violation_count || 0}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {session.start_time ? format(new Date(session.start_time), 'PPp') : 'Not started'}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        {!session.is_completed && session.start_time && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setIndividualTargetId(session.id);
-                              setMessageTarget('individual');
-                              setShowMessageDialog(true);
-                            }}
-                            title="Send Message to Student"
-                          >
-                            <MessageSquare className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {session.violation_count > 0 && (
+                  </TableHeader>
+                  <TableBody>
+                    {autoSubmittedSessions.map((session) => (
+                      <TableRow key={session.id}>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{session.registration.student.full_name}</p>
+                            <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{session.registration.registration_number}</TableCell>
+                        <TableCell>
+                          <Badge variant="destructive">{session.violation_count || 0}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {session.submitted_at ? format(new Date(session.submitted_at), 'PPp') : 'N/A'}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
                           <Button
                             size="sm"
                             variant="outline"
@@ -748,23 +644,9 @@ const SessionManagement = () => {
                               setShowViolationsDialog(true);
                             }}
                           >
-                            <Eye className="w-4 h-4" />
+                            <Eye className="w-4 h-4 mr-1" />
+                            View
                           </Button>
-                        )}
-                        {!session.is_completed && session.start_time && (
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => {
-                              setSelectedSession(session);
-                              setShowEndExamDialog(true);
-                            }}
-                          >
-                            <StopCircle className="w-4 h-4 mr-1" />
-                            End Exam
-                          </Button>
-                        )}
-                        {session.is_completed && (
                           <Button
                             size="sm"
                             variant="default"
@@ -776,12 +658,153 @@ const SessionManagement = () => {
                             <Play className="w-4 h-4 mr-1" />
                             Allow Continue
                           </Button>
-                        )}
-                      </TableCell>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* All Sessions */}
+        <Card>
+          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <CardTitle>All Exam Sessions</CardTitle>
+              <CardDescription>View and manage all student exam sessions</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setMessageTarget('selected');
+                  setShowMessageDialog(true);
+                }}
+                disabled={selectedSessions.length === 0}
+                className="gap-2 flex-1 sm:flex-none"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Send Msg ({selectedSessions.length})
+              </Button>
+              <Button variant="outline" onClick={fetchData} className="flex-1 sm:flex-none">
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0 sm:p-6">
+            {sessions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No exam sessions found
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[50px]">
+                        <Checkbox 
+                          checked={selectedSessions.length === activeSessions.length && activeSessions.length > 0}
+                          onCheckedChange={handleSelectAllActive}
+                          aria-label="Select all active"
+                        />
+                      </TableHead>
+                      <TableHead>Student</TableHead>
+                      <TableHead>Registration #</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Violations</TableHead>
+                      <TableHead>Started</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {sessions.map((session) => (
+                      <TableRow key={session.id}>
+                        <TableCell>
+                          <Checkbox 
+                            checked={selectedSessions.includes(session.id)}
+                            onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
+                            disabled={session.is_completed}
+                            aria-label={`Select ${session.registration.student.full_name}`}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{session.registration.student.full_name}</p>
+                            <p className="text-sm text-muted-foreground">{session.registration.student.email}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{session.registration.registration_number}</TableCell>
+                        <TableCell>{getStatusBadge(session)}</TableCell>
+                        <TableCell>
+                          <Badge variant={session.violation_count > 0 ? "destructive" : "secondary"}>
+                            {session.violation_count || 0}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {session.start_time ? format(new Date(session.start_time), 'PPp') : 'Not started'}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          {!session.is_completed && session.start_time && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setIndividualTargetId(session.id);
+                                setMessageTarget('individual');
+                                setShowMessageDialog(true);
+                              }}
+                              title="Send Message to Student"
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {session.violation_count > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedSession(session);
+                                setShowViolationsDialog(true);
+                              }}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {!session.is_completed && session.start_time && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                setSelectedSession(session);
+                                setShowEndExamDialog(true);
+                              }}
+                            >
+                              <StopCircle className="w-4 h-4 mr-1" />
+                              End Exam
+                            </Button>
+                          )}
+                          {session.is_completed && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => {
+                                setSelectedSession(session);
+                                setShowAllowContinueDialog(true);
+                              }}
+                            >
+                              <Play className="w-4 h-4 mr-1" />
+                              Allow Continue
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -487,11 +487,18 @@ async function applyGeminiRefinementsToQuestions(
     };
   });
 
-  const system = `You validate exam questions after another model wrote them.
-For each item with is_fill false (MCQ): ensure correct_option is A,B,C, or D; ensure that option's text is non-empty; verify the marked letter is the correct answer for the stem (solve mentally, be concise).
-For is_fill true: ensure correct_answer is present and meaningful.
+  const system = `You are an elite exam validator. You solve every question mentally to verify the answer.
+CRITICAL RULES:
+1. For MCQ questions (is_fill: false):
+   - Solve the question yourself.
+   - Ensure 'correct_option' (A, B, C, or D) is the correct answer.
+   - If 'correct_option' is wrong but the correct answer IS in another option, update 'correct_option'.
+   - If the correct answer is NOT present in any option, YOU MUST change the text of one of the wrong options to the correct answer.
+   - Ensure all option texts are distinct and meaningful (no placeholders like "Option A").
+2. For FILL_BLANK (is_fill: true):
+   - Ensure 'correct_answer' is present and mathematically/factually correct.
 Return ONLY JSON: { "fixes": [ { "i": number, "correct_option"?: "A"|"B"|"C"|"D", "option_a"?: string, "option_b"?: string, "option_c"?: string, "option_d"?: string, "correct_answer"?: string, "note"?: string } ] }
-Include ONLY questions that need changes. If none, return {"fixes":[]}.`;
+Include ONLY questions that need changes. If all are perfect, return {"fixes":[]}.`;
 
   const parsed = (await callGeminiJson(apiKey, system, JSON.stringify(slim))) as {
     fixes?: Array<Record<string, unknown>>;
@@ -1201,9 +1208,9 @@ Generate or extract high-quality questions based on the provided context or prom
 
 ### CRITICAL OUTPUT RULES
 - **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output EXACTLY N question objects. Do not output more or fewer than requested.
-- **DOUBLE CHECK ANSWERS**: You MUST solve the generated question internally and verify that the correct answer is actually present in one of the 4 options (option_a, option_b, option_c, option_d).
-- **ADMIN MCQ STANDARD**: Each MCQ must have four suitable, distinct options (no placeholders) and exactly ONE defensible correct answer; correct_option must be A/B/C/D matching that option only.
-- **CORRECT OPTION MATCH**: Ensure the 'correct_option' field correctly points to the letter (A, B, C, or D) that holds the right answer.
+- **RIGOROUS QUALITY CHECK**: You MUST solve the generated question mentally or step-by-step internally to verify that the correct answer is actually present in exactly one of the 4 options (option_a, option_b, option_c, option_d).
+- **ADMIN MCQ STANDARD**: Each MCQ must have four suitable, distinct options (no placeholders like "None of the above" unless appropriate) and exactly ONE defensible correct answer; correct_option must be A/B/C/D matching that option only.
+- **CORRECT OPTION MATCH**: Ensure the 'correct_option' field correctly points to the letter (A, B, C, or D) that holds the right answer. Do not mislabel the correct option.
 - **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
 - **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
 - **MCQ IS DEFAULT**: Unless "numerical" or "fill in blank" is requested, always stick to MCQ.
@@ -1321,11 +1328,13 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
       console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
       const groqData = await callGroq(groqMessages, 0.2);
       const draft = groqData.choices?.[0]?.message?.content ?? '';
-      const refineUser = `Another model (Groq) produced the draft below. Improve it:
-(1) Preserve intent, language, and any OCR-derived text.
-(2) For every MCQ inside <questions_json>, ensure four suitable distinct options, exactly one correct answer, and correct_option is A/B/C/D matching that option.
-(3) Fix broken JSON or obvious LaTeX JSON issues.
-(4) Output ONLY the complete final assistant message (same format as the draft), including <questions_json>...</questions_json> when the draft had questions.
+      const refineUser = `Another model (Groq) produced the draft below. Perform a rigorous quality check and improve it:
+(1) Preserve intent, language (Telugu/Hindi etc.), and all OCR-derived technical details.
+(2) QUALITY CHECK: Solve each question mentally. If the correct answer is missing from the options, YOU MUST edit an option to include the correct answer.
+(3) ENSURE correct_option (A/B/C/D) points to the actual correct answer.
+(4) Remove any hallucinated or placeholder text.
+(5) Fix broken JSON or LaTeX backslash issues ($...$ is fine, but avoid invalid escape characters in JSON strings).
+(6) Output ONLY the complete final assistant message including <questions_json>...</questions_json>.
 
 DRAFT:
 ${draft.slice(0, 120000)}`;
@@ -1645,7 +1654,7 @@ ${lastUser}${ocrSnippetForForce}`;
     let geminiPostUsed = false;
     if (
       geminiKey &&
-      llm_mode === 'groq' &&
+      (llm_mode === 'groq' || llm_mode === 'both') &&
       Array.isArray(exportQuestions) &&
       exportQuestions.length > 0 &&
       action !== 'review'
