@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { cn } from '@/lib/utils';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
@@ -485,6 +486,83 @@ const SessionManagement = () => {
       return <Badge className="bg-blue-100 text-blue-800">In Progress</Badge>;
     }
     return <Badge variant="secondary">Not Started</Badge>;
+  };
+  
+  const SessionActions = ({ session, isMobile = false }: { session: ExamSession, isMobile?: boolean }) => {
+    return (
+      <div className={isMobile ? "flex flex-wrap gap-2 w-full" : "flex justify-end gap-2"}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setSelectedSession(session);
+            setShowViolationsDialog(true);
+          }}
+          className={isMobile ? "flex-1 text-xs px-2" : ""}
+        >
+          <Eye className="w-4 h-4 mr-1" />
+          View
+        </Button>
+        
+        {!session.is_completed && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setIndividualTargetId(session.id);
+              setMessageTarget('individual');
+              setShowMessageDialog(true);
+            }}
+            className={isMobile ? "flex-1 text-xs px-2" : ""}
+          >
+            <MessageSquare className="w-4 h-4 mr-1" />
+            Msg
+          </Button>
+        )}
+
+        {session.is_auto_submitted && (
+          <Button
+            size="sm"
+            variant="default"
+            onClick={() => {
+              setSelectedSession(session);
+              setShowAllowContinueDialog(true);
+            }}
+            className={isMobile ? "flex-1 text-xs px-2" : ""}
+          >
+            <Play className="w-4 h-4 mr-1" />
+            Resume
+          </Button>
+        )}
+
+        {!session.is_completed && !session.is_auto_submitted && (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => {
+              setSelectedSession(session);
+              setShowEndExamDialog(true);
+            }}
+            className={isMobile ? "flex-1 text-xs px-2" : ""}
+          >
+            <StopCircle className="w-4 h-4 mr-1" />
+            End
+          </Button>
+        )}
+        
+        {session.is_completed && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate(`/admin/session/${session.id}/review`)}
+            className={isMobile ? "flex-1 text-xs px-2" : ""}
+          >
+            <CheckSquare className="w-4 h-4 mr-1" />
+            Review
+          </Button>
+        )}
+      </div>
+    );
   };
 
   const autoSubmittedSessions = sessions.filter(s => s.is_auto_submitted);
