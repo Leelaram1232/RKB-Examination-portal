@@ -102,6 +102,8 @@ async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Pro
       errorMessage = 'SMTP Connection failed';
     } else if (errorMessage.includes('invalid cmd')) {
       errorMessage = 'SMTP Protocol error (invalid command). Check if port/TLS settings match your provider.';
+    } else if (errorMessage.includes('BadResource')) {
+      errorMessage = 'SMTP TLS Error (BadResource). This is a known issue with STARTTLS on Port 587. Please change your SMTP_PORT to 465 in Supabase secrets and try again.';
     }
 
     return {
@@ -358,8 +360,16 @@ Deno.serve(async (req) => {
                 </tr>
               </table>
               
-              <p style="font-size: 14px; color: #666; line-height: 1.6; margin: 0;">
-                📧 You will receive another email with your exam login credentials once your registration is approved by the administrator.
+              <p style="font-size: 15px; color: #555; line-height: 1.6; margin: 0 0 20px 0;">
+                📧 <strong>Note:</strong> You will receive another email with your exam login credentials once your registration is approved by the administrator.
+              </p>
+
+              <p style="font-size: 14px; color: #333; line-height: 1.6; margin: 0;">
+                Regards,<br/>
+                <strong>Leela Ram Samavedam</strong><br/>
+                Exam Coordinator<br/>
+                RKB Teja Coaching Center<br/>
+                Support Contact: 9640140444
               </p>
             </td>
           </tr>
@@ -593,7 +603,7 @@ Deno.serve(async (req) => {
         error: emailResult.error
       }),
       { 
-        status: 200, 
+        status: emailResult.success ? 200 : 400, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
@@ -609,7 +619,7 @@ Deno.serve(async (req) => {
         details: 'Fatal exception in edge function'
       }),
       { 
-        status: 200, 
+        status: 500, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
