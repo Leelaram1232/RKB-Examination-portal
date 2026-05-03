@@ -119,199 +119,145 @@ const SessionManagement = () => {
     if (!examId) return;
 
     setIsLoading(true);
+    console.log('[SessionManagement] Fetching data for exam:', examId);
 
-    // Fetch exam details
-    const { data: examData, error: examError } = await supabase
-      .from('exams')
-      .select('id, exam_name, exam_code, max_violations, auto_submit_on_violations')
-      .eq('id', examId)
-      .single();
+    try {
+      // 1. Load exam details
+      const { data: examData, error: examError } = await supabase
+        .from('exams')
+        .select('id, exam_name, exam_code, max_violations, auto_submit_on_violations')
+        .eq('id', examId)
+        .maybeSingle();
 
-    if (examError || !examData) {
-      toast.error('Exam not found');
-      navigate('/admin/exams');
-      return;
-    }
-
-    setExam(examData);
-
-    // Robust fetch: avoid fragile joins by mapping registrations -> profiles -> sessions.
-    // If internal registrations query fails (RLS / wrong DB), fall back to external.
-    const { data: regsInternal, error: regErr } = await supabase
-      .from('registrations')
-      .select('id, registration_number, student_id')
-      .eq('exam_id', examId);
-
-    const usingExternalRegistrations = !!regErr;
-    let regs: any[] = regsInternal || [];
-    if (regErr) {
-      console.error('Error fetching internal registrations:', regErr);
-      const { data: regsExternal, error: regsExternalErr } = await externalSupabase
-        .from('registrations')
-        .select('id, registration_number, student_id')
-        .eq('exam_id', examId);
-
-      if (regsExternalErr || !regsExternal) {
-        toast.error('Failed to load sessions');
-        setIsLoading(false);
-        return;
-      }
-      regs = regsExternal;
-    }
-
-    const regIds = (regs || []).map((r) => r.id);
-    const studentIds = [...new Set((regs || []).map((r) => r.student_id).filter(Boolean))];
-
-    if (regIds.length === 0) {
-      // Fallback: sessions might exist in external DB even if registrations mapping is missing internally.
-      const { data: externalSessionsData } = await externalSupabase
-        .from('exam_sessions')
-        .select(
-          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
-        )
-        .order('start_time', { ascending: false })
-        .limit(200);
-
-      const extSessions = externalSessionsData || [];
-      const extRegistrationIds = [...new Set(extSessions.map((s: any) => s.registration_id).filter(Boolean))];
-
-      if (extRegistrationIds.length === 0) {
-        setSessions([]);
-        setIsLoading(false);
-        return;
-      }
-
-      // Sessions were found in external DB; map them using external registrations/profiles too.
-      const { data: extRegs } = await externalSupabase
-        .from('registrations')
-        .select('id, registration_number, student_id, exam_id')
-        .in('id', extRegistrationIds);
-
-      const extRegMap = new Map((extRegs || []).map((r: any) => [r.id, r]));
-      const filteredSessions = extSessions.filter((s: any) => {
-        const reg = extRegMap.get(s.registration_id);
-        return reg?.exam_id === examId;
-      });
-
-      const extStudentIds = [...new Set(filteredSessions.map((s: any) => extRegMap.get(s.registration_id)?.student_id).filter(Boolean))];
-      const { data: extProfiles } = await externalSupabase
-        .from('profiles')
-        .select('id, full_name, email')
-        .in('id', extStudentIds);
-      const extProfileMap = new Map((extProfiles || []).map((p: any) => [p.id, p]));
-
-      const transformedSessions = (filteredSessions || []).map((s: any) => {
-        const reg = extRegMap.get(s.registration_id);
-        const profile = reg?.student_id ? extProfileMap.get(reg.student_id) : null;
-        return {
-          ...s,
-          registration: {
-            registration_number: reg?.registration_number || 'N/A',
-            student: {
-              full_name: profile?.full_name || 'Unknown',
-              email: profile?.email || 'N/A',
-            },
-          },
-        };
-      });
-
-      setSessions(transformedSessions);
-      setIsLoading(false);
-      return;
-    }
-
-    const profilesClient = usingExternalRegistrations ? (externalSupabase as any) : supabase;
-    const { data: profiles, error: profErr } = await profilesClient
-      .from('profiles')
-      .select('id, full_name, email')
-      .in('id', studentIds);
-
-    if (profErr) {
-      console.error('Error fetching profiles:', profErr);
-    }
-
-    const regMap = new Map((regs || []).map((r) => [r.id, r]));
-    const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
-
-    const sessionsClient = usingExternalRegistrations ? (externalSupabase as any) : supabase;
-    const { data: sessionsData, error: sessionsError } = await sessionsClient
-      .from('exam_sessions')
-      .select(
-        'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
-      )
-      .in('registration_id', regIds)
-      .order('start_time', { ascending: false });
-
-    if (sessionsError) {
-      console.error('Error fetching sessions:', sessionsError);
-      // Fallback: try other DB for sessions at least.
-      const { data: extSessionsData, error: extSessionsError } = await (usingExternalRegistrations ? supabase : (externalSupabase as any))
-        .from('exam_sessions')
-        .select(
-          'id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at'
-        )
-        .in('registration_id', regIds)
-        .order('start_time', { ascending: false });
-
-      if (extSessionsError) {
-        toast.error('Failed to load sessions');
-        setSessions([]);
+      if (examData) {
+        setExam(examData);
       } else {
-        const transformedSessions = (extSessionsData || []).map((s: any) => {
-          const reg = regMap.get(s.registration_id);
-          const profile = reg?.student_id ? profileMap.get(reg.student_id) : null;
-          return {
-            ...s,
-            registration: {
-              registration_number: reg?.registration_number || 'N/A',
-              student: {
-                full_name: profile?.full_name || 'Unknown',
-                email: profile?.email || 'N/A',
-              },
-            },
-          };
-        });
-        setSessions(transformedSessions);
+        const { data: extExamData } = await externalSupabase
+          .from('exams')
+          .select('id, exam_name, exam_code, max_violations, auto_submit_on_violations')
+          .eq('id', examId)
+          .maybeSingle();
+        if (extExamData) setExam(extExamData);
       }
-      // Merge logic: prefer external data if it has more info/violations
-      const internalSessionsData = sessionsData || [];
-      const externalSessionsData = await externalSupabase
+
+      // 2. Fetch registrations from both DBs
+      const fetchRegsAndProfiles = async (client: any, dbName: string) => {
+        try {
+          const { data: regs, error: regErr } = await client
+            .from('registrations')
+            .select('id, registration_number, student_id, exam_id')
+            .eq('exam_id', examId);
+
+          if (regErr || !regs) {
+            console.error(`[SessionManagement] Error fetching registrations from ${dbName}:`, regErr);
+            return { regs: [], profiles: [] };
+          }
+
+          const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
+          const { data: profiles, error: profErr } = await client
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', studentIds);
+
+          return { regs, profiles: profiles || [] };
+        } catch (err) {
+          console.error(`[SessionManagement] Unexpected error in ${dbName}:`, err);
+          return { regs: [], profiles: [] };
+        }
+      };
+
+      const [internalData, externalData] = await Promise.all([
+        fetchRegsAndProfiles(supabase, 'INTERNAL'),
+        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
+      ]);
+
+      const regMap = new Map<string, any>();
+      const profileMap = new Map<string, any>();
+
+      [...internalData.regs, ...externalData.regs].forEach(r => {
+        if (!regMap.has(r.id)) regMap.set(r.id, r);
+      });
+
+      [...internalData.profiles, ...externalData.profiles].forEach(p => {
+        if (!profileMap.has(p.id)) profileMap.set(p.id, p);
+      });
+
+      const regIds = Array.from(regMap.keys());
+      console.log(`[SessionManagement] Found ${regIds.length} total registrations.`);
+
+      if (regIds.length === 0) {
+        setSessions([]);
+        setIsLoading(false);
+        return;
+      }
+
+      // 3. Fetch sessions from both DBs
+      const fetchSessions = async (client: any, dbName: string) => {
+        try {
+          const { data, error } = await client
             .from('exam_sessions')
             .select('id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at')
-            .in('registration_id', regIds)
-            .order('start_time', { ascending: false })
-            .then((r) => r.data || []);
+            .in('registration_id', regIds);
 
-      const sessionMap = new Map<string, any>();
-      internalSessionsData.forEach(s => sessionMap.set(s.id, s));
-      externalSessionsData.forEach(s => {
-        const existing = sessionMap.get(s.id);
-        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
-          sessionMap.set(s.id, s);
+          if (error) {
+            console.error(`[SessionManagement] Error fetching sessions from ${dbName}:`, error);
+            return [];
+          }
+          return data || [];
+        } catch (err) {
+          console.error(`[SessionManagement] Unexpected error fetching sessions from ${dbName}:`, err);
+          return [];
         }
-      });
+      };
 
-      const sessionsToUse = Array.from(sessionMap.values());
+      const [internalSessions, externalSessions] = await Promise.all([
+        fetchSessions(supabase, 'INTERNAL'),
+        fetchSessions(externalSupabase, 'EXTERNAL')
+      ]);
 
-      const transformedSessions = sessionsToUse.map((s: any) => {
+      console.log(`[SessionManagement] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
+
+      // 4. Merge sessions
+      const mergedSessionsMap = new Map<string, any>();
+      
+      const processSession = (s: any) => {
         const reg = regMap.get(s.registration_id);
-        const profile = reg?.student_id ? profileMap.get(reg.student_id) : null;
-        return {
+        const profile = reg ? profileMap.get(reg.student_id) : null;
+        
+        const session: ExamSession = {
           ...s,
           registration: {
             registration_number: reg?.registration_number || 'N/A',
             student: {
-              full_name: profile?.full_name || 'Unknown',
+              full_name: profile?.full_name || 'Unknown Student',
               email: profile?.email || 'N/A',
-            },
-          },
+            }
+          }
         };
-      });
 
-      setSessions(transformedSessions);
+        const existing = mergedSessionsMap.get(s.id);
+        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
+          mergedSessionsMap.set(s.id, session);
+        }
+      };
+
+      internalSessions.forEach(processSession);
+      externalSessions.forEach(processSession);
+
+      const finalSessions = Array.from(mergedSessionsMap.values())
+        .sort((a, b) => {
+          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+          return bt - at;
+        });
+
+      setSessions(finalSessions);
+    } catch (error) {
+      console.error('[SessionManagement] Fatal error in fetchData:', error);
+      toast.error('Failed to load exam sessions');
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   useEffect(() => {

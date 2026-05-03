@@ -73,353 +73,185 @@ const LiveMonitoring = () => {
   const fetchData = async () => {
     if (!examId) return;
 
-    // Fetch exam details
-    const { data: examData, error: examError } = await supabase
-      .from('exams')
-      .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
-      .eq('id', examId)
-      .single();
+    setIsLoading(true);
+    console.log('[LiveMonitoring] Starting robust data fetch for exam:', examId);
 
-    let resolvedExam = examData;
-    if (examError || !examData) {
-      // Fallback: some setups may have exams/sessions on external DB.
-      const { data: extExamData, error: extExamError } = await externalSupabase
+    try {
+      // 1. Fetch exam details first
+      const { data: examData, error: examError } = await supabase
         .from('exams')
         .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
         .eq('id', examId)
-        .single();
-      if (!extExamError && extExamData) resolvedExam = extExamData;
-    }
+        .maybeSingle();
 
-    if (!resolvedExam) {
-      toast.error('Exam not found');
-      navigate('/admin/exams');
-      return;
-    }
-    setExam(resolvedExam);
-
-    // Fast path: many deployments keep ALL sessions/registrations/profiles in the external Supabase only.
-    // Try to load active sessions directly from the external project by exam_id.
-    const loadExternalSessionsByExam = async () => {
-      try {
-        const { data: externalSessionsData, error: extSessionsError } = await (externalSupabase as any)
-          .from('exam_sessions')
-          // Use a conservative column list that matches both internal and external schemas.
-          // Newer columns like latest_screen_url / camera_status may not exist externally and can cause 400 errors.
-          .select(
-            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
-          )
-          .limit(200);
-
-        if (extSessionsError || !externalSessionsData || externalSessionsData.length === 0) {
-          return [];
-        }
-
-        const extRegistrationIds = [...new Set(externalSessionsData.map((s: any) => s.registration_id).filter(Boolean))];
-        if (extRegistrationIds.length === 0) return [];
-
-        const { data: extRegs, error: extRegsError } = await (externalSupabase as any)
-          .from('registrations')
-          .select('id, registration_number, student_id, exam_id')
-          .in('id', extRegistrationIds);
-
-        if (extRegsError || !extRegs) return [];
-
-        const extRegMap = new Map<string, any>((extRegs || []).map((r: any) => [r.id, r]));
-        // Do NOT filter by completion flags here – show all sessions for this exam.
-        // Camera/screen tiles will naturally be empty for finished sessions.
-        const filteredSessions = (externalSessionsData || []).filter((s: any) => {
-          const reg = extRegMap.get(s.registration_id);
-          return reg?.exam_id === examId;
-        });
-
-        if (filteredSessions.length === 0) return [];
-
-        const extStudentIds = [
-          ...new Set(
-            filteredSessions.map((s: any) => extRegMap.get(s.registration_id)?.student_id).filter(Boolean),
-          ),
-        ];
-        const { data: extProfiles } = await (externalSupabase as any)
-          .from('profiles')
-          .select('id, full_name, email')
-          .in('id', extStudentIds);
-
-        const extProfileMap = new Map<string, any>((extProfiles || []).map((p: any) => [p.id, p]));
-
-        const mapped: ActiveSession[] = await Promise.all(
-          filteredSessions.map(async (s: any) => {
-            const reg = extRegMap.get(s.registration_id);
-            const profile = reg?.student_id ? extProfileMap.get(reg.student_id) : null;
-            const snapshotUrl = await getSignedUrl(externalSupabase as any, s.latest_snapshot_url || null);
-            // External schema may not yet have latest_screen_url; screen capture will simply show "No screen capture" in that case.
-            const screenUrl = await getSignedUrl(externalSupabase as any, (s as any).latest_screen_url || null);
-
-            return {
-              ...s,
-              registration: {
-                registration_number: reg?.registration_number || 'N/A',
-                student: {
-                  id: reg?.student_id || '',
-                  full_name: profile?.full_name || 'Unknown',
-                  email: profile?.email || 'N/A',
-                },
-              },
-              snapshotUrl,
-              screenUrl,
-            } as ActiveSession;
-          }),
-        );
-
-        return mapped.sort((a, b) => {
-          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
-          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
-          return bt - at;
-        });
-      } catch (err) {
-        console.error('LiveMonitoring external fast-path error:', err);
-        return [];
-      }
-    };
-
-    const externalFastPath = await loadExternalSessionsByExam();
-    if (externalFastPath.length > 0) {
-      setSessions(externalFastPath);
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchRegsAndProfiles = async (client: typeof supabase) => {
-      const { data: regs, error: regErr } = await client
-        .from('registrations')
-        .select('id, registration_number, student_id')
-        .eq('exam_id', examId);
-
-      if (regErr || !regs || regs.length === 0) {
-        return { regMap: new Map<string, any>(), profileMap: new Map<string, any>() };
+      if (examData) {
+        setExam(examData);
+      } else {
+        // Try external
+        const { data: extExamData } = await externalSupabase
+          .from('exams')
+          .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
+          .eq('id', examId)
+          .maybeSingle();
+        if (extExamData) setExam(extExamData);
       }
 
-      const regMap = new Map<string, any>(regs.map((r: any) => [r.id, r]));
-      const studentIds = [...new Set(regs.map((r: any) => r.student_id).filter(Boolean))];
-
-      if (studentIds.length === 0) {
-        return { regMap, profileMap: new Map<string, any>() };
-      }
-
-      const { data: profiles, error: profilesErr } = await client
-        .from('profiles')
-        .select('id, full_name, email')
-        .in('id', studentIds);
-
-      if (profilesErr || !profiles) {
-        return { regMap, profileMap: new Map<string, any>() };
-      }
-
-      const profileMap = new Map<string, any>(profiles.map((p: any) => [p.id, p]));
-      return { regMap, profileMap };
-    };
-
-    // Some deployments have sessions in one DB and registrations/profiles in another.
-    // Merge both sources so we can still load active sessions reliably.
-    const internalData = await fetchRegsAndProfiles(supabase);
-    const externalData = await fetchRegsAndProfiles(externalSupabase as any);
-
-    const regMapMerged = new Map<string, any>(internalData.regMap);
-    for (const [id, reg] of externalData.regMap.entries()) {
-      if (!regMapMerged.has(id)) regMapMerged.set(id, reg);
-    }
-
-    const profileMapMerged = new Map<string, any>(internalData.profileMap);
-    for (const [id, profile] of externalData.profileMap.entries()) {
-      if (!profileMapMerged.has(id)) profileMapMerged.set(id, profile);
-    }
-
-    const allRegIds = Array.from(regMapMerged.keys());
-    if (allRegIds.length === 0) {
-      // Fallback: if registrations/profiles mapping is missing for this exam in both DBs,
-      // still try to load sessions and then map them using registrations by registration_id.
-      const fetchSessionsAny = async (client: typeof supabase) => {
-        const { data: sessionsData, error: sessionsError } = await client
-          .from('exam_sessions')
-          // Same conservative column list as above to avoid 400s on external DBs that don't have new proctoring fields.
-          .select(
-            'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at'
-          )
-          .limit(200);
-
-        if (sessionsError || !sessionsData) {
-          console.error('LiveMonitoring fallback fetchSessionsAny error:', sessionsError);
-          return [];
-        }
-        // Treat NULL as "not completed". Include:
-        // - live sessions (is_completed false or null)
-        // - auto-submitted sessions (flag true)
-        return sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
-      };
-
-      const mergeRegs = async (regIds: string[]) => {
-        const [internalRegsRes, externalRegsRes] = await Promise.all([
-          supabase
+      // 2. Load registrations and profiles from both databases
+      const fetchRegsAndProfiles = async (client: any, dbName: string) => {
+        try {
+          const { data: regs, error: regErr } = await client
             .from('registrations')
             .select('id, registration_number, student_id, exam_id')
-            .in('id', regIds),
-          externalSupabase
-            ? (externalSupabase as any).from('registrations')
-                .select('id, registration_number, student_id, exam_id')
-                .in('id', regIds)
-            : Promise.resolve({ data: null, error: null }),
-        ]);
+            .eq('exam_id', examId);
 
-        const internalRegs = (internalRegsRes.data || []) as any[];
-        const externalRegs = (externalRegsRes as any).data ? ((externalRegsRes as any).data as any[]) : [];
+          if (regErr) {
+            console.error(`[LiveMonitoring] Error fetching registrations from ${dbName}:`, regErr);
+            return { regs: [], profiles: [] };
+          }
 
-        const regMap = new Map<string, any>();
-        for (const r of internalRegs) regMap.set(r.id, r);
-        for (const r of externalRegs) if (!regMap.has(r.id)) regMap.set(r.id, r);
-        return regMap;
-      };
+          if (!regs || regs.length === 0) {
+            console.log(`[LiveMonitoring] No registrations found in ${dbName}`);
+            return { regs: [], profiles: [] };
+          }
 
-      const mergeProfiles = async (studentIds: string[]) => {
-        const [internalProfilesRes, externalProfilesRes] = await Promise.all([
-          supabase
+          const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
+          const { data: profiles, error: profErr } = await client
             .from('profiles')
-            .select('id, full_name, email')
-            .in('id', studentIds),
-          externalSupabase
-            ? (externalSupabase as any).from('profiles')
-                .select('id, full_name, email')
-                .in('id', studentIds)
-            : Promise.resolve({ data: null, error: null }),
-        ]);
+            .select('id, full_name, photo_url, email')
+            .in('id', studentIds);
 
-        const internalProfiles = (internalProfilesRes.data || []) as any[];
-        const externalProfiles = (externalProfilesRes as any).data ? ((externalProfilesRes as any).data as any[]) : [];
+          if (profErr) {
+            console.error(`[LiveMonitoring] Error fetching profiles from ${dbName}:`, profErr);
+            return { regs, profiles: [] };
+          }
 
-        const profileMap = new Map<string, any>();
-        for (const p of internalProfiles) profileMap.set(p.id, p);
-        for (const p of externalProfiles) if (!profileMap.has(p.id)) profileMap.set(p.id, p);
-        return profileMap;
+          return { regs, profiles };
+        } catch (err) {
+          console.error(`[LiveMonitoring] Unexpected error fetching from ${dbName}:`, err);
+          return { regs: [], profiles: [] };
+        }
       };
 
-      const mapSessionsFromClient = async (sessionsClient: typeof supabase) => {
-        const sessionsData = await fetchSessionsAny(sessionsClient);
-        if (!sessionsData || sessionsData.length === 0) return [];
+      const [internalData, externalData] = await Promise.all([
+        fetchRegsAndProfiles(supabase, 'INTERNAL'),
+        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
+      ]);
 
-        const sessionRegIds = [...new Set(sessionsData.map((s: any) => s.registration_id).filter(Boolean))];
-        if (sessionRegIds.length === 0) return [];
+      // Merge registrations and profiles
+      const regMap = new Map<string, any>();
+      const profileMap = new Map<string, any>();
 
-        const regMapFallback = await mergeRegs(sessionRegIds);
-
-        const filteredSessions = sessionsData.filter((s: any) => {
-          const reg = regMapFallback.get(s.registration_id);
-          return reg?.exam_id === examId;
-        });
-
-        const studentIds = [...new Set(filteredSessions.map((s: any) => regMapFallback.get(s.registration_id)?.student_id).filter(Boolean))];
-        const profileMapFallback = studentIds.length > 0 ? await mergeProfiles(studentIds) : new Map<string, any>();
-
-        return await Promise.all(
-          filteredSessions.map(async (s: any) => {
-            const reg = regMapFallback.get(s.registration_id);
-            const profile = reg?.student_id ? profileMapFallback.get(reg.student_id) : null;
-            const snapshotUrl = await getSignedUrl(sessionsClient, s.latest_snapshot_url || null);
-            const screenUrl = await getSignedUrl(sessionsClient, s.latest_screen_url || null);
-
-            return {
-              ...s,
-              registration: {
-                registration_number: reg?.registration_number || 'N/A',
-                student: {
-                  id: reg?.student_id || '',
-                  full_name: profile?.full_name || 'Unknown',
-                  email: profile?.email || 'N/A',
-                },
-              },
-              snapshotUrl,
-              screenUrl,
-            };
-          })
-        );
-      };
-
-      const internalMapped = await mapSessionsFromClient(supabase);
-      const externalMapped = await mapSessionsFromClient(externalSupabase as any);
-
-      const byId = new Map<string, ActiveSession>();
-      for (const s of internalMapped) byId.set(s.id, s);
-      for (const s of externalMapped) if (!byId.has(s.id)) byId.set(s.id, s);
-
-      const merged = Array.from(byId.values()).sort((a, b) => {
-        const at = a.start_time ? new Date(a.start_time).getTime() : 0;
-        const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
-        return bt - at;
+      [...internalData.regs, ...externalData.regs].forEach(r => {
+        if (!regMap.has(r.id)) regMap.set(r.id, r);
       });
 
-      setSessions(merged);
+      [...internalData.profiles, ...externalData.profiles].forEach(p => {
+        if (!profileMap.has(p.id)) profileMap.set(p.id, p);
+      });
+
+      const allRegIds = Array.from(regMap.keys());
+      console.log(`[LiveMonitoring] Found ${allRegIds.length} total registrations for this exam across both databases.`);
+
+      if (allRegIds.length === 0) {
+        setSessions([]);
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Fetch sessions for these registrations from both databases
+      const fetchSessions = async (client: any, dbName: string) => {
+        try {
+          const { data, error } = await client
+            .from('exam_sessions')
+            .select('id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at')
+            .in('registration_id', allRegIds);
+
+          if (error) {
+            console.error(`[LiveMonitoring] Error fetching sessions from ${dbName}:`, error);
+            return [];
+          }
+
+          // Filter for active/recent sessions
+          return (data || []).filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
+        } catch (err) {
+          console.error(`[LiveMonitoring] Unexpected error fetching sessions from ${dbName}:`, err);
+          return [];
+        }
+      };
+
+      const [internalSessions, externalSessions] = await Promise.all([
+        fetchSessions(supabase, 'INTERNAL'),
+        fetchSessions(externalSupabase, 'EXTERNAL')
+      ]);
+
+      console.log(`[LiveMonitoring] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
+
+      // 3. Merge and map sessions to final format
+      const mergedSessionsMap = new Map<string, any>();
+      
+      const processSession = (s: any) => {
+        const reg = regMap.get(s.registration_id);
+        const profile = reg ? profileMap.get(reg.student_id) : null;
+        
+        const session: ActiveSession = {
+          id: s.id,
+          registration_id: s.registration_id,
+          registration: {
+            registration_number: reg?.registration_number || 'N/A',
+            student: {
+              id: reg?.student_id || '',
+              full_name: profile?.full_name || 'Unknown Student',
+              email: profile?.email || 'N/A',
+            }
+          },
+          start_time: s.start_time,
+          is_completed: s.is_completed,
+          is_auto_submitted: s.is_auto_submitted,
+          violation_count: s.violation_count || 0,
+          latest_snapshot_url: s.latest_snapshot_url,
+          snapshot_updated_at: s.snapshot_updated_at,
+          latest_screen_url: s.latest_screen_url,
+          camera_status: s.camera_status || 'offline',
+          camera_heartbeat_at: s.camera_heartbeat_at
+        };
+
+        // If duplicate (same session ID in both DBs), prefer the one with more information
+        const existing = mergedSessionsMap.get(s.id);
+        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
+          mergedSessionsMap.set(s.id, session);
+        }
+      };
+
+      internalSessions.forEach(processSession);
+      externalSessions.forEach(processSession);
+
+      const finalSessions = Array.from(mergedSessionsMap.values())
+        .sort((a, b) => {
+          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+          return bt - at; // Latest first
+        });
+
+      console.log(`[LiveMonitoring] Final merged active sessions: ${finalSessions.length}`);
+      
+      // 4. Get signed URLs for snapshots/screens
+      const sessionsWithSignedUrls = await Promise.all(finalSessions.map(async (s) => {
+        try {
+          const snapshotUrl = s.latest_snapshot_url ? await getSignedUrl(externalSupabase as any, s.latest_snapshot_url) : null;
+          const screenUrl = s.latest_screen_url ? await getSignedUrl(externalSupabase as any, s.latest_screen_url) : null;
+          return { ...s, snapshotUrl, screenUrl };
+        } catch (e) {
+          return s;
+        }
+      }));
+
+      setSessions(sessionsWithSignedUrls);
+    } catch (error) {
+      console.error('[LiveMonitoring] Fatal error in fetchData:', error);
+      toast.error('Failed to load live sessions');
+    } finally {
       setIsLoading(false);
-      return;
     }
-
-    const fetchActiveSessions = async (client: typeof supabase) => {
-      const { data: sessionsData, error: sessionsError } = await client
-        .from('exam_sessions')
-        .select(
-          'id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at'
-        )
-        .in('registration_id', allRegIds);
-
-      if (sessionsError || !sessionsData) {
-        console.error('LiveMonitoring fetchActiveSessions error:', sessionsError);
-        return [];
-      }
-
-      const filtered = sessionsData.filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
-
-      return await Promise.all(
-        filtered.map(async (s: any) => {
-          const reg = regMapMerged.get(s.registration_id);
-          const profile = reg?.student_id ? profileMapMerged.get(reg.student_id) : null;
-          const snapshotUrl = await getSignedUrl(client, s.latest_snapshot_url || null);
-          const screenUrl = await getSignedUrl(client, (s as any).latest_screen_url || null);
-
-          return {
-            ...s,
-            registration: {
-              registration_number: reg?.registration_number || 'N/A',
-              student: {
-                id: reg?.student_id || '',
-                full_name: profile?.full_name || 'Unknown',
-                email: profile?.email || 'N/A',
-              },
-            },
-            snapshotUrl,
-            screenUrl,
-          };
-        })
-      );
-    };
-
-    const internalSessions = await fetchActiveSessions(supabase);
-    const externalSessions = await fetchActiveSessions(externalSupabase as any);
-
-    // Deduplicate by session id; prefer version with more info/violations.
-    const byId = new Map<string, ActiveSession>();
-    for (const s of internalSessions) byId.set(s.id, s);
-    for (const s of externalSessions) {
-      const existing = byId.get(s.id);
-      if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
-        byId.set(s.id, s);
-      }
-    }
-
-    const merged = Array.from(byId.values()).sort((a, b) => {
-      const at = a.start_time ? new Date(a.start_time).getTime() : 0;
-      const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
-      return bt - at;
-    });
-
-    setSessions(merged);
-    setIsLoading(false);
   };
 
   // Initial fetch

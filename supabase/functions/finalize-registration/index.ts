@@ -518,7 +518,6 @@ Deno.serve(async (req) => {
   </table>
 </body>
 </html>`;
-<<<<<<< HEAD
     } else if (type === 'exam_reminder') {
       subject = `⏰ Reminder: ${exam.exam_name} is starting soon`;
       htmlBody = `
