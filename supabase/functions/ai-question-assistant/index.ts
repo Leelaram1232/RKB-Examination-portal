@@ -310,54 +310,68 @@ async function callGeminiRaw(
     });
   };
 
-  let resp = await doReq(preferJson);
-  let txt = await resp.text();
-  
-  // Model Fallback Logic: if 2.0-flash is overloaded/out-of-quota, try 1.5-flash
-  const isQuotaError = resp.status === 429 || (resp.status === 400 && txt.includes('quota'));
-  const is20Flash = model.includes('2.0-flash');
-  
-  if (!resp.ok && isQuotaError && is20Flash) {
-    console.warn(`[Gemini] ${model} quota exceeded. Retrying with gemini-1.5-flash fallback...`);
-    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const doFallbackReq = (jsonMode: boolean) => {
-      const generationConfig: Record<string, unknown> = {
-        temperature: 0.15,
-        maxOutputTokens: maxOutputTokens ?? 8192,
-      };
-      if (jsonMode) generationConfig.responseMimeType = 'application/json';
-      return fetch(fallbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          contents: [{ role: 'user', parts: [{ text: userText }] }],
-          generationConfig,
-        }),
-      });
+  const tryModel = async (modelName: string, isJson: boolean) => {
+    const currentUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0.15,
+      maxOutputTokens: maxOutputTokens ?? 8192,
     };
-    resp = await doFallbackReq(preferJson);
-    txt = await resp.text();
+    if (isJson) generationConfig.responseMimeType = 'application/json';
+    
+    return await fetch(currentUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        generationConfig,
+      }),
+    });
+  };
+
+  const modelsToTry = [
+    model,
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-pro'
+  ].filter((m, i, arr) => arr.indexOf(m) === i); // unique
+
+  let lastResp: Response | null = null;
+  let lastTxt = '';
+
+  for (const m of modelsToTry) {
+    try {
+      let resp = await tryModel(m, preferJson);
+      let txt = await resp.text();
+
+      if (!resp.ok && preferJson) {
+        resp = await tryModel(m, false);
+        txt = await resp.text();
+      }
+
+      if (resp.ok) {
+        const j = JSON.parse(txt) as Record<string, unknown>;
+        const text = (j.candidates as any)?.[0]?.content?.parts?.[0]?.text;
+        if (typeof text === 'string' && text.trim()) {
+          return text.trim();
+        }
+      }
+
+      lastResp = resp;
+      lastTxt = txt;
+      
+      // If it's a 429 or quota error, continue to next model
+      const isQuota = resp.status === 429 || (resp.status === 400 && txt.includes('quota'));
+      if (!isQuota) break; // If it's not a quota error, don't try other models (might be bad prompt/auth)
+      
+      console.warn(`[Gemini] ${m} failed (quota). Trying next model...`);
+    } catch (e) {
+      console.error(`[Gemini] Failed to call ${m}:`, e);
+    }
   }
 
-  if (!resp.ok && preferJson) {
-    resp = await doReq(false);
-    txt = await resp.text();
-  }
-  if (!resp.ok) {
-    throw new Error(`Gemini HTTP ${resp.status}: ${txt.slice(0, 500)}`);
-  }
-  const j = JSON.parse(txt) as Record<string, unknown>;
-  const candidates = j.candidates as unknown[] | undefined;
-  const first = candidates?.[0] as Record<string, unknown> | undefined;
-  const content = first?.content as Record<string, unknown> | undefined;
-  const parts = content?.parts as unknown[] | undefined;
-  const part0 = parts?.[0] as Record<string, unknown> | undefined;
-  const text = part0?.text;
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('Gemini returned no text');
-  }
-  return text.trim();
+  const status = lastResp?.status ?? 500;
+  throw new Error(`Gemini API failed (All models). Last status ${status}: ${lastTxt.slice(0, 500)}`);
 }
 
 async function callGeminiJson(
@@ -1766,6 +1780,18 @@ ${lastUser}${ocrSnippetForForce}`;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[Assistant] Error:', msg);
+    
+    // If it's a quota error, return a friendly 200 response so the UI can show the message
+    if (msg.includes('429') || msg.includes('quota')) {
+       return new Response(JSON.stringify({ 
+        content: `**AI API Quota Exceeded**\n\nYour Gemini API key has hit its free-tier limit. \n\n**To fix this:**\n1. Switch the **Model** to **Groq** in the sidebar (if you have a Groq API key set).\n2. Wait a few minutes for the quota to reset.\n3. Check your billing details at [Google AI Studio](https://aistudio.google.com/).\n\nOriginal error: ${msg}`,
+        questions: [],
+        meta: { error: true, type: 'quota' }
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response(JSON.stringify({ 
       error: msg,
       details: error instanceof Error ? error.stack : undefined
