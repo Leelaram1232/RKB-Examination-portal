@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw, Mail, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/externalSupabase';
-import { supabase as lovableSupabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   Table,
@@ -251,27 +250,25 @@ const RegistrationApproval = () => {
       if (actionType === 'approve') {
         toast.success('Registration approved');
 
-        // Fire email notification via INTERNAL Supabase (Lovable) with a timeout so UI never gets stuck.
+        // Same Supabase project as registrations (external) — Lovable invoke would look up the wrong DB.
         if (shouldNotify) {
           console.log(
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-          const emailPromise = lovableSupabase.functions.invoke('send-notification-email', {
-            body: {
-              type: 'registration_approved',
-              registration_id: selectedRegistration.id,
-            },
+          const emailPromise = invokeExternalFunction('finalize-registration', {
+            type: 'registration_approved',
+            registration_id: selectedRegistration.id,
           });
 
-          const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) =>
-            setTimeout(() => resolve({ data: null, error: new Error('Email send timed out') }), 8000)
+          const timeoutPromise = new Promise<{ data: unknown; error: Error }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: new Error('Email send timed out') }), 15000)
           );
 
           const emailResp = await Promise.race([emailPromise, timeoutPromise]);
 
-          if ((emailResp as any)?.error) {
-            console.error('[APPROVAL] Email failed:', (emailResp as any).error);
+          if (emailResp.error) {
+            console.error('[APPROVAL] Email failed:', emailResp.error);
             toast.warning('Approved, but email notification failed');
           } else {
             toast.success('Approval email sent');
@@ -329,7 +326,7 @@ const RegistrationApproval = () => {
         if (!shouldNotify) return { regId, success: true, skipped: true };
         
         try {
-          const { data, error } = await invokeExternalFunction('send-notification-email', {
+          const { data, error } = await invokeExternalFunction('finalize-registration', {
             type: 'registration_approved',
             registration_id: regId,
           });
@@ -399,6 +396,43 @@ const RegistrationApproval = () => {
     } else {
       toast.success(`Password regenerated: ${newPassword}`);
       fetchRegistrations();
+    }
+  };
+
+  const resendApprovalEmail = async (registration: Registration) => {
+    setIsProcessing(true);
+    toast.info(`Sending approval email to ${registration.full_name}...`);
+    try {
+      const { error } = await invokeExternalFunction('finalize-registration', {
+        type: 'registration_approved',
+        registration_id: registration.id,
+        force_resend: true
+      });
+      if (error) throw error;
+      toast.success('Approval email sent successfully!');
+    } catch (err) {
+      console.error('Failed to send email:', err);
+      toast.error('Failed to send email. Check logs.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const sendReminderEmail = async (registration: Registration) => {
+    setIsProcessing(true);
+    toast.info(`Sending exam reminder to ${registration.full_name}...`);
+    try {
+      const { error } = await invokeExternalFunction('finalize-registration', {
+        type: 'exam_reminder',
+        registration_id: registration.id,
+      });
+      if (error) throw error;
+      toast.success('Exam reminder sent successfully!');
+    } catch (err) {
+      console.error('Failed to send reminder:', err);
+      toast.error('Failed to send reminder. Check logs.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -717,6 +751,34 @@ const RegistrationApproval = () => {
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>Regenerate Password</TooltipContent>
+                              </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => resendApprovalEmail(reg)}
+                                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  >
+                                    <Mail className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Resend Approval Email</TooltipContent>
+                              </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => sendReminderEmail(reg)}
+                                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                  >
+                                    <Bell className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Send Exam Reminder</TooltipContent>
                               </Tooltip>
                             </>
                           )}

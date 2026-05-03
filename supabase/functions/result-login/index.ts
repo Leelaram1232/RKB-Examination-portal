@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
     // Get result for this student and exam
     const { data: result, error: resultError } = await primaryClient
       .from('results')
-      .select('id, obtained_marks, correct_count, wrong_count, unanswered_count, is_pass, section_wise_scores, calculated_at')
+      .select('id, obtained_marks, correct_count, wrong_count, unanswered_count, is_pass, section_wise_scores, calculated_at, rank')
       .eq('student_id', profile.id)
       .eq('exam_id', data.exam_id)
       .single();
@@ -201,6 +201,7 @@ Deno.serve(async (req) => {
           is_pass: result.is_pass,
           section_wise_scores: result.section_wise_scores,
           calculated_at: result.calculated_at,
+          rank: result.rank,
         },
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

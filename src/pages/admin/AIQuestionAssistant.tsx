@@ -7,27 +7,27 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  Loader2, 
-  Send, 
-  Upload, 
-  Sparkles, 
-  Save, 
-  ArrowLeft, 
-  MessageSquare,
+import {
+  Loader2,
+  Send,
+  Upload,
+  Sparkles,
+  Save,
+  ArrowLeft,
   FileText,
   Trash2,
   CheckCircle2,
   AlertCircle,
   BrainCircuit,
-  Pencil
+  Pencil,
+  ListChecks,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
 import { parseQuestionText } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
-import { EXTERNAL_SUPABASE_URL, EXTERNAL_SUPABASE_ANON_KEY, invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -45,6 +45,33 @@ interface Subject {
   name: string;
 }
 
+type LlmMode = 'groq' | 'gemini' | 'both';
+
+type AuditReport = {
+  exam_id: string;
+  total_questions: number;
+  questions_with_issues: number;
+  items: Array<{
+    id: string;
+    question_number: number;
+    section_name: string | null;
+    question_type: string | null;
+    issues: string[];
+    severity: 'ok' | 'warning' | 'error';
+  }>;
+  markdownSummary: string;
+  gemini_used: boolean;
+  groq_used?: boolean;
+  warnings?: string[];
+};
+
+/** Last audit response meta from edge (deploy / DB source debugging). */
+type AuditRunMeta = {
+  build?: string;
+  question_fetch?: 'primary' | 'external' | 'primary_fallback';
+  audit_warnings?: string[];
+};
+
 export default function AIQuestionAssistant() {
   const navigate = useNavigate();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -53,7 +80,11 @@ export default function AIQuestionAssistant() {
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n\nUpload a PDF/Image or type a request to get started!" }
+    {
+      role: 'assistant',
+      content:
+        "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both (Groq draft + Gemini merge). I can:\n\n• Generate MCQs with four solid options and one correct key\n• Extract from PDFs / diagrams\n• **Quality check (all questions)** — loads every saved row (paginated), rules + AI per small batch\n\nUpload a PDF or type a request to start.",
+    },
   ]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -65,7 +96,14 @@ export default function AIQuestionAssistant() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [chatHistoryId, setChatHistoryId] = useState<string | null>(null);
-  
+  const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [auditRunMeta, setAuditRunMeta] = useState<AuditRunMeta | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [llmMode, setLlmMode] = useState<LlmMode>('groq');
+
+  /** Bump when you ship frontend changes so production visibly differs from stale CDN. */
+  const UI_ASSISTANT_REV = '2026-05-04';
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -75,7 +113,7 @@ export default function AIQuestionAssistant() {
       {
         role: 'assistant',
         content:
-          "Hello! I'm your AI Question Assistant. I can help you:\n\n• Generate questions in English, Telugu (తెలుగు), Hindi, and more\n• Extract questions from PDFs — including diagrams & figures\n• Parse answer keys automatically\n\nUpload a PDF/Image or type a request to get started!",
+          "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both. I can generate MCQs, extract from PDFs, and run a **quality check on every saved question** for the exam.\n\nUpload a PDF or type a request to start.",
       },
     ]);
     setInput('');
@@ -112,6 +150,7 @@ export default function AIQuestionAssistant() {
       }
 
       setChatHistoryId(null);
+      setAuditReport(null);
       toast.success('Chat deleted');
     } catch (e) {
       console.error('Delete chat error:', e);
@@ -436,6 +475,7 @@ export default function AIQuestionAssistant() {
         file_url: fileUrl || undefined,
         exam_id: selectedExam,
         subject_id: selectedSubject,
+        llm_mode: llmMode,
       });
 
       if (error) throw error;
@@ -607,6 +647,102 @@ export default function AIQuestionAssistant() {
       setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, ${errorMessage}` }]);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleAuditExam = async () => {
+    if (!selectedExam) {
+      toast.error('Please select an exam first');
+      return;
+    }
+    setAuditLoading(true);
+    try {
+      const { data, error } = await invokeExternalFunction<{
+        content?: string;
+        audit?: AuditReport;
+        meta?: {
+          gemini_used?: boolean;
+          groq_used?: boolean;
+          llm_mode?: string;
+          build?: string;
+          question_fetch?: AuditRunMeta['question_fetch'];
+          audit_warnings?: string[];
+          questions_count?: number;
+        };
+      }>('ai-question-assistant', {
+        messages: [{ role: 'user', content: 'Run full exam quality audit.' }],
+        exam_id: selectedExam,
+        action: 'audit_exam',
+        llm_mode: llmMode,
+      });
+      if (error) throw error;
+      if (!data?.audit) {
+        throw new Error('No audit data returned');
+      }
+      setAuditReport(data.audit);
+      setAuditRunMeta({
+        build: data.meta?.build,
+        question_fetch: data.meta?.question_fetch,
+        audit_warnings: data.meta?.audit_warnings,
+      });
+      const aiBits = [
+        data.meta?.groq_used ? 'Groq' : '',
+        data.meta?.gemini_used ? 'Gemini' : '',
+      ].filter(Boolean);
+      const summaryLine = `Quality check (${llmMode}): ${data.audit.total_questions} question(s) scanned, ${data.audit.questions_with_issues} with issues${
+        aiBits.length ? ` — AI: ${aiBits.join(' + ')}` : ' — rules only (set API keys for selected model)'
+      }.`;
+      const assistantBody = `${summaryLine}\n\n${typeof data.content === 'string' ? data.content : ''}`.trim();
+      let toSave: Message[] = [];
+      setMessages((prev) => {
+        toSave = [
+          ...prev,
+          { role: 'user', content: 'Run quality check for all questions in this exam.' },
+          { role: 'assistant', content: assistantBody },
+        ];
+        return toSave;
+      });
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && toSave.length > 0) {
+        const payload: Record<string, unknown> = {
+          user_id: user.id,
+          messages: toSave,
+          updated_at: new Date().toISOString(),
+        };
+        if (chatHistoryId) payload.id = chatHistoryId;
+        const { data: savedHistory, error: saveError } = await (supabase as any)
+          .from('ai_chat_history')
+          .upsert(payload)
+          .select();
+        if (saveError) {
+          console.warn('Failed to save chat after audit:', saveError);
+        } else if (Array.isArray(savedHistory) && savedHistory[0]?.id) {
+          setChatHistoryId(savedHistory[0].id);
+        } else if (savedHistory && (savedHistory as any).id) {
+          setChatHistoryId((savedHistory as any).id);
+        }
+      }
+
+      if (data.audit.total_questions === 0) {
+        toast.error(
+          'Quality check found 0 questions for this exam in the database the edge function used. ' +
+            'If questions live in another Supabase project, set EXTERNAL_SUPABASE_URL and EXTERNAL_SUPABASE_SERVICE_ROLE_KEY on the function, redeploy ai-question-assistant, and try again.'
+        );
+      } else if (data.audit.questions_with_issues === 0) {
+        toast.success('No issues found for saved questions.');
+      } else {
+        toast.success(`Found issues on ${data.audit.questions_with_issues} question(s). See report below.`);
+      }
+      const aw = data.meta?.audit_warnings ?? data.audit.warnings;
+      if (Array.isArray(aw) && aw.length > 0) {
+        toast.warning(`Some AI audit batches failed (${aw.length}). See “Partial audit” in the report.`);
+      }
+    } catch (e: unknown) {
+      console.error('Audit exam error:', e);
+      toast.error(e instanceof Error ? e.message : 'Quality check failed');
+    } finally {
+      setAuditLoading(false);
     }
   };
 
@@ -782,39 +918,190 @@ export default function AIQuestionAssistant() {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Questions
           </Button>
-          <div className="flex gap-4 items-center">
-            <div className="w-64">
-              <select 
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="w-64 min-w-[12rem]">
+              <select
                 className="w-full p-2 border rounded-md text-sm"
                 value={selectedExam}
-                onChange={(e) => setSelectedExam(e.target.value)}
+                onChange={(e) => {
+                  setSelectedExam(e.target.value);
+                  setAuditReport(null);
+                  setAuditRunMeta(null);
+                }}
               >
                 <option value="">Select Exam *</option>
-                {exams.map(e => <option key={e.id} value={e.id}>{e.exam_name}</option>)}
+                {exams.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.exam_name}
+                  </option>
+                ))}
               </select>
             </div>
-            <div className="w-48">
-              <select 
+            <div className="w-48 min-w-[10rem]">
+              <select
                 className="w-full p-2 border rounded-md text-sm"
                 value={selectedSubject}
                 onChange={(e) => setSelectedSubject(e.target.value)}
               >
                 <option value="">All Subjects</option>
-                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
               </select>
             </div>
+            <Badge variant="outline" className="font-mono text-[10px] shrink-0" title="Frontend bundle marker — if this never changes after deploy, the browser or host is serving an old build.">
+              UI {UI_ASSISTANT_REV}
+            </Badge>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!selectedExam || auditLoading}
+              onClick={handleAuditExam}
+              className="shrink-0"
+            >
+              {auditLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <ListChecks className="h-4 w-4 mr-2" />
+              )}
+              Quality check (all questions)
+            </Button>
           </div>
         </div>
+
+        {auditReport && (
+          <Card className="border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 dark:border-amber-900/50">
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                Exam quality report
+                <Badge variant="outline" className="font-normal">
+                  {auditReport.total_questions} total
+                </Badge>
+                {auditReport.questions_with_issues > 0 ? (
+                  <Badge variant="destructive" className="font-normal">
+                    {auditReport.questions_with_issues} with issues
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="font-normal">
+                    No issues
+                  </Badge>
+                )}
+                {auditReport.groq_used && (
+                  <Badge variant="outline" className="font-normal">
+                    Groq review
+                  </Badge>
+                )}
+                {auditReport.gemini_used && (
+                  <Badge variant="outline" className="font-normal">
+                    Gemini review
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription className="space-y-2">
+                <p>
+                  Fix issues in Admin → Questions for this exam. MCQ: ensure all four options have text,{' '}
+                  <code className="text-xs">correct_option</code> matches the right choice, and the answer exists in the options.
+                </p>
+                {(auditRunMeta?.build || auditRunMeta?.question_fetch) && (
+                  <p className="text-xs font-mono text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
+                    {auditRunMeta.build && <span>edge: {auditRunMeta.build}</span>}
+                    {auditRunMeta.question_fetch && (
+                      <span>
+                        questions DB:{' '}
+                        {auditRunMeta.question_fetch === 'external'
+                          ? 'external Supabase'
+                          : auditRunMeta.question_fetch === 'primary_fallback'
+                            ? 'primary (fallback — external had 0 rows)'
+                            : 'primary'}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {(() => {
+                  const partial =
+                    auditRunMeta?.audit_warnings?.length
+                      ? auditRunMeta.audit_warnings
+                      : auditReport.warnings?.length
+                        ? auditReport.warnings
+                        : [];
+                  if (partial.length === 0) return null;
+                  return (
+                    <div className="rounded-md border border-amber-300/80 bg-amber-100/50 dark:bg-amber-950/40 dark:border-amber-800 p-2 text-xs">
+                      <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">Partial audit (some AI batches failed)</p>
+                      <ul className="list-disc pl-4 space-y-0.5 text-muted-foreground">
+                        {partial.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="max-h-[28rem] overflow-y-auto px-4 pb-4 [-webkit-overflow-scrolling:touch] touch-pan-y">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-2 pr-2">Q#</th>
+                    <th className="py-2 pr-2">Type</th>
+                    <th className="py-2 pr-2">Severity</th>
+                    <th className="py-2">Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditReport.items
+                    .filter((it) => it.issues.length > 0)
+                    .map((it) => (
+                      <tr key={it.id} className="border-b border-border/60 align-top">
+                        <td className="py-2 pr-2 font-mono whitespace-nowrap">{it.question_number}</td>
+                        <td className="py-2 pr-2 text-xs">{it.question_type || 'MCQ'}</td>
+                        <td className="py-2 pr-2">
+                          <Badge
+                            variant={
+                              it.severity === 'error'
+                                ? 'destructive'
+                                : it.severity === 'warning'
+                                  ? 'secondary'
+                                  : 'outline'
+                            }
+                          >
+                            {it.severity}
+                          </Badge>
+                        </td>
+                        <td className="py-2">
+                          <ul className="list-disc pl-4 space-y-1">
+                            {it.issues.map((iss, j) => (
+                              <li key={j}>{iss}</li>
+                            ))}
+                          </ul>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              {auditReport.items.every((it) => it.issues.length === 0) && (
+                <p className="text-sm text-muted-foreground py-2">
+                  No structural problems detected. Add <code className="text-xs">GEMINI_API_KEY</code> to the edge
+                  function for an additional AI pass on answer correctness.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* On small screens: cap chat row height so composer stays in view. */}
         <div className="grid grid-cols-1 gap-6 h-full flex-1 min-h-0 overflow-hidden lg:grid-cols-3 max-lg:grid-rows-[minmax(240px,min(52dvh,32rem))_minmax(0,1fr)] lg:grid-rows-1">
           {/* Chat Sidebar */}
           <Card className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden shadow-md border-primary/20 lg:col-span-1">
             <CardHeader className="space-y-2 py-3 px-4 bg-primary/5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <BrainCircuit className="h-4 w-4 text-primary" />
-                  AI Assistant (Groq Llama 3)
+                  AI Assistant
                 </CardTitle>
                 <Button
                   type="button"
@@ -828,6 +1115,23 @@ export default function AIQuestionAssistant() {
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete chat
                 </Button>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="ai-llm-mode" className="text-xs text-muted-foreground">
+                  Model (chat + quality check)
+                </Label>
+                <select
+                  id="ai-llm-mode"
+                  className="w-full max-w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                  value={llmMode}
+                  onChange={(e) => setLlmMode(e.target.value as LlmMode)}
+                  disabled={isSending}
+                  title="Groq: fast Llama. Gemini: Google only. Both: Groq draft then Gemini merge."
+                >
+                  <option value="groq">Groq</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="both">Both (Groq → Gemini)</option>
+                </select>
               </div>
               {fileName && (
                 <div className="flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1.5 text-xs text-primary">

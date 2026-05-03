@@ -10,18 +10,38 @@ interface CalculateRankingsData {
 }
 
 Deno.serve(async (req) => {
+  console.log(`[CALCULATE-RANKINGS] === Request Started: ${new Date().toISOString()} ===`);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const internalUrl = Deno.env.get('SUPABASE_URL');
+    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
+    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+
+    if (!internalUrl || !internalKey) {
+      console.error('[CALCULATE-RANKINGS] Missing internal Supabase secrets');
+      return new Response(
+        JSON.stringify({ error: 'Backend secrets not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const internalSupabase = createClient(internalUrl, internalKey);
     
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // Support external project if configured
+    const useExternal = !!(externalUrl && externalKey && externalUrl !== internalUrl);
+    const supabase = useExternal 
+      ? createClient(externalUrl, externalKey) 
+      : internalSupabase;
+
+    console.log('[CALCULATE-RANKINGS] Target Project:', useExternal ? 'EXTERNAL' : 'INTERNAL');
 
     const data: CalculateRankingsData = await req.json();
-    console.log('Calculate rankings request:', data);
+    console.log('[CALCULATE-RANKINGS] Data:', data);
 
     if (!data.exam_id) {
       return new Response(
@@ -31,59 +51,61 @@ Deno.serve(async (req) => {
     }
 
     // Fetch all results for this exam
+    console.log(`[CALCULATE-RANKINGS] Fetching results for exam: ${data.exam_id}`);
     const { data: results, error: resultsError } = await supabase
       .from('results')
       .select('id, obtained_marks, wrong_count, calculated_at, section_wise_scores')
-      .eq('exam_id', data.exam_id)
-      .order('obtained_marks', { ascending: false });
+      .eq('exam_id', data.exam_id);
 
     if (resultsError) {
-      console.error('Error fetching results:', resultsError);
+      console.error('[CALCULATE-RANKINGS] Error fetching results:', resultsError);
       return new Response(
-        JSON.stringify({ error: 'Failed to fetch results' }),
+        JSON.stringify({ error: `Failed to fetch results: ${resultsError.message}` }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     if (!results || results.length === 0) {
+      console.log('[CALCULATE-RANKINGS] No results found');
       return new Response(
         JSON.stringify({ error: 'No results found for this exam' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`Found ${results.length} results to rank`);
+    console.log(`[CALCULATE-RANKINGS] Found ${results.length} results to rank`);
 
-    // Sort results by:
-    // 1. Total marks (descending)
-    // 2. Mathematics marks (descending) - tie-breaker 1
-    // 3. Wrong count (ascending) - tie-breaker 2
-    // 4. Calculated at (ascending) - tie-breaker 3
+    // Robust Sort Function
     const sortedResults = [...results].sort((a, b) => {
-      // Primary: obtained_marks descending
-      if (a.obtained_marks !== b.obtained_marks) {
-        return b.obtained_marks - a.obtained_marks;
+      // 1. Total marks (descending)
+      const aMarks = a.obtained_marks ?? 0;
+      const bMarks = b.obtained_marks ?? 0;
+      if (aMarks !== bMarks) {
+        return bMarks - aMarks;
       }
 
-      // Tie-breaker 1: Mathematics marks descending
+      // 2. Tie-breaker 1: Mathematics marks (descending)
       const aMaths = (a.section_wise_scores as any)?.Mathematics?.marks || 0;
       const bMaths = (b.section_wise_scores as any)?.Mathematics?.marks || 0;
       if (aMaths !== bMaths) {
         return bMaths - aMaths;
       }
 
-      // Tie-breaker 2: Wrong count ascending (fewer is better)
-      if (a.wrong_count !== b.wrong_count) {
-        return a.wrong_count - b.wrong_count;
+      // 3. Tie-breaker 2: Wrong count (ascending - fewer is better)
+      const aWrong = a.wrong_count ?? 0;
+      const bWrong = b.wrong_count ?? 0;
+      if (aWrong !== bWrong) {
+        return aWrong - bWrong;
       }
 
-      // Tie-breaker 3: Earlier submission (ascending)
-      const aTime = new Date(a.calculated_at).getTime();
-      const bTime = new Date(b.calculated_at).getTime();
+      // 4. Tie-breaker 3: Earlier submission (ascending)
+      const aTime = a.calculated_at ? new Date(a.calculated_at).getTime() : 0;
+      const bTime = b.calculated_at ? new Date(b.calculated_at).getTime() : 0;
       return aTime - bTime;
     });
 
-    // Update ranks
+    // Update ranks sequentially
+    console.log('[CALCULATE-RANKINGS] Starting rank updates...');
     let updateCount = 0;
     for (let i = 0; i < sortedResults.length; i++) {
       const rank = i + 1;
@@ -95,13 +117,13 @@ Deno.serve(async (req) => {
         .eq('id', result.id);
 
       if (updateError) {
-        console.error(`Error updating rank for result ${result.id}:`, updateError);
+        console.error(`[CALCULATE-RANKINGS] Error updating rank ${rank} for result ${result.id}:`, updateError);
       } else {
         updateCount++;
       }
     }
 
-    console.log(`Updated ranks for ${updateCount} results`);
+    console.log(`[CALCULATE-RANKINGS] Successfully updated ranks for ${updateCount} students`);
 
     return new Response(
       JSON.stringify({
@@ -112,11 +134,15 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-  } catch (error) {
-    console.error('Unexpected error:', error);
+  } catch (error: any) {
+    console.error('[CALCULATE-RANKINGS] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
+      JSON.stringify({ 
+        error: 'Internal server error',
+        details: error?.message || 'Unknown error'
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+

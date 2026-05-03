@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
       // Trigger email on success
       if (paymentStatus === "completed") {
         try {
-          await supabase.functions.invoke("send-notification-email", {
+          await supabase.functions.invoke("finalize-registration", {
             body: { type: "payment_success", registration_id: regId },
           });
         } catch (e) {

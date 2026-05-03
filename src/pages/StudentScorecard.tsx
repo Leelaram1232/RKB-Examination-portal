@@ -233,15 +233,25 @@ export default function StudentScorecard() {
                       </div>
                       {result.rank && (
                         <div>
-                          <p className="text-sm text-muted-foreground uppercase">All India Rank</p>
-                          <p className="text-2xl font-bold text-primary">{result.rank}</p>
+                          <p className="text-sm text-muted-foreground uppercase font-semibold">Rank</p>
+                          <div className="flex items-baseline gap-1">
+                            <p className="text-3xl font-extrabold text-primary">{result.rank}</p>
+                            <p className="text-xs text-muted-foreground">Position</p>
+                          </div>
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className={`px-8 py-4 rounded-lg ${result.is_pass ? 'bg-green-600' : 'bg-red-600'} text-white`}>
-                    <p className="text-sm uppercase tracking-wider">Status</p>
-                    <p className="text-3xl font-bold">{result.is_pass ? 'QUALIFIED' : 'NOT QUALIFIED'}</p>
+                  <div className="flex flex-col items-center gap-2">
+                    <div className={`px-8 py-4 rounded-lg ${result.is_pass ? 'bg-green-600' : 'bg-red-600'} text-white shadow-lg`}>
+                      <p className="text-sm uppercase tracking-wider text-center opacity-90">Result Status</p>
+                      <p className="text-3xl font-black text-center">{result.is_pass ? 'QUALIFIED' : 'NOT QUALIFIED'}</p>
+                    </div>
+                    {result.rank && (
+                      <div className="bg-primary/10 px-4 py-1 rounded-full border border-primary/20">
+                        <p className="text-[10px] font-bold text-primary uppercase tracking-tighter text-center">Rank Verified</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
