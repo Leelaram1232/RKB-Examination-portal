@@ -257,7 +257,7 @@ const RegistrationApproval = () => {
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-          const emailPromise = lovableSupabase.functions.invoke('send-notification-email', {
+          const emailPromise = lovableSupabase.functions.invoke('finalize-registration', {
             body: {
               type: 'registration_approved',
               registration_id: selectedRegistration.id,
@@ -329,7 +329,7 @@ const RegistrationApproval = () => {
         if (!shouldNotify) return { regId, success: true, skipped: true };
         
         try {
-          const { data, error } = await invokeExternalFunction('send-notification-email', {
+          const { data, error } = await invokeExternalFunction('finalize-registration', {
             type: 'registration_approved',
             registration_id: regId,
           });
