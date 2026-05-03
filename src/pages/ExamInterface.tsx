@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';
@@ -112,6 +112,10 @@ export default function ExamInterface() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCameraWarning, setShowCameraWarning] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
+  
+  // Admin message states
+  const [adminMessage, setAdminMessage] = useState('');
+  const [showAdminMessageDialog, setShowAdminMessageDialog] = useState(false);
 
   const hasInitialized = useRef(false);
   const violationRef = useRef(0);
@@ -321,6 +325,30 @@ export default function ExamInterface() {
       supabase.removeChannel(channel);
     };
   }, [session?.exam?.id, toast]);
+
+  // Real-time admin messages subscription
+  useEffect(() => {
+    if (!session?.exam?.id || !session?.session_id) return;
+
+    const channel = supabase
+      .channel(`exam_messages_${session.exam.id}`)
+      .on(
+        'broadcast',
+        { event: 'admin_msg' },
+        (payload) => {
+          console.log('[Real-time] Admin message received:', payload);
+          if (payload.payload?.sessionIds?.includes(session.session_id)) {
+            setAdminMessage(payload.payload.message);
+            setShowAdminMessageDialog(true);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.exam?.id, session?.session_id]);
 
   // Start LiveKit camera streaming once we have a valid session + exam id
   useEffect(() => {
@@ -1158,6 +1186,29 @@ export default function ExamInterface() {
           <AlertDialogFooter>
             <AlertDialogAction onClick={() => setShowCameraWarning(false)}>
               I Understand
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Admin Message Dialog */}
+      <AlertDialog open={showAdminMessageDialog} onOpenChange={setShowAdminMessageDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-primary" />
+              Notice
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-4 text-base text-foreground whitespace-pre-wrap">
+              {adminMessage}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => {
+              setShowAdminMessageDialog(false);
+              enterFullscreen();
+            }}>
+              Continue Exam
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

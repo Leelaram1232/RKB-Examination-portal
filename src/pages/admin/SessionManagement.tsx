@@ -10,8 +10,11 @@ import {
   RefreshCw,
   User,
   Clock,
-  Shield
+  Shield,
+  MessageSquare,
+  CheckSquare
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -40,6 +43,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -73,6 +79,21 @@ interface Exam {
   auto_submit_on_violations: boolean;
 }
 
+const PREDEFINED_MESSAGES = [
+  { title: "Head Rotation Detected", content: "“Eyes on Your Own Paper, Please 👀”\nWe noticed frequent head movement. Please keep your face directed toward the screen.\nLooking around won’t help your score… but staying focused will 🙂" },
+  { title: "Talking Detected", content: "“Silent Mode Activated 🤫”\nIt seems like you’re speaking. Kindly maintain complete silence during the exam.\nThis isn’t a podcast recording session — let’s keep it exam-focused!" },
+  { title: "Multiple Faces Detected", content: "“You +1? Not Allowed 🚫”\nMore than one person is visible on camera. Only the registered student must be present.\nPlease ensure you're alone, or the session may be flagged." },
+  { title: "Unauthorized Device Usage", content: "“Extra Gadgets Detected 📱⚠️”\nAnother device appears to be in use. Please remove any phones, tablets, or secondary screens.\nThis is a single-player game — no external help allowed." },
+  { title: "Looking Away Frequently", content: "“Stay With Us 👁️”\nYou’ve been looking away from the screen repeatedly.\nKindly keep your attention on the exam window — distractions can wait!" },
+  { title: "Looking Left for Long Time", content: "“Left Side Seems Interesting 🤔”\nYou’ve been looking left for an extended period.\nPlease keep your focus centered — answers won’t magically appear on the side wall." },
+  { title: "Looking Right for Long Time", content: "“Right Side Exploration Detected 👉”\nExtended right-side viewing detected.\nLet’s bring your attention back to the screen — that’s where the real action is." },
+  { title: "Looking Down for Long Time", content: "“Desk Checking? 📄”\nYou’ve been looking down for quite a while.\nEnsure no notes or materials are being used. Keep your eyes on the screen." },
+  { title: "Face Not Clearly Visible", content: "“Camera Needs You 😊”\nYour face is not clearly visible. Please adjust your position or lighting.\nWe can’t mark what we can’t see!" },
+  { title: "Suspicious Behavior Warning", content: "“Careful Now ⚠️”\nYour recent activity may violate exam rules.\nPlease follow guidelines strictly to avoid disqualification." },
+  { title: "Final Warning", content: "“Last Reminder 🚨”\nThis is your final warning. Continued violations may lead to exam termination.\nStay focused, stay fair." },
+  { title: "Positive Reinforcement", content: "“Good Focus 👍”\nGreat job maintaining proper exam behavior. Keep going — you’re doing well!" }
+];
+
 const SessionManagement = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
@@ -84,6 +105,14 @@ const SessionManagement = () => {
   const [showEndExamDialog, setShowEndExamDialog] = useState(false);
   const [showViolationsDialog, setShowViolationsDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Message feature states
+  const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
+  const [showMessageDialog, setShowMessageDialog] = useState(false);
+  const [selectedMessageIndex, setSelectedMessageIndex] = useState<number | string>('');
+  const [customMessage, setCustomMessage] = useState('');
+  const [messageTarget, setMessageTarget] = useState<'selected' | 'individual' | 'all'>('individual');
+  const [individualTargetId, setIndividualTargetId] = useState<string | null>(null);
 
   const fetchData = async () => {
     if (!examId) return;
@@ -387,6 +416,76 @@ const SessionManagement = () => {
     setSelectedSession(null);
   };
 
+  const handleSelectSession = (sessionId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedSessions(prev => [...prev, sessionId]);
+    } else {
+      setSelectedSessions(prev => prev.filter(id => id !== sessionId));
+    }
+  };
+
+  const handleSelectAllActive = (checked: boolean) => {
+    if (checked) {
+      setSelectedSessions(activeSessions.map(s => s.id));
+    } else {
+      setSelectedSessions([]);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    let targetIds: string[] = [];
+    if (messageTarget === 'individual' && individualTargetId) {
+      targetIds = [individualTargetId];
+    } else if (messageTarget === 'selected') {
+      targetIds = selectedSessions;
+    } else if (messageTarget === 'all') {
+      targetIds = activeSessions.map(s => s.id);
+    }
+
+    if (targetIds.length === 0) {
+      toast.error('No students selected to send message');
+      return;
+    }
+
+    let finalMessage = customMessage;
+    if (typeof selectedMessageIndex === 'number') {
+      finalMessage = PREDEFINED_MESSAGES[selectedMessageIndex].content;
+    }
+
+    if (!finalMessage.trim()) {
+      toast.error('Message content cannot be empty');
+      return;
+    }
+
+    setIsProcessing(true);
+    
+    try {
+      // Use Supabase realtime broadcast to send messages instantly
+      const channel = supabase.channel(`exam_messages_${examId}`);
+      await channel.send({
+        type: 'broadcast',
+        event: 'admin_msg',
+        payload: {
+          sessionIds: targetIds,
+          message: finalMessage
+        }
+      });
+      
+      toast.success(`Message sent to ${targetIds.length} student(s)`);
+      setShowMessageDialog(false);
+      setCustomMessage('');
+      setSelectedMessageIndex('');
+      if (messageTarget === 'selected') {
+        setSelectedSessions([]);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.error('Failed to send message');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const getStatusBadge = (session: ExamSession) => {
     if (session.is_auto_submitted) {
       return <Badge variant="destructive">Auto-Submitted (Violations)</Badge>;
@@ -555,10 +654,24 @@ const SessionManagement = () => {
               <CardTitle>All Exam Sessions</CardTitle>
               <CardDescription>View and manage all student exam sessions</CardDescription>
             </div>
-            <Button variant="outline" onClick={fetchData}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Refresh
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setMessageTarget('selected');
+                  setShowMessageDialog(true);
+                }}
+                disabled={selectedSessions.length === 0}
+                className="gap-2"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Send Msg ({selectedSessions.length})
+              </Button>
+              <Button variant="outline" onClick={fetchData}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {sessions.length === 0 ? (
@@ -569,6 +682,13 @@ const SessionManagement = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[50px]">
+                      <Checkbox 
+                        checked={selectedSessions.length === activeSessions.length && activeSessions.length > 0}
+                        onCheckedChange={handleSelectAllActive}
+                        aria-label="Select all active"
+                      />
+                    </TableHead>
                     <TableHead>Student</TableHead>
                     <TableHead>Registration #</TableHead>
                     <TableHead>Status</TableHead>
@@ -580,6 +700,14 @@ const SessionManagement = () => {
                 <TableBody>
                   {sessions.map((session) => (
                     <TableRow key={session.id}>
+                      <TableCell>
+                        <Checkbox 
+                          checked={selectedSessions.includes(session.id)}
+                          onCheckedChange={(checked) => handleSelectSession(session.id, !!checked)}
+                          disabled={session.is_completed}
+                          aria-label={`Select ${session.registration.student.full_name}`}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div>
                           <p className="font-medium">{session.registration.student.full_name}</p>
@@ -597,6 +725,20 @@ const SessionManagement = () => {
                         {session.start_time ? format(new Date(session.start_time), 'PPp') : 'Not started'}
                       </TableCell>
                       <TableCell className="text-right space-x-2">
+                        {!session.is_completed && session.start_time && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setIndividualTargetId(session.id);
+                              setMessageTarget('individual');
+                              setShowMessageDialog(true);
+                            }}
+                            title="Send Message to Student"
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </Button>
+                        )}
                         {session.violation_count > 0 && (
                           <Button
                             size="sm"
@@ -734,6 +876,75 @@ const SessionManagement = () => {
                 No detailed violation log available
               </p>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Message Dialog */}
+      <Dialog open={showMessageDialog} onOpenChange={setShowMessageDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Send Message to Student(s)</DialogTitle>
+            <DialogDescription>
+              {messageTarget === 'individual' && 'Send an instant popup message to the selected student.'}
+              {messageTarget === 'selected' && `Send an instant popup message to ${selectedSessions.length} selected student(s).`}
+              {messageTarget === 'all' && `Send an instant popup message to all ${activeSessions.length} active student(s).`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-4">
+              <Label className="text-base font-semibold">Select a predefined message</Label>
+              <RadioGroup 
+                value={selectedMessageIndex.toString()} 
+                onValueChange={(val) => {
+                  setSelectedMessageIndex(val === 'custom' ? 'custom' : parseInt(val));
+                  if (val !== 'custom') setCustomMessage('');
+                }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+              >
+                {PREDEFINED_MESSAGES.map((msg, index) => (
+                  <div key={index} className="flex items-start space-x-2 p-3 border rounded-lg bg-card hover:bg-accent/50 cursor-pointer" onClick={() => {
+                    setSelectedMessageIndex(index);
+                    setCustomMessage('');
+                  }}>
+                    <RadioGroupItem value={index.toString()} id={`msg-${index}`} className="mt-1" />
+                    <Label htmlFor={`msg-${index}`} className="flex-1 cursor-pointer">
+                      <p className="font-semibold">{msg.title}</p>
+                      <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-1">{msg.content}</p>
+                    </Label>
+                  </div>
+                ))}
+                
+                <div className="flex items-start space-x-2 p-3 border rounded-lg bg-card hover:bg-accent/50 cursor-pointer" onClick={() => setSelectedMessageIndex('custom')}>
+                  <RadioGroupItem value="custom" id="msg-custom" className="mt-1" />
+                  <Label htmlFor="msg-custom" className="flex-1 cursor-pointer">
+                    <p className="font-semibold">Custom Message</p>
+                    <p className="text-xs text-muted-foreground mt-1">Write your own message</p>
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+
+            {selectedMessageIndex === 'custom' && (
+              <div className="space-y-2">
+                <Label>Custom Message Content</Label>
+                <Textarea 
+                  value={customMessage}
+                  onChange={(e) => setCustomMessage(e.target.value)}
+                  placeholder="Enter your message here..."
+                  className="min-h-[100px]"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setShowMessageDialog(false)} disabled={isProcessing}>
+                Cancel
+              </Button>
+              <Button onClick={handleSendMessage} disabled={isProcessing}>
+                {isProcessing ? 'Sending...' : 'Send Message'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
