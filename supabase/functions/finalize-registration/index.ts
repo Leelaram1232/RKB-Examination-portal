@@ -42,21 +42,11 @@ async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Pro
   const smtpPassword = Deno.env.get('SMTP_PASSWORD');
   const smtpFromRaw = Deno.env.get('SMTP_FROM_EMAIL') || smtpUser;
   
-  // Format from address properly for denomailer
   const smtpFrom = smtpFromRaw?.includes('<') 
     ? smtpFromRaw 
     : `RKB Exam Portal <${smtpFromRaw}>`;
 
-  console.log('[SMTP] Configuration check:');
-  console.log('  - Host:', smtpHost);
-  console.log('  - Port:', smtpPort);
-  console.log('  - User:', smtpUser ? `${smtpUser.substring(0, 5)}...` : 'NOT SET');
-  console.log('  - Password:', smtpPassword ? 'SET (hidden)' : 'NOT SET');
-  console.log('  - From:', smtpFrom);
-  console.log('  - To:', to);
-
   if (!smtpHost || !smtpUser || !smtpPassword) {
-    console.error('[SMTP] ERROR: Missing required SMTP credentials');
     return {
       success: false,
       method: 'smtp',
@@ -64,10 +54,10 @@ async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Pro
     };
   }
 
+  let client;
   try {
-    console.log('[SMTP] Creating SMTP client...');
-    
-    const client = new SMTPClient({
+    console.log(`[SMTP] Connecting to ${smtpHost}:${smtpPort} (TLS: ${smtpPort === '465'})`);
+    client = new SMTPClient({
       connection: {
         hostname: smtpHost,
         port: parseInt(smtpPort),
@@ -80,7 +70,6 @@ async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Pro
     });
 
     console.log('[SMTP] Sending email...');
-    
     await client.send({
       from: smtpFrom!,
       to: to,
@@ -88,27 +77,29 @@ async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Pro
       html: htmlBody,
     });
 
+    console.log('[SMTP] Closing connection...');
     await client.close();
-
     console.log('[SMTP] Email sent successfully!');
 
     return {
       success: true,
       method: 'smtp',
-      message_id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      message_id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
     };
 
   } catch (error: any) {
-    console.error('[SMTP] ERROR during email send:');
-    console.error('[SMTP] Error name:', error.name);
-    console.error('[SMTP] Error message:', error.message);
-    console.error('[SMTP] Full error:', JSON.stringify(error, null, 2));
+    console.error('[SMTP] Error occurred:', error);
+    
+    // Try to close client if it exists to avoid leaking connections
+    try { if (client) await client.close(); } catch { /* ignore */ }
 
-    let errorMessage = error.message;
-    if (error.message?.includes('authentication')) {
-      errorMessage = 'SMTP Authentication failed - check username and password';
-    } else if (error.message?.includes('connection')) {
-      errorMessage = `SMTP Connection failed to ${smtpHost}:${smtpPort}`;
+    let errorMessage = error.message || 'Unknown SMTP error';
+    if (errorMessage.includes('authentication')) {
+      errorMessage = 'SMTP Authentication failed';
+    } else if (errorMessage.includes('connection')) {
+      errorMessage = 'SMTP Connection failed';
+    } else if (errorMessage.includes('invalid cmd')) {
+      errorMessage = 'SMTP Protocol error (invalid command). Check if port/TLS settings match your provider.';
     }
 
     return {
@@ -605,13 +596,20 @@ Deno.serve(async (req) => {
       }
     );
 
-  } catch (error) {
-    console.error('=== SEND NOTIFICATION EMAIL ERROR ===');
-    console.error('[EMAIL] Error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to send email';
+  } catch (error: any) {
+    console.error('=== FATAL EDGE FUNCTION ERROR ===');
+    console.error(error);
+    
     return new Response(
-      JSON.stringify({ success: false, error: errorMessage, method: 'smtp' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ 
+        success: false, 
+        error: error?.message || 'Internal Server Error',
+        details: 'Fatal exception in edge function'
+      }),
+      { 
+        status: 500, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     );
   }
 });
