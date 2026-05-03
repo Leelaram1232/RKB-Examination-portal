@@ -3,8 +3,9 @@ import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
 };
 
 interface EmailRequest {
@@ -36,7 +37,8 @@ interface RegistrationData {
 async function sendSmtpEmail(to: string, subject: string, htmlBody: string): Promise<SmtpResult> {
   console.log('[SMTP] Starting email send process');
   
-  const smtpHost = Deno.env.get('SMTP_HOST');
+  const smtpHostRaw = Deno.env.get('SMTP_HOST') || '';
+  const smtpHost = smtpHostRaw.replace(/^(smtp|smtps):\/\//, '');
   const smtpPort = Deno.env.get('SMTP_PORT') || '587';
   const smtpUser = Deno.env.get('SMTP_USER');
   const smtpPassword = Deno.env.get('SMTP_PASSWORD');
@@ -591,7 +593,7 @@ Deno.serve(async (req) => {
         error: emailResult.error
       }),
       { 
-        status: emailResult.success ? 200 : 500,
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
@@ -607,7 +609,7 @@ Deno.serve(async (req) => {
         details: 'Fatal exception in edge function'
       }),
       { 
-        status: 500, 
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
