@@ -256,17 +256,9 @@ const RegistrationApproval = () => {
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-<<<<<<< HEAD
           const emailPromise = invokeExternalFunction('finalize-registration', {
             type: 'registration_approved',
             registration_id: selectedRegistration.id,
-=======
-          const emailPromise = lovableSupabase.functions.invoke('finalize-registration', {
-            body: {
-              type: 'registration_approved',
-              registration_id: selectedRegistration.id,
-            },
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
           });
 
           const timeoutPromise = new Promise<{ data: unknown; error: Error }>((resolve) =>

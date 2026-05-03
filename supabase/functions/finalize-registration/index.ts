@@ -8,14 +8,9 @@ const corsHeaders = {
 };
 
 interface EmailRequest {
-<<<<<<< HEAD
   type: 'payment_success' | 'registration_approved' | 'exam_reminder';
   registration_id: string;
   force_resend?: boolean;
-=======
-  type: 'payment_success' | 'registration_approved';
-  registration_id: string;
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
 }
 
 interface SmtpResult {
@@ -204,11 +199,7 @@ Deno.serve(async (req) => {
       throw new Error('Empty request body');
     }
 
-<<<<<<< HEAD
     const { type, registration_id, force_resend }: EmailRequest = JSON.parse(rawBody);
-=======
-    const { type, registration_id }: EmailRequest = JSON.parse(rawBody);
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
 
     console.log('[EMAIL] Request type:', type);
     console.log('[EMAIL] Registration ID:', registration_id);
@@ -263,11 +254,7 @@ Deno.serve(async (req) => {
       );
     }
 
-<<<<<<< HEAD
     if (type === 'registration_approved' && registration.email_sent_approval && !force_resend) {
-=======
-    if (type === 'registration_approved' && registration.email_sent_approval) {
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
       console.warn('[EMAIL] Approval email already sent - preventing duplicate');
       return new Response(
         JSON.stringify({ 
@@ -582,8 +569,6 @@ Deno.serve(async (req) => {
   </table>
 </body>
 </html>`;
-=======
->>>>>>> 8d880584f8dab5a59e5701263351c4ab47a562cc
     } else {
       throw new Error('Invalid email type');
     }
