@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     // 1. Fetch Exam Details
     const { data: exam, error: examError } = await supabase
       .from('exams')
-      .select('exam_name, exam_code')
+      .select('exam_name, exam_code, total_marks')
       .eq('id', exam_id)
       .single();
 
@@ -115,6 +115,15 @@ Deno.serve(async (req) => {
     }
 
     const profileMap = new Map(profiles.map(p => [p.id, p]));
+
+    // 2.5 Fetch all results for this exam
+    const { data: results, error: resultsError } = await supabase
+      .from('results')
+      .select('student_id, obtained_marks, rank, is_pass')
+      .eq('exam_id', exam_id);
+
+    const resultMap = new Map(results?.map(r => [r.student_id, r]) || []);
+    
     
     let sentCount = 0;
     let failCount = 0;
@@ -127,8 +136,10 @@ Deno.serve(async (req) => {
       const profile = profileMap.get(reg.student_id);
       if (!profile || !profile.email) continue;
 
+      const studentResult = resultMap.get(reg.student_id);
+
       const subject = `Results Published: ${exam.exam_name}`;
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.6;color:#333}.container{max-width:600px;margin:0 auto;padding:20px;border:1px solid #eee;border-radius:8px}.header{background:#f8f9fa;padding:20px;text-align:center;border-bottom:3px solid #1a73e8;border-radius:8px 8px 0 0}.content{padding:20px}.footer{font-size:12px;color:#777;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.details-box{background:#f1f8ff;padding:15px;border-radius:6px;margin:20px 0;border:1px solid #cce5ff}</style></head><body><div class="container"><div class="header"><h2 style="margin:0;color:#1a73e8">Results Published</h2></div><div class="content"><p>Dear <strong>${profile.full_name}</strong>,</p><p>The results for <strong>${exam.exam_name}</strong> have been successfully <strong>published by the exam administration</strong>.</p><div class="details-box"><h3 style="margin-top:0;font-size:16px">Student Details:</h3><ul style="list-style:none;padding:0;margin:0"><li><strong>Name:</strong> ${profile.full_name}</li><li><strong>Student ID:</strong> ${reg.registration_number || 'N/A'}</li></ul><h3 style="margin-top:15px;font-size:16px">Exam Information:</h3><ul style="list-style:none;padding:0;margin:0"><li><strong>Exam Name:</strong> ${exam.exam_name}</li><li><strong>Result Status:</strong> Available</li></ul></div><p>You can now log in to your account to view your score and detailed performance.</p><p>Please review your results at your earliest convenience.</p><p>Wishing you continued success.</p><p>Regards,<br/><strong>${institutionName}</strong><br/>Support Contact: ${supportContact}</p></div><div class="footer"><p>This is an automated message from RKB Education Management System. Please do not reply to this email.</p></div></div></body></html>`.trim();
+      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.6;color:#333}.container{max-width:600px;margin:0 auto;padding:20px;border:1px solid #eee;border-radius:8px}.header{background:#f8f9fa;padding:20px;text-align:center;border-bottom:3px solid #1a73e8;border-radius:8px 8px 0 0}.content{padding:20px}.footer{font-size:12px;color:#777;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.details-box{background:#f1f8ff;padding:20px;border-radius:8px;margin:20px 0;border:1px solid #cce5ff}.result-value{font-weight:bold;color:#1a73e8}.rank-value{font-weight:bold;color:#e67e22;font-size:18px}.status-pass{color:#28a745;font-weight:bold}.status-fail{color:#dc3545;font-weight:bold}</style></head><body><div class="container"><div class="header"><h2 style="margin:0;color:#1a73e8">Results Published</h2></div><div class="content"><p>Dear <strong>${profile.full_name}</strong>,</p><p>The results for <strong>${exam.exam_name}</strong> have been successfully <strong>published</strong>. You can now view your detailed performance report.</p><div class="details-box"><h3 style="margin-top:0;font-size:16px;color:#1a73e8;border-bottom:1px solid #cce5ff;padding-bottom:8px">Result Summary:</h3><table style="width:100%;border-collapse:collapse;margin-top:10px"><tr><td style="padding:8px 0;color:#555;width:40%">Student Name:</td><td style="padding:8px 0;font-weight:bold">${profile.full_name}</td></tr><tr><td style="padding:8px 0;color:#555">Registration No:</td><td style="padding:8px 0;font-weight:bold">${reg.registration_number || 'N/A'}</td></tr><tr><td style="padding:8px 0;color:#555">Marks Obtained:</td><td style="padding:8px 0;font-weight:bold;font-size:18px;color:#28a745">${studentResult?.obtained_marks ?? 'N/A'} / ${exam.total_marks || 'N/A'}</td></tr><tr><td style="padding:8px 0;color:#555">Rank Achieved:</td><td style="padding:8px 0"><span class="rank-value">${studentResult?.rank ? '#' + studentResult.rank : 'N/A'}</span></td></tr><tr><td style="padding:8px 0;color:#555">Result Status:</td><td style="padding:8px 0">${studentResult ? (studentResult.is_pass ? '<span class="status-pass">PASSED</span>' : '<span class="status-fail">FAILED</span>') : 'N/A'}</td></tr></table></div><p>You can now log in to the portal to download your complete marksheet and view section-wise analysis.</p><p>Congratulations on your performance and wishing you continued success in your future endeavors.</p><p>Regards,<br/><strong>${institutionName}</strong><br/>Support Contact: ${supportContact}</p></div><div class="footer"><p>This is an automated message from RKB Education Management System. Please do not reply to this email.</p></div></div></body></html>`.trim();
 
       const success = await sendSmtpEmail(profile.email, subject, htmlBody);
       if (success) sentCount++;
