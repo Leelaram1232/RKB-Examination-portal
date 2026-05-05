@@ -308,6 +308,7 @@ async function callGeminiRaw(
       body.systemInstruction = { parts: [{ text: systemInstruction }] };
     }
 
+    console.log(`[Gemini] Attempting ${modelName} via ${apiVersion}...`);
     return await fetch(currentUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -316,12 +317,13 @@ async function callGeminiRaw(
   };
 
   const modelsToTry = [
-    { name: model, ver: 'v1beta' },
-    { name: 'gemini-2.0-flash', ver: 'v1beta' },
+    { name: 'gemini-1.5-flash-latest', ver: 'v1beta' },
     { name: 'gemini-1.5-flash', ver: 'v1beta' },
     { name: 'gemini-1.5-flash', ver: 'v1' },
+    { name: 'gemini-2.0-flash', ver: 'v1beta' },
+    { name: 'gemini-1.5-pro-latest', ver: 'v1beta' },
     { name: 'gemini-1.5-pro', ver: 'v1beta' },
-    { name: 'gemini-pro', ver: 'v1beta' }
+    { name: 'gemini-1.0-pro', ver: 'v1' }
   ];
 
   let lastResp: Response | null = null;
