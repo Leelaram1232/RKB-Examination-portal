@@ -42,7 +42,7 @@ async function callMathpixPdf(
   console.log('[Mathpix] Submitting PDF for processing:', fileUrl);
 
   // Use polling (no SSE) to avoid Mathpix streaming 504s/compute limits.
-  // We request a lightweight text format (`md`) rather than `mmd` to reduce compute.
+  // We request a lightweight text format (`md`) rather than `md` to reduce compute.
   const submitBody: Record<string, unknown> = {
     url: fileUrl,
     conversion_formats: { md: true },
@@ -290,28 +290,9 @@ async function callGeminiRaw(
   maxOutputTokens?: number
 ): Promise<string> {
   const model = (Deno.env.get('GEMINI_MODEL') || 'gemini-2.0-flash').trim();
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  const doReq = (jsonMode: boolean) => {
-    const generationConfig: Record<string, unknown> = {
-      temperature: 0.15,
-      maxOutputTokens: maxOutputTokens ?? 8192,
-    };
-    if (jsonMode) generationConfig.responseMimeType = 'application/json';
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig,
-      }),
-    });
-  };
-
-  const tryModel = async (modelName: string, isJson: boolean) => {
-    const currentUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  
+  const tryModel = async (modelName: string, isJson: boolean, apiVersion = 'v1beta') => {
+    const currentUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const generationConfig: Record<string, unknown> = {
       temperature: 0.15,
       maxOutputTokens: maxOutputTokens ?? 8192,
@@ -330,22 +311,24 @@ async function callGeminiRaw(
   };
 
   const modelsToTry = [
-    model,
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-pro'
-  ].filter((m, i, arr) => arr.indexOf(m) === i); // unique
+    { name: model, ver: 'v1beta' },
+    { name: 'gemini-2.0-flash', ver: 'v1beta' },
+    { name: 'gemini-1.5-flash', ver: 'v1beta' },
+    { name: 'gemini-1.5-flash', ver: 'v1' },
+    { name: 'gemini-1.5-pro', ver: 'v1beta' },
+    { name: 'gemini-pro', ver: 'v1beta' }
+  ];
 
   let lastResp: Response | null = null;
   let lastTxt = '';
 
   for (const m of modelsToTry) {
     try {
-      let resp = await tryModel(m, preferJson);
+      let resp = await tryModel(m.name, preferJson, m.ver);
       let txt = await resp.text();
 
       if (!resp.ok && preferJson) {
-        resp = await tryModel(m, false);
+        resp = await tryModel(m.name, false, m.ver);
         txt = await resp.text();
       }
 
@@ -362,11 +345,13 @@ async function callGeminiRaw(
       
       // If it's a 429 or quota error, continue to next model
       const isQuota = resp.status === 429 || (resp.status === 400 && txt.includes('quota'));
-      if (!isQuota) break; // If it's not a quota error, don't try other models (might be bad prompt/auth)
+      const isNotFound = resp.status === 404;
       
-      console.warn(`[Gemini] ${m} failed (quota). Trying next model...`);
+      if (!isQuota && !isNotFound) break; 
+      
+      console.warn(`[Gemini] ${m.name} (${m.ver}) failed (status ${resp.status}). Trying next...`);
     } catch (e) {
-      console.error(`[Gemini] Failed to call ${m}:`, e);
+      console.error(`[Gemini] Failed to call ${m.name}:`, e);
     }
   }
 
