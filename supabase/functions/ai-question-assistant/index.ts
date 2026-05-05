@@ -317,12 +317,10 @@ async function callGeminiRaw(
   };
 
   const modelsToTry = [
-    { name: 'gemini-1.5-flash-latest', ver: 'v1beta' },
     { name: 'gemini-1.5-flash', ver: 'v1beta' },
-    { name: 'gemini-1.5-flash', ver: 'v1' },
     { name: 'gemini-2.0-flash', ver: 'v1beta' },
-    { name: 'gemini-1.5-pro-latest', ver: 'v1beta' },
     { name: 'gemini-1.5-pro', ver: 'v1beta' },
+    { name: 'gemini-1.5-flash', ver: 'v1' },
     { name: 'gemini-1.0-pro', ver: 'v1' }
   ];
 
@@ -1351,10 +1349,10 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
         try {
           return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
         } catch (e) {
-          if (groqKey && (e instanceof Error && (e.message.includes('429') || e.message.includes('quota')))) {
-            console.warn('[callLlmFlex] Gemini failed, falling back to Groq...');
+          if (groqKey) {
+            console.warn('[callLlmFlex] Gemini failed (404/Quota/Error), falling back to Groq...', e);
             const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
-            return g.choices?.[0]?.message?.content ?? '';
+            return `[NOTICE: Gemini Unavailable. Using Groq Fallback]\n\n` + (g.choices?.[0]?.message?.content ?? '');
           }
           throw e;
         }
@@ -1406,10 +1404,10 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
       try {
         assistantContent = await tryGemini();
       } catch (e) {
-        if (groqKey && (e instanceof Error && (e.message.includes('429') || e.message.includes('quota')))) {
-          console.warn('[Assistant] Gemini Quota Exceeded. EMERGENCY FALLBACK to Groq...');
+        if (groqKey) {
+          console.warn('[Assistant] Gemini failed (404/Quota/Error). EMERGENCY FALLBACK to Groq...');
           const groqData = await callGroq(groqMessages, 0.2);
-          assistantContent = `[NOTICE: Gemini Quota Exceeded. Using Llama-3 Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
+          assistantContent = `[NOTICE: Gemini Unavailable. Using Llama-3 Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
         } else {
           throw e;
         }
