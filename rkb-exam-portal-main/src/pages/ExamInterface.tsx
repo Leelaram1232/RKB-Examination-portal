@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare, Eye, RefreshCw, User, Clock, Shield, CheckSquare, Check, Cloud, Loader2, WifiOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';
@@ -99,6 +99,8 @@ export default function ExamInterface() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [activeSection, setActiveSection] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
+  const [unsyncedAnswers, setUnsyncedAnswers] = useState<Set<string>>(new Set());
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [endTime, setEndTime] = useState<Date | null>(null);
@@ -112,6 +114,10 @@ export default function ExamInterface() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCameraWarning, setShowCameraWarning] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
+  
+  // Admin message states
+  const [adminMessage, setAdminMessage] = useState('');
+  const [showAdminMessageDialog, setShowAdminMessageDialog] = useState(false);
 
   const hasInitialized = useRef(false);
   const violationRef = useRef(0);
@@ -147,7 +153,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           violation_count: count,
@@ -164,7 +170,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           is_blocked: true,
@@ -251,12 +257,12 @@ export default function ExamInterface() {
       }
 
       // Check if session is blocked
-      const { data: sessionStatus } = await supabase
+      const { data: sessionStatus } = await externalSupabase
         .from('exam_sessions')
         .select('is_blocked, violation_count, proctoring_violations')
         .eq('id', parsedSession.session_id)
         .single();
-
+ 
       if (sessionStatus?.is_blocked) {
         setIsBlocked(true);
         setViolationCount(sessionStatus.violation_count || 0);
@@ -268,7 +274,25 @@ export default function ExamInterface() {
           violationsRef.current = sessionStatus.proctoring_violations as unknown as ViolationRecord[];
         }
       }
-
+ 
+      // Load local backup if it exists (very important for network resilience)
+      const backup = localStorage.getItem(`exam_backup_${parsedSession.session_id}`);
+      if (backup) {
+        try {
+          const backupAnswers = JSON.parse(backup);
+          setAnswers(prev => {
+            const merged = new Map(prev);
+            Object.entries(backupAnswers).forEach(([qid, ans]: [string, any]) => {
+              merged.set(qid, ans);
+            });
+            return merged;
+          });
+          console.log('[BACKUP] Restored answers from localStorage');
+        } catch (e) {
+          console.error('[BACKUP] Failed to parse local backup:', e);
+        }
+      }
+ 
       setIsLoading(false);
     };
 
@@ -321,6 +345,45 @@ export default function ExamInterface() {
       supabase.removeChannel(channel);
     };
   }, [session?.exam?.id, toast]);
+
+  // Real-time admin messages subscription
+  useEffect(() => {
+    if (!session?.exam?.id || !session?.session_id) return;
+
+    const channel = supabase
+      .channel(`exam_messages_${session.exam.id}`)
+      .on(
+        'broadcast',
+        { event: 'admin_msg' },
+        (payload) => {
+          console.log('[Real-time] Admin message received:', payload);
+          if (payload.payload?.sessionIds?.includes(session.session_id)) {
+            setAdminMessage(payload.payload.message);
+            setShowAdminMessageDialog(true);
+          }
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'force_end' },
+        (payload) => {
+          console.log('[Real-time] Force end received:', payload);
+          if (payload.payload?.sessionId === session.session_id) {
+            toast({
+              title: 'Exam Terminated',
+              description: 'Your exam session has been ended by the administrator.',
+              variant: 'destructive',
+            });
+            handleSubmit(false, true);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.exam?.id, session?.session_id]);
 
   // Start LiveKit camera streaming once we have a valid session + exam id
   useEffect(() => {
@@ -375,30 +438,78 @@ export default function ExamInterface() {
     }
   }, [currentQuestion, answers]);
 
+  // Online/Offline listeners
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log('[NETWORK] Connection restored. Triggering sync...');
+      setSyncStatus('syncing');
+      // Sync will be picked up by the retry interval
+    };
+    const handleOffline = () => {
+      console.log('[NETWORK] Connection lost.');
+      setSyncStatus('offline');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Background sync effect for unsynced answers
+  useEffect(() => {
+    if (unsyncedAnswers.size === 0 || !navigator.onLine) return;
+
+    const interval = setInterval(() => {
+      console.log(`[SYNC] Attempting to sync ${unsyncedAnswers.size} unsynced answers...`);
+      const qid = Array.from(unsyncedAnswers)[0]; // Try the first one
+      const ans = answers.get(qid);
+      if (ans) {
+        saveAnswer(ans.question_id, ans.selected_option, ans.text_answer || null, ans.is_marked_for_review, 0, true);
+      }
+    }, 10000); // Try every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [unsyncedAnswers, answers]);
+
   // Save answer to database via edge function with retry logic
   const saveAnswer = useCallback(
-    async (questionId: string, selectedOption: string | null, textAnswer: string | null, isMarkedForReview: boolean, retryCount = 0) => {
-      if (!session) {
-        console.error('Cannot save answer: No session');
-        return;
-      }
+    async (
+      questionId: string, 
+      selectedOption: string | null, 
+      textAnswer: string | null, 
+      isMarkedForReview: boolean, 
+      retryCount = 0,
+      isBackgroundSync = false
+    ) => {
+      if (!session) return;
 
-      const maxRetries = 3;
-      console.log(`[SAVE_ANSWER] Saving answer for question ${questionId}, attempt ${retryCount + 1}`);
-      console.log(`[SAVE_ANSWER] Session ID: ${session.session_id}`);
-      console.log(`[SAVE_ANSWER] Selected option: ${selectedOption}, Marked for review: ${isMarkedForReview}`);
-
-      // Optimistically update local state first for better UX
+      const maxRetries = isBackgroundSync ? 0 : 3; // Don't chain retries during background sync
+      
+      // Update local state and backup immediately
       setAnswers((prev) => {
         const newMap = new Map(prev);
-        newMap.set(questionId, {
+        const ans = {
           question_id: questionId,
           selected_option: selectedOption,
           text_answer: textAnswer,
           is_marked_for_review: !!isMarkedForReview,
-        });
+        };
+        newMap.set(questionId, ans);
+        
+        // Save full map to localStorage for persistence across reloads
+        const backupData = Object.fromEntries(newMap);
+        localStorage.setItem(`exam_backup_${session.session_id}`, JSON.stringify(backupData));
+        
         return newMap;
       });
+
+      if (!isBackgroundSync) {
+        setUnsyncedAnswers(prev => new Set(prev).add(questionId));
+        setSyncStatus('syncing');
+      }
 
       try {
         const payload = {
@@ -408,61 +519,58 @@ export default function ExamInterface() {
           text_answer: textAnswer,
           is_marked_for_review: !!isMarkedForReview,
         };
-        console.log('[SAVE_ANSWER] Sending payload:', payload);
         
         const { data: result, error: invocationError } = await invokeExternalFunction<any>('save-answer', payload);
 
-        if (invocationError) {
-          console.error('[SAVE_ANSWER] Function invocation error:', invocationError);
-          throw new Error(invocationError.message || 'Save failed');
-        }
-        
-        if (!result || !result.success) {
-          console.error('[SAVE_ANSWER] Save rejected:', result?.error);
-          throw new Error(result?.error || 'Save failed');
+        if (invocationError || !result?.success) {
+          throw new Error(invocationError?.message || result?.error || 'Save failed');
         }
 
-        console.log('[SAVE_ANSWER] Answer saved successfully!');
+        // Success!
+        setUnsyncedAnswers(prev => {
+          const next = new Set(prev);
+          next.delete(questionId);
+          if (next.size === 0) setSyncStatus('synced');
+          return next;
+        });
       } catch (err: any) {
-        console.error(`[SAVE_ANSWER] Error on attempt ${retryCount + 1}:`, err);
+        console.error(`[SAVE_ANSWER] Error on question ${questionId}:`, err);
         
-        // Retry logic
         if (retryCount < maxRetries) {
-          console.log(`[SAVE_ANSWER] Retrying in ${(retryCount + 1) * 1000}ms...`);
           setTimeout(() => {
-            saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1);
+            saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1, false);
           }, (retryCount + 1) * 1000);
         } else {
-          console.error('[SAVE_ANSWER] Max retries reached. Attempting direct DB fallback...');
-          
-          // --- EMERGENCY FALLBACK ---
-          const { error: fallbackError } = await externalSupabase
-            .from('student_answers')
-            .upsert({
-              session_id: session.session_id,
-              question_id: questionId,
-              selected_option: selectedOption,
-              text_answer: textAnswer,
-              is_marked_for_review: !!isMarkedForReview,
-              answered_at: new Date().toISOString()
-            }, {
-              onConflict: 'session_id,question_id'
-            });
+          // If all retries failed (or it was a background sync), try the direct DB fallback
+          try {
+            const { error: fallbackError } = await externalSupabase
+              .from('student_answers')
+              .upsert({
+                session_id: session.session_id,
+                question_id: questionId,
+                selected_option: selectedOption,
+                text_answer: textAnswer,
+                is_marked_for_review: !!isMarkedForReview,
+                answered_at: new Date().toISOString()
+              }, { onConflict: 'session_id,question_id' });
 
-          if (fallbackError) {
-            console.error('[SAVE_ANSWER] Direct fallback also failed:', fallbackError);
-            toast({
-              title: 'Final Save Error',
-              description: 'We could not save your answer. Please notify the invigilator.',
-              variant: 'destructive',
-            });
-          } else {
-            console.log('[SAVE_ANSWER] Direct fallback successful (Direct DB Save)');
+            if (!fallbackError) {
+              setUnsyncedAnswers(prev => {
+                const next = new Set(prev);
+                next.delete(questionId);
+                if (next.size === 0) setSyncStatus('synced');
+                return next;
+              });
+            } else {
+              setSyncStatus(navigator.onLine ? 'error' : 'offline');
+            }
+          } catch (e) {
+            setSyncStatus(navigator.onLine ? 'error' : 'offline');
           }
         }
       }
     },
-    [session, toast]
+    [session]
   );
 
   const saveCurrentNumericalAnswer = useCallback(() => {
@@ -544,7 +652,7 @@ export default function ExamInterface() {
 
   // Submit exam
   const handleSubmit = useCallback(
-    async (isAutoSubmit = false) => {
+    async (isAutoSubmit = false, isTerminatedByAdmin = false) => {
       if (!session) return;
       
       if (currentQuestion?.question_type === 'NUMERICAL') {
@@ -558,6 +666,7 @@ export default function ExamInterface() {
         const { data: result, error: invocationError } = await invokeExternalFunction<any>('submit-exam', {
           session_id: session.session_id,
           is_auto_submit: isAutoSubmit,
+          is_terminated_by_admin: isTerminatedByAdmin,
         });
 
         if (invocationError) {
@@ -583,7 +692,7 @@ export default function ExamInterface() {
             .from('exam_sessions')
             .update({
               is_completed: true,
-              exam_status: 'finally_submitted',
+              exam_status: isTerminatedByAdmin ? 'terminated_by_admin' : 'finally_submitted',
               submitted_at: new Date().toISOString()
             })
             .eq('id', session.session_id);
@@ -892,6 +1001,8 @@ export default function ExamInterface() {
         endTime={endTime}
         onTimeUp={handleTimeUp}
         violationCount={violationCount}
+        syncStatus={syncStatus}
+        unsyncedCount={unsyncedAnswers.size}
       />
 
       {/* Main Content */}
@@ -1158,6 +1269,29 @@ export default function ExamInterface() {
           <AlertDialogFooter>
             <AlertDialogAction onClick={() => setShowCameraWarning(false)}>
               I Understand
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Admin Message Dialog */}
+      <AlertDialog open={showAdminMessageDialog} onOpenChange={setShowAdminMessageDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-primary" />
+              Notice
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-4 text-base text-foreground whitespace-pre-wrap">
+              {adminMessage}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => {
+              setShowAdminMessageDialog(false);
+              enterFullscreen();
+            }}>
+              Continue Exam
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

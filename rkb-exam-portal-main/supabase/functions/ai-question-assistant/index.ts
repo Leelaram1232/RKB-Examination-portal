@@ -42,7 +42,7 @@ async function callMathpixPdf(
   console.log('[Mathpix] Submitting PDF for processing:', fileUrl);
 
   // Use polling (no SSE) to avoid Mathpix streaming 504s/compute limits.
-  // We request a lightweight text format (`md`) rather than `mmd` to reduce compute.
+  // We request a lightweight text format (`md`) rather than `md` to reduce compute.
   const submitBody: Record<string, unknown> = {
     url: fileUrl,
     conversion_formats: { md: true },
@@ -290,46 +290,78 @@ async function callGeminiRaw(
   maxOutputTokens?: number
 ): Promise<string> {
   const model = (Deno.env.get('GEMINI_MODEL') || 'gemini-2.0-flash').trim();
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  const doReq = (jsonMode: boolean) => {
+  
+  const tryModel = async (modelName: string, isJson: boolean, apiVersion = 'v1beta') => {
+    const currentUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const generationConfig: Record<string, unknown> = {
       temperature: 0.15,
       maxOutputTokens: maxOutputTokens ?? 8192,
     };
-    if (jsonMode) generationConfig.responseMimeType = 'application/json';
-    return fetch(url, {
+    if (isJson) generationConfig.responseMimeType = 'application/json';
+    
+    const body: Record<string, unknown> = {
+      contents: [{ role: 'user', parts: [{ text: apiVersion === 'v1' ? `SYSTEM INSTRUCTION: ${systemInstruction}\n\nUSER REQUEST: ${userText}` : userText }] }],
+      generationConfig,
+    };
+
+    if (apiVersion !== 'v1') {
+      body.systemInstruction = { parts: [{ text: systemInstruction }] };
+    }
+
+    console.log(`[Gemini] Attempting ${modelName} via ${apiVersion}...`);
+    return await fetch(currentUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig,
-      }),
+      body: JSON.stringify(body),
     });
   };
 
-  let resp = await doReq(preferJson);
-  let txt = await resp.text();
-  if (!resp.ok && preferJson) {
-    resp = await doReq(false);
-    txt = await resp.text();
+  const modelsToTry = [
+    { name: 'gemini-1.5-flash', ver: 'v1beta' },
+    { name: 'gemini-2.0-flash', ver: 'v1beta' },
+    { name: 'gemini-1.5-pro', ver: 'v1beta' },
+    { name: 'gemini-1.5-flash', ver: 'v1' },
+    { name: 'gemini-1.0-pro', ver: 'v1' }
+  ];
+
+  let lastResp: Response | null = null;
+  let lastTxt = '';
+
+  for (const m of modelsToTry) {
+    try {
+      let resp = await tryModel(m.name, preferJson, m.ver);
+      let txt = await resp.text();
+
+      if (!resp.ok && preferJson) {
+        resp = await tryModel(m.name, false, m.ver);
+        txt = await resp.text();
+      }
+
+      if (resp.ok) {
+        const j = JSON.parse(txt) as Record<string, unknown>;
+        const text = (j.candidates as any)?.[0]?.content?.parts?.[0]?.text;
+        if (typeof text === 'string' && text.trim()) {
+          return text.trim();
+        }
+      }
+
+      lastResp = resp;
+      lastTxt = txt;
+      
+      // If it's a 429 or quota error, continue to next model
+      const isQuota = resp.status === 429 || (resp.status === 400 && txt.includes('quota'));
+      const isNotFound = resp.status === 404;
+      
+      if (!isQuota && !isNotFound) break; 
+      
+      console.warn(`[Gemini] ${m.name} (${m.ver}) failed (status ${resp.status}). Trying next...`);
+    } catch (e) {
+      console.error(`[Gemini] Failed to call ${m.name}:`, e);
+    }
   }
-  if (!resp.ok) {
-    throw new Error(`Gemini HTTP ${resp.status}: ${txt.slice(0, 500)}`);
-  }
-  const j = JSON.parse(txt) as Record<string, unknown>;
-  const candidates = j.candidates as unknown[] | undefined;
-  const first = candidates?.[0] as Record<string, unknown> | undefined;
-  const content = first?.content as Record<string, unknown> | undefined;
-  const parts = content?.parts as unknown[] | undefined;
-  const part0 = parts?.[0] as Record<string, unknown> | undefined;
-  const text = part0?.text;
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('Gemini returned no text');
-  }
-  return text.trim();
+
+  const status = lastResp?.status ?? 500;
+  throw new Error(`Gemini API failed (All models). Last status ${status}: ${lastTxt.slice(0, 500)}`);
 }
 
 async function callGeminiJson(
@@ -487,11 +519,18 @@ async function applyGeminiRefinementsToQuestions(
     };
   });
 
-  const system = `You validate exam questions after another model wrote them.
-For each item with is_fill false (MCQ): ensure correct_option is A,B,C, or D; ensure that option's text is non-empty; verify the marked letter is the correct answer for the stem (solve mentally, be concise).
-For is_fill true: ensure correct_answer is present and meaningful.
+  const system = `You are an elite exam validator. You solve every question mentally to verify the answer.
+CRITICAL RULES:
+1. For MCQ questions (is_fill: false):
+   - Solve the question yourself.
+   - Ensure 'correct_option' (A, B, C, or D) is the correct answer.
+   - If 'correct_option' is wrong but the correct answer IS in another option, update 'correct_option'.
+   - If the correct answer is NOT present in any option, YOU MUST change the text of one of the wrong options to the correct answer.
+   - Ensure all option texts are distinct and meaningful (no placeholders like "Option A").
+2. For FILL_BLANK (is_fill: true):
+   - Ensure 'correct_answer' is present and mathematically/factually correct.
 Return ONLY JSON: { "fixes": [ { "i": number, "correct_option"?: "A"|"B"|"C"|"D", "option_a"?: string, "option_b"?: string, "option_c"?: string, "option_d"?: string, "correct_answer"?: string, "note"?: string } ] }
-Include ONLY questions that need changes. If none, return {"fixes":[]}.`;
+Include ONLY questions that need changes. If all are perfect, return {"fixes":[]}.`;
 
   const parsed = (await callGeminiJson(apiKey, system, JSON.stringify(slim))) as {
     fixes?: Array<Record<string, unknown>>;
@@ -1178,51 +1217,70 @@ Deno.serve(async (req) => {
       // Keep only the most recent part of the conversation (older messages add tokens but usually don't help extraction).
       .slice(-(file_url ? 2 : 6));
 
-    const generateSystemPrompt = `You are an expert Exam Question Assistant for JEE/NEET and regional-language exams.
-Generate or extract high-quality questions based on the provided context or prompt.
+    const generateSystemPrompt = `You are an advanced exam question generator integrated into the RKB Exam Portal.
+Your task is to generate high-quality, non-repeating exam questions based on the user's request.
 
-### LANGUAGE SUPPORT
-- You MUST support **Telugu (తెలుగు)**, Hindi, Tamil, Kannada and English.
-- If the OCR text contains Telugu or other regional language text, preserve it EXACTLY as-is in the question_text and options.
-- Do NOT translate regional language text to English unless explicitly asked.
-- Mixed-language questions (e.g. English + Telugu) are common — preserve them.
+### STRICT RULES:
 
-### QUESTION TYPES
-1. **MCQ**: Default. 4 options (option_a to option_d), correct_option (A/B/C/D).
-2. **FILL_BLANK**: Only if requested. No options required. Needs correct_answer.
+1. **Question Types Supported**:
+   - Multiple Choice Questions (MCQs)
+   - Fill in the Blanks
 
-### DIAGRAM / IMAGE HANDLING
-- If the OCR text contains image references like \`![...](...) \` or \`\\includegraphics{...}\` or \`[IMAGE]\` or Mathpix image URLs, you MUST:
-  1. Set "has_image": true for that question.
-  2. Put the image URL (if present in OCR) in "image_url" field.
-  3. Put a description in "image_description" field.
-- Common Mathpix image URL patterns: \`https://cdn.mathpix.com/...\` — preserve these URLs exactly.
-- If a question references a figure/diagram/graph/circuit but no URL is found, still set has_image: true and describe it.
+2. **MCQ Requirements**:
+   - Each question must have exactly 4 options.
+   - Only ONE option must be correct.
+   - Clearly mark the correct answer.
+   - Options should be realistic and not obvious.
 
-### CRITICAL OUTPUT RULES
-- **ALWAYS INCLUDE QUESTIONS**: If the user asks to generate N questions, you MUST output EXACTLY N question objects. Do not output more or fewer than requested.
-- **DOUBLE CHECK ANSWERS**: You MUST solve the generated question internally and verify that the correct answer is actually present in one of the 4 options (option_a, option_b, option_c, option_d).
-- **ADMIN MCQ STANDARD**: Each MCQ must have four suitable, distinct options (no placeholders) and exactly ONE defensible correct answer; correct_option must be A/B/C/D matching that option only.
-- **CORRECT OPTION MATCH**: Ensure the 'correct_option' field correctly points to the letter (A, B, C, or D) that holds the right answer.
-- **TAGS REQUIRED**: You MUST wrap the JSON array inside <questions_json> and </questions_json> tags.
-- **NO MARKDOWN**: Do not wrap JSON in \`\`\` fences.
-- **MCQ IS DEFAULT**: Unless "numerical" or "fill in blank" is requested, always stick to MCQ.
-- **AVOID REPETITION**: Never repeat a question from the conversation history.
-- **USE OCR FIRST**: If OCR Extracted Content is provided (file uploaded), you MUST generate questions strictly from that OCR text. Do not invent unrelated questions.
+3. **Fill in the Blanks**:
+   - Provide the question with a blank ______ in the text.
+   - Provide the correct answer separately.
 
-### ANSWER KEY / SOLUTIONS
-- If OCR Extracted Content contains an answer key, correct answer list, or solution table, you MUST use it to fill:
--  'correct_option' for MCQ questions, and/or
--  'correct_answer' for fill-in-the-blank/numerical questions.
-- Match by 'question_number' if present in the OCR.
-- If question numbers are not present, match by the order of appearance in the OCR (Q1 uses the first answer entry, etc.).
-- Do NOT guess correct answers when the answer key is present; derive them from the OCR.
-- ALWAYS verify that the option text corresponds correctly to the answer key letter.
+4. **No Repetition Policy**:
+   - NEVER repeat questions within the same response.
+   - NEVER repeat questions from previous responses in the same session.
+   - Maintain uniqueness in wording and concept.
 
-### JSON SCHEMA
+5. **Quality Constraints**:
+   - Questions must be clear, grammatically correct, and exam-level.
+   - Avoid ambiguous or trick questions unless explicitly asked.
+   - Ensure factual correctness.
+
+6. **Output Format (STRICT)**:
+   You must provide the questions in a human-readable format FIRST, followed by a JSON block.
+   
+   **For MCQs:**
+   Q1. <Question>
+   A. <Option 1>
+   B. <Option 2>
+   C. <Option 3>
+   D. <Option 4>
+   Correct Answer: <Option Letter>
+
+   **For Fill in the Blanks:**
+   Q1. <Sentence with blank ______>
+   Answer: <Correct Answer>
+
+7. **Numbering & Difficulty**:
+   - If the user asks for multiple questions:
+     - Number them sequentially (Q1, Q2, Q3...)
+     - Mix difficulty levels (easy, medium, hard)
+
+8. **Context Handling**:
+   - If insufficient context is provided, assume a standard academic level unless specified.
+
+9. **Behavioral Rules**:
+   - Do NOT explain answers unless explicitly asked.
+   - Ensure every response is fresh, unique, and non-repetitive.
+
+### TECHNICAL REQUIREMENTS:
+- **LANGUAGE SUPPORT**: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English. Preserve regional languages.
+- **JSON BLOCK REQUIRED**: You MUST append a JSON array wrapped in <questions_json> and </questions_json> tags at the end of your response.
+
+### JSON SCHEMA:
 [
   {
-    "question_text": "text with LaTeX $...$ or Telugu తెలుగు",
+    "question_text": "text with LaTeX $...$ or regional language",
     "question_type": "MCQ" | "FILL_BLANK",
     "option_a": "Text...", "option_b": "Text...", "option_c": "Text...", "option_d": "Text...",
     "correct_option": "A|B|C|D",
@@ -1230,8 +1288,7 @@ Generate or extract high-quality questions based on the provided context or prom
     "section_name": "Section A",
     "marks": 4,
     "has_image": false,
-    "image_url": null,
-    "image_description": null
+    "image_url": null
   }
 ]
 
@@ -1289,48 +1346,94 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
         const sys = messages.find((m) => m.role === 'system')?.content || '';
         const rest = messages.filter((m) => m.role !== 'system');
         const convo = rest.map((m) => `${m.role}: ${m.content}`).join('\n\n');
-        return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        try {
+          return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        } catch (e) {
+          if (groqKey) {
+            console.warn('[callLlmFlex] Gemini failed (404/Quota/Error), falling back to Groq...', e);
+            const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+            return `[NOTICE: Gemini Unavailable. Using Groq Fallback]\n\n` + (g.choices?.[0]?.message?.content ?? '');
+          }
+          throw e;
+        }
       }
       if (llm_mode === 'both') {
-        const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
-        const draft = g.choices?.[0]?.message?.content ?? '';
+        let draft = '';
+        try {
+          const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
+          draft = g.choices?.[0]?.message?.content ?? '';
+        } catch (e) {
+          console.warn('[callLlmFlex] Groq draft failed, trying Gemini direct...', e);
+          const sys = messages.find((m) => m.role === 'system')?.content || '';
+          const rest = messages.filter((m) => m.role !== 'system');
+          const convo = rest.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+          return await callGeminiRaw(geminiKey, sys, convo, false, Math.min(maxTok, 8192));
+        }
+
         const sys = messages.find((m) => m.role === 'system')?.content || '';
-        const merged = await callGeminiRaw(
-          geminiKey,
-          sys,
-          `Polish this assistant output (fix <questions_json> / JSON only if needed; keep meaning):\n${draft.slice(0, 80000)}`,
-          false,
-          8192
-        );
-        return merged.trim() ? merged : draft;
+        try {
+          const merged = await callGeminiRaw(
+            geminiKey,
+            sys,
+            `Polish this assistant output (fix <questions_json> / JSON only if needed; keep meaning):\n${draft.slice(0, 80000)}`,
+            false,
+            8192
+          );
+          return merged.trim() ? merged : draft;
+        } catch (e) {
+          console.warn('[callLlmFlex] Gemini refinement failed, returning raw Groq draft.', e);
+          return draft;
+        }
       }
       const g = await callGroqApi(groqKey!, messages, temperature, maxTok);
       return g.choices?.[0]?.message?.content ?? '';
     };
 
     let assistantContent = '';
+    const tryGemini = async () => {
+      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+      return await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
+    };
+
     if (llm_mode === 'groq') {
       console.log('[Assistant] LLM mode: Groq (llama-3.3-70b-versatile)');
       const groqData = await callGroq(groqMessages, 0.2);
       assistantContent = groqData.choices?.[0]?.message?.content ?? '';
     } else if (llm_mode === 'gemini') {
       console.log('[Assistant] LLM mode: Gemini');
-      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
-      assistantContent = await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
+      try {
+        assistantContent = await tryGemini();
+      } catch (e) {
+        if (groqKey) {
+          console.warn('[Assistant] Gemini failed (404/Quota/Error). EMERGENCY FALLBACK to Groq...');
+          const groqData = await callGroq(groqMessages, 0.2);
+          assistantContent = `[NOTICE: Gemini Unavailable. Using Llama-3 Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
+        } else {
+          throw e;
+        }
+      }
     } else {
       console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
       const groqData = await callGroq(groqMessages, 0.2);
       const draft = groqData.choices?.[0]?.message?.content ?? '';
-      const refineUser = `Another model (Groq) produced the draft below. Improve it:
-(1) Preserve intent, language, and any OCR-derived text.
-(2) For every MCQ inside <questions_json>, ensure four suitable distinct options, exactly one correct answer, and correct_option is A/B/C/D matching that option.
-(3) Fix broken JSON or obvious LaTeX JSON issues.
-(4) Output ONLY the complete final assistant message (same format as the draft), including <questions_json>...</questions_json> when the draft had questions.
+      const refineUser = `Another model (Groq) produced the draft below. Perform a rigorous quality check and improve it.
+YOU MUST FOLLOW THESE STRICT RULES:
+(1) HUMAN-READABLE FIRST: Provide the questions in the exact format (Q1. <Question>, A., B., C., D., Correct Answer:) before the JSON block.
+(2) NO HALLUCINATIONS: Solve each question yourself. If the correct answer is missing or wrong, YOU MUST fix it.
+(3) PRESERVE LANGUAGES: Keep Telugu, Hindi, etc., as found in the draft or OCR.
+(4) JSON BLOCK: Append the JSON array wrapped in <questions_json> at the very end.
+(5) NO EXPLANATIONS: Do not explain the answers.
 
-DRAFT:
+DRAFT TO IMPROVE:
 ${draft.slice(0, 120000)}`;
-      const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
-      assistantContent = merged.trim() ? merged : draft;
+      
+      try {
+        const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
+        assistantContent = merged.trim() ? merged : draft;
+      } catch (e) {
+        console.warn('[Assistant] Gemini refinement failed (Quota/API). Using raw Groq draft.', e);
+        assistantContent = `[NOTICE: Gemini Refinement Unavailable. Using Draft]\n\n` + draft;
+      }
     }
     console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
     // Track the best "raw" LLM text we have (may include <questions_json>).
@@ -1645,7 +1748,7 @@ ${lastUser}${ocrSnippetForForce}`;
     let geminiPostUsed = false;
     if (
       geminiKey &&
-      llm_mode === 'groq' &&
+      (llm_mode === 'groq' || llm_mode === 'both') &&
       Array.isArray(exportQuestions) &&
       exportQuestions.length > 0 &&
       action !== 'review'
@@ -1685,6 +1788,18 @@ ${lastUser}${ocrSnippetForForce}`;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[Assistant] Error:', msg);
+    
+    // If it's a quota error, return a friendly 200 response so the UI can show the message
+    if (msg.includes('429') || msg.includes('quota')) {
+       return new Response(JSON.stringify({ 
+        content: `**AI API Quota Exceeded**\n\nYour Gemini API key has hit its free-tier limit. \n\n**To fix this:**\n1. Switch the **Model** to **Groq** in the sidebar (if you have a Groq API key set).\n2. Wait a few minutes for the quota to reset.\n3. Check your billing details at [Google AI Studio](https://aistudio.google.com/).\n\nOriginal error: ${msg}`,
+        questions: [],
+        meta: { error: true, type: 'quota' }
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response(JSON.stringify({ 
       error: msg,
       details: error instanceof Error ? error.stack : undefined

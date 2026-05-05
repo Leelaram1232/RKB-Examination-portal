@@ -237,6 +237,22 @@ export default function ExamResults() {
 
     toast.success('Results published successfully!');
     setExamInfo((prev) => prev ? { ...prev, results_published: true, results_published_at: new Date().toISOString() } : null);
+
+    // Trigger email notifications in background
+    console.log('[Results] Triggering student email notifications...');
+    invokeExternalFunction('send-result-emails', { exam_id: examId })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[Results] Failed to send emails:', error);
+          toast.error('Results published, but failed to trigger email notifications.');
+        } else {
+          console.log('[Results] Email notifications triggered:', data);
+          toast.info('Email notifications are being sent to all registered students.');
+        }
+      })
+      .catch(err => {
+        console.error('[Results] Unexpected error triggering emails:', err);
+      });
   };
 
   const handleUnpublishResults = async () => {

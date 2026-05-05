@@ -13,7 +13,8 @@ import {
   Clock,
   Shield,
   MessageSquare,
-  CheckSquare
+  CheckSquare,
+  RotateCcw
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -524,14 +525,15 @@ const SessionManagement = () => {
           <Button
             size="sm"
             variant="default"
+            className={cn("bg-orange-500 hover:bg-orange-600", isMobile ? "flex-1 text-xs px-2" : "")}
             onClick={() => {
               setSelectedSession(session);
               setShowAllowContinueDialog(true);
             }}
-            className={isMobile ? "flex-1 text-xs px-2" : ""}
+            title="Resume Exam for student"
           >
-            <Play className="w-4 h-4 mr-1" />
-            Resume
+            <RotateCcw className="w-4 h-4 mr-1" />
+            Resume Exam
           </Button>
         )}
 
@@ -710,13 +712,15 @@ const SessionManagement = () => {
                           <Button
                             size="sm"
                             variant="default"
+                            className="bg-orange-500 hover:bg-orange-600"
                             onClick={() => {
                               setSelectedSession(session);
                               setShowAllowContinueDialog(true);
                             }}
+                            title="Resume Exam for student"
                           >
-                            <Play className="w-4 h-4 mr-1" />
-                            Allow Continue
+                            <RotateCcw className="w-4 h-4 mr-1" />
+                            Resume Exam
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -874,9 +878,9 @@ const SessionManagement = () => {
       <AlertDialog open={showAllowContinueDialog} onOpenChange={setShowAllowContinueDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Allow Student to Continue Exam?</AlertDialogTitle>
+            <AlertDialogTitle>Resume Exam for Student?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will unblock the session and allow the student to continue their exam.
+              This will unblock the session and allow the student to resume their exam.
               The student will need to log in again to resume.
               <br /><br />
               <strong>Student:</strong> {selectedSession?.registration.student.full_name}
@@ -887,7 +891,7 @@ const SessionManagement = () => {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isProcessing}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleAllowContinue} disabled={isProcessing}>
-              {isProcessing ? 'Processing...' : 'Allow Continue'}
+              {isProcessing ? 'Processing...' : 'Resume Exam'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
