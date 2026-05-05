@@ -521,7 +521,7 @@ const SessionManagement = () => {
           </Button>
         )}
 
-        {session.is_auto_submitted && (
+        {session.is_completed && (
           <Button
             size="sm"
             variant="default"
@@ -585,18 +585,7 @@ const SessionManagement = () => {
       title="Session Management" 
       description={`Manage exam sessions for ${exam?.exam_name || 'Exam'}`}
     >
-      {/* Debug Overlay (Admin Only) */}
-      <div className="fixed bottom-4 right-4 z-50 bg-black/80 text-white p-3 rounded-lg text-xs font-mono shadow-xl border border-white/20">
-        <p className="font-bold border-b border-white/20 mb-1 pb-1">Data Debugger</p>
-        <p>Exam ID: {examId?.substring(0, 8)}...</p>
-        <p>Total Sessions: {sessions.length}</p>
-        <button 
-          onClick={() => fetchData()} 
-          className="mt-2 w-full bg-blue-600 hover:bg-blue-500 py-1 rounded transition-colors"
-        >
-          Force Reload
-        </button>
-      </div>
+
 
       <div className="space-y-6">
         {/* Back Button */}
