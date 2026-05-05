@@ -299,14 +299,19 @@ async function callGeminiRaw(
     };
     if (isJson) generationConfig.responseMimeType = 'application/json';
     
+    const body: Record<string, unknown> = {
+      contents: [{ role: 'user', parts: [{ text: apiVersion === 'v1' ? `SYSTEM INSTRUCTION: ${systemInstruction}\n\nUSER REQUEST: ${userText}` : userText }] }],
+      generationConfig,
+    };
+
+    if (apiVersion !== 'v1') {
+      body.systemInstruction = { parts: [{ text: systemInstruction }] };
+    }
+
     return await fetch(currentUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig,
-      }),
+      body: JSON.stringify(body),
     });
   };
 
@@ -1215,36 +1220,36 @@ Deno.serve(async (req) => {
     const generateSystemPrompt = `You are an advanced exam question generator integrated into the RKB Exam Portal.
 Your task is to generate high-quality, non-repeating exam questions based on the user's request.
 
-### STRICT RULES
+### STRICT RULES:
 
-1. Question Types Supported:
+1. **Question Types Supported**:
    - Multiple Choice Questions (MCQs)
    - Fill in the Blanks
 
-2. MCQ Requirements:
+2. **MCQ Requirements**:
    - Each question must have exactly 4 options.
    - Only ONE option must be correct.
-   - Clearly mark the correct answer in the text and the JSON.
+   - Clearly mark the correct answer.
    - Options should be realistic and not obvious.
 
-3. Fill in the Blanks:
+3. **Fill in the Blanks**:
    - Provide the question with a blank ______ in the text.
    - Provide the correct answer separately.
 
-4. No Repetition Policy:
+4. **No Repetition Policy**:
    - NEVER repeat questions within the same response.
-   - NEVER repeat questions from previous responses in the same session (conversation history).
+   - NEVER repeat questions from previous responses in the same session.
    - Maintain uniqueness in wording and concept.
 
-5. Quality Constraints:
+5. **Quality Constraints**:
    - Questions must be clear, grammatically correct, and exam-level.
    - Avoid ambiguous or trick questions unless explicitly asked.
    - Ensure factual correctness.
-   - Mix difficulty levels (easy, medium, hard).
-   - Assume a standard academic level unless specified.
 
-6. Output Format (STRICT for the chat content):
-   For MCQs:
+6. **Output Format (STRICT)**:
+   You must provide the questions in a human-readable format FIRST, followed by a JSON block.
+   
+   **For MCQs:**
    Q1. <Question>
    A. <Option 1>
    B. <Option 2>
@@ -1252,27 +1257,30 @@ Your task is to generate high-quality, non-repeating exam questions based on the
    D. <Option 4>
    Correct Answer: <Option Letter>
 
-   For Fill in the Blanks:
+   **For Fill in the Blanks:**
    Q1. <Sentence with blank ______>
    Answer: <Correct Answer>
 
-7. Sequential Numbering:
-   - Number them sequentially (Q1, Q2, Q3...) starting from the next available number if context suggests it.
+7. **Numbering & Difficulty**:
+   - If the user asks for multiple questions:
+     - Number them sequentially (Q1, Q2, Q3...)
+     - Mix difficulty levels (easy, medium, hard)
 
-8. No Explanations:
+8. **Context Handling**:
+   - If insufficient context is provided, assume a standard academic level unless specified.
+
+9. **Behavioral Rules**:
    - Do NOT explain answers unless explicitly asked.
+   - Ensure every response is fresh, unique, and non-repetitive.
 
-### TECHNICAL REQUIREMENTS
+### TECHNICAL REQUIREMENTS:
+- **LANGUAGE SUPPORT**: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English. Preserve regional languages.
+- **JSON BLOCK REQUIRED**: You MUST append a JSON array wrapped in <questions_json> and </questions_json> tags at the end of your response.
 
-- **LANGUAGE SUPPORT**: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English. Preserve regional languages in question_text and options.
-- **DIAGRAM / IMAGE HANDLING**: If OCR/Context contains images, set "has_image": true and provide "image_url" / "image_description".
-- **USE OCR FIRST**: If OCR content is provided, extract/generate questions strictly from it.
-- **JSON BLOCK REQUIRED**: In addition to the textual format above, you MUST append a JSON array wrapped in <questions_json> and </questions_json> tags.
-
-### JSON SCHEMA
+### JSON SCHEMA:
 [
   {
-    "question_text": "text with LaTeX $...$ or Telugu తెలుగు",
+    "question_text": "text with LaTeX $...$ or regional language",
     "question_type": "MCQ" | "FILL_BLANK",
     "option_a": "Text...", "option_b": "Text...", "option_c": "Text...", "option_d": "Text...",
     "correct_option": "A|B|C|D",
@@ -1280,8 +1288,7 @@ Your task is to generate high-quality, non-repeating exam questions based on the
     "section_name": "Section A",
     "marks": 4,
     "has_image": false,
-    "image_url": null,
-    "image_description": null
+    "image_url": null
   }
 ]
 
@@ -1409,15 +1416,15 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
       console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
       const groqData = await callGroq(groqMessages, 0.2);
       const draft = groqData.choices?.[0]?.message?.content ?? '';
-      const refineUser = `Another model (Groq) produced the draft below. Perform a rigorous quality check and improve it:
-(1) Preserve intent, language (Telugu/Hindi etc.), and all OCR-derived technical details.
-(2) QUALITY CHECK: Solve each question mentally. If the correct answer is missing from the options, YOU MUST edit an option to include the correct answer.
-(3) ENSURE correct_option (A/B/C/D) points to the actual correct answer.
-(4) Remove any hallucinated or placeholder text.
-(5) Fix broken JSON or LaTeX backslash issues ($...$ is fine, but avoid invalid escape characters in JSON strings).
-(6) Output ONLY the complete final assistant message including <questions_json>...</questions_json>.
+      const refineUser = `Another model (Groq) produced the draft below. Perform a rigorous quality check and improve it.
+YOU MUST FOLLOW THESE STRICT RULES:
+(1) HUMAN-READABLE FIRST: Provide the questions in the exact format (Q1. <Question>, A., B., C., D., Correct Answer:) before the JSON block.
+(2) NO HALLUCINATIONS: Solve each question yourself. If the correct answer is missing or wrong, YOU MUST fix it.
+(3) PRESERVE LANGUAGES: Keep Telugu, Hindi, etc., as found in the draft or OCR.
+(4) JSON BLOCK: Append the JSON array wrapped in <questions_json> at the very end.
+(5) NO EXPLANATIONS: Do not explain the answers.
 
-DRAFT:
+DRAFT TO IMPROVE:
 ${draft.slice(0, 120000)}`;
       
       try {
