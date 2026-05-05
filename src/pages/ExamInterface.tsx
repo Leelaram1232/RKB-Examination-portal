@@ -543,6 +543,7 @@ export default function ExamInterface() {
         } else {
           // If all retries failed (or it was a background sync), try the direct DB fallback
           try {
+            // Try upsert first (most efficient)
             const { error: fallbackError } = await externalSupabase
               .from('student_answers')
               .upsert({
@@ -554,17 +555,33 @@ export default function ExamInterface() {
                 answered_at: new Date().toISOString()
               }, { onConflict: 'session_id,question_id' });
 
-            if (!fallbackError) {
-              setUnsyncedAnswers(prev => {
-                const next = new Set(prev);
-                next.delete(questionId);
-                if (next.size === 0) setSyncStatus('synced');
-                return next;
-              });
-            } else {
-              setSyncStatus(navigator.onLine ? 'error' : 'offline');
+            if (fallbackError) {
+              console.warn('[SAVE_ANSWER] Upsert fallback failed, trying simple insert:', fallbackError);
+              // If upsert fails (likely due to missing unique constraint), try simple insert
+              // This might create duplicates but is better than losing data
+              const { error: insertError } = await externalSupabase
+                .from('student_answers')
+                .insert({
+                  session_id: session.session_id,
+                  question_id: questionId,
+                  selected_option: selectedOption,
+                  text_answer: textAnswer,
+                  is_marked_for_review: !!isMarkedForReview,
+                  answered_at: new Date().toISOString()
+                });
+              
+              if (insertError) throw insertError;
             }
+
+            // If we got here, one of the fallbacks worked
+            setUnsyncedAnswers(prev => {
+              const next = new Set(prev);
+              next.delete(questionId);
+              if (next.size === 0) setSyncStatus('synced');
+              return next;
+            });
           } catch (e) {
+            console.error('[SAVE_ANSWER] All fallbacks failed:', e);
             setSyncStatus(navigator.onLine ? 'error' : 'offline');
           }
         }
