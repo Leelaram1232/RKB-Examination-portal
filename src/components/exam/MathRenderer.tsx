@@ -8,12 +8,13 @@ interface MathRendererProps {
 }
 
 // Patterns to detect LaTeX content
-const INLINE_MATH_PATTERN = /\$([^$]+)\$/g;
-const BLOCK_MATH_PATTERN = /\$\$([^$]+)\$\$/g;
-const LATEX_COMMANDS = /\\[a-zA-Z]+/;
+const INLINE_MATH_PATTERN = /\$([^$]+)\$/;
+const BLOCK_MATH_PATTERN = /\$\$([^$]+)\$\$/;
+const LATEX_COMMANDS = /\\[a-zA-Z]+|\^|_/;
 
 // Check if text contains LaTeX
 export function containsLatex(text: string): boolean {
+  if (!text) return false;
   return INLINE_MATH_PATTERN.test(text) || BLOCK_MATH_PATTERN.test(text) || LATEX_COMMANDS.test(text);
 }
 
@@ -53,10 +54,17 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
 
 // Render inline math within text
 function InlineTextWithMath({ text, className = '' }: { text: string; className?: string }) {
-  // Split by inline math patterns
+  if (!text) return null;
+
+  // Split by:
+  // 1. $...$ (standard inline math)
+  // 2. word^word or word_word (naked powers/subscripts)
+  // 3. LaTeX commands starting with \
   const parts: (string | JSX.Element)[] = [];
   let lastIndex = 0;
-  const regex = /\$([^$]+)\$/g;
+  
+  // This regex finds math-like segments
+  const regex = /(\$[^$]+\$|(?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b)|(?:\\[a-zA-Z]+(?:\{[^}]*\})?))/g;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
@@ -65,8 +73,13 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
       parts.push(text.slice(lastIndex, match.index));
     }
     
-    // Add the math
-    const math = match[1];
+    let math = match[0];
+    const isWrapped = math.startsWith('$') && math.endsWith('$');
+    
+    if (isWrapped) {
+      math = math.slice(1, -1);
+    }
+    
     try {
       parts.push(<InlineMath key={match.index} math={math} />);
     } catch (e) {
@@ -81,16 +94,8 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
     parts.push(text.slice(lastIndex));
   }
 
-  // If no math found, check for LaTeX commands without delimiters
-  if (parts.length === 0 || (parts.length === 1 && typeof parts[0] === 'string')) {
-    // Try to render as LaTeX if it contains commands
-    if (LATEX_COMMANDS.test(text)) {
-      try {
-        return <InlineMath math={text} />;
-      } catch (e) {
-        return <span className={className}>{text}</span>;
-      }
-    }
+  // If no parts were found via the regex split, just render the text
+  if (parts.length === 0) {
     return <span className={className}>{text}</span>;
   }
 

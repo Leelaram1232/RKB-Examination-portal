@@ -72,9 +72,11 @@ const normalizeAnswer = (answer: string): string => {
 
 // Check if text contains LaTeX
 const containsLatex = (text: string): boolean => {
+  if (!text) return false;
   const patterns = [
     /\$[^$]+\$/,           // Inline math $...$
     /\$\$[^$]+\$\$/,       // Block math $$...$$
+    /\^|_/,                // Powers and subscripts (simple)
     /\\frac\{/,            // Fractions
     /\\sqrt\{/,            // Square roots
     /\\int/,               // Integrals
@@ -83,8 +85,6 @@ const containsLatex = (text: string): boolean => {
     /\\alpha|\\beta|\\gamma|\\theta|\\omega|\\mu|\\lambda|\\pi/, // Greek letters
     /\\vec\{/,             // Vectors
     /\\mathbf\{/,          // Bold math
-    /\^{[^}]+}/,           // Superscripts
-    /_{[^}]+}/,            // Subscripts
     /\\rightarrow|\\leftarrow|\\leftrightarrow/, // Arrows
     /\\times|\\div|\\pm|\\mp|\\cdot/, // Operators
     /\\leq|\\geq|\\neq/,   // Comparisons

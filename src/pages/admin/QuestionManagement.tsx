@@ -55,6 +55,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MathRenderer } from '@/components/exam/MathRenderer';
 
 interface Question {
   id: string;
@@ -1009,8 +1010,8 @@ const QuestionManagement = () => {
                                 </div>
                               </TableCell>
                               <TableCell className="font-medium">{question.question_number}</TableCell>
-                              <TableCell className="max-w-md truncate">
-                                {question.question_text}
+                              <TableCell className="max-w-md">
+                                <MathRenderer content={question.question_text} />
                               </TableCell>
                               <TableCell>
                                 {questionSubject ? (
