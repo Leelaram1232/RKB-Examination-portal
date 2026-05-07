@@ -226,7 +226,7 @@ const RegistrationFlow = () => {
         return;
       }
 
-      // Create new registration
+      // Create new registration in INTERNAL database
       const registrationPayload: any = {
         exam_id: examId,
         full_name: formData.fullName,
@@ -242,7 +242,7 @@ const RegistrationFlow = () => {
         registrationPayload.student_id = studentInfo.studentId;
       }
 
-      const { data, error } = await externalSupabase
+      const { data, error } = await supabase
         .from('registrations')
         .insert(registrationPayload)
         .select()

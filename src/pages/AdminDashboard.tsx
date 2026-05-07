@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 
 interface DashboardStats {
@@ -79,18 +78,9 @@ const AdminDashboard = () => {
         };
       };
 
-      const [internalStats, externalStats] = await Promise.all([
-        fetchFromClient(supabase),
-        fetchFromClient(externalSupabase)
-      ]);
+      const internalStats = await fetchFromClient(supabase);
 
-      setStats({
-        totalStudents: Math.max(internalStats.totalStudents, externalStats.totalStudents),
-        internalRegistrations: Math.max(internalStats.internalRegistrations, externalStats.internalRegistrations),
-        externalRegistrations: Math.max(internalStats.externalRegistrations, externalStats.externalRegistrations),
-        totalRevenue: Math.max(internalStats.totalRevenue, externalStats.totalRevenue),
-        pendingPayments: Math.max(internalStats.pendingPayments, externalStats.pendingPayments),
-      });
+      setStats(internalStats);
 
       setIsLoading(false);
     };

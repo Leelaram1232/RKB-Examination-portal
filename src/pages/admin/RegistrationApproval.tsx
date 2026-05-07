@@ -116,27 +116,10 @@ const RegistrationApproval = () => {
     try {
       setIsLoading(true);
       
-      // 1. Fetch exams from both databases
-      const fetchExams = async (client: any) => {
-        const { data } = await client
-          .from('exams')
-          .select('id, exam_name, exam_code, exam_date, notify_on_approval')
-          .order('exam_name');
-        return data || [];
-      };
+      const internalExams = await fetchExams(internalSupabase);
+      setExams(internalExams);
 
-      const [internalExams, externalExams] = await Promise.all([
-        fetchExams(internalSupabase),
-        fetchExams(externalSupabase)
-      ]);
-
-      const examsMap = new Map<string, any>();
-      [...internalExams, ...externalExams].forEach(e => {
-        if (!examsMap.has(e.id)) examsMap.set(e.id, e);
-      });
-      setExams(Array.from(examsMap.values()));
-
-      // 2. Fetch registrations from both databases
+      // 2. Fetch registrations from internal database
       const fetchRegs = async (client: any) => {
         const { data, error } = await client
           .from('registrations')
@@ -150,17 +133,8 @@ const RegistrationApproval = () => {
         return { data: data || [], error };
       };
 
-      const [internalRegs, externalRegs] = await Promise.all([
-        fetchRegs(internalSupabase),
-        fetchRegs(externalSupabase)
-      ]);
-
-      const mergedRegsMap = new Map<string, any>();
-      [...internalRegs.data, ...externalRegs.data].forEach(r => {
-        if (!mergedRegsMap.has(r.id)) mergedRegsMap.set(r.id, r);
-      });
-
-      const allRegs = Array.from(mergedRegsMap.values());
+      const internalRegs = await fetchRegs(internalSupabase);
+      const allRegs = internalRegs.data;
       const studentIds = Array.from(new Set(allRegs.map(r => r.student_id).filter(Boolean)));
 
       // 3. Fetch profiles from both databases
@@ -172,13 +146,9 @@ const RegistrationApproval = () => {
         return data || [];
       };
 
-      const [internalProfiles, externalProfiles] = await Promise.all([
-        fetchProfiles(internalSupabase),
-        fetchProfiles(externalSupabase)
-      ]);
-
+      const internalProfiles = await fetchProfiles(internalSupabase);
       const profilesMap = new Map<string, any>();
-      [...internalProfiles, ...externalProfiles].forEach(p => {
+      internalProfiles.forEach(p => {
         if (!profilesMap.has(p.id)) profilesMap.set(p.id, p);
       });
 
@@ -238,15 +208,12 @@ const RegistrationApproval = () => {
         }
       }
 
-      // Update both DBs to ensure consistency
-      const [internalRes, externalRes] = await Promise.all([
-        internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id),
-        externalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id)
-      ]);
+      // Update internal DB
+      const { error } = await internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
 
-      if (internalRes.error && externalRes.error) {
+      if (error) {
         toast.error(`Failed to ${actionType} registration`);
-        console.error(internalRes.error, externalRes.error);
+        console.error(error);
         return;
       }
 
@@ -309,15 +276,12 @@ const RegistrationApproval = () => {
       updateData.exam_login_enabled = true;
     }
 
-    const [internalRes, externalRes] = await Promise.all([
-      internalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds)),
-      externalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds))
-    ]);
+    const { error } = await internalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
 
-    if (internalRes.error && externalRes.error) {
+    if (error) {
       setIsProcessing(false);
       toast.error(`Failed to ${bulkActionType} registrations`);
-      console.error(internalRes.error, externalRes.error);
+      console.error(error);
       return;
     }
 
@@ -368,14 +332,11 @@ const RegistrationApproval = () => {
   const toggleExamLogin = async (registration: Registration) => {
     const newStatus = !registration.exam_login_enabled;
     
-    const [internalRes, externalRes] = await Promise.all([
-      internalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id),
-      externalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id)
-    ]);
+    const { error } = await internalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
 
-    if (internalRes.error && externalRes.error) {
+    if (error) {
       toast.error('Failed to toggle exam login');
-      console.error(internalRes.error, externalRes.error);
+      console.error(error);
     } else {
       toast.success(`Exam login ${newStatus ? 'enabled' : 'disabled'} for ${registration.full_name}`);
       fetchRegistrations();
@@ -391,14 +352,11 @@ const RegistrationApproval = () => {
     const dob = new Date(registration.date_of_birth);
     const newPassword = format(dob, 'ddMMyy');
 
-    const [internalRes, externalRes] = await Promise.all([
-      internalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id),
-      externalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id)
-    ]);
+    const { error } = await internalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
 
-    if (internalRes.error && externalRes.error) {
+    if (error) {
       toast.error('Failed to regenerate password');
-      console.error(internalRes.error, externalRes.error);
+      console.error(error);
     } else {
       toast.success(`Password regenerated: ${newPassword}`);
       fetchRegistrations();
