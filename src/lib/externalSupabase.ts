@@ -14,7 +14,7 @@ import type { Database } from '@/integrations/supabase/types';
 import { supabase } from '@/integrations/supabase/client';
 
 /** Same project as `supabase` client — edge functions + RLS data for this app. */
-export const EXTERNAL_SUPABASE_URL = (import.meta.env.VITE_EXTERNAL_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL) as string;
+export const EXTERNAL_SUPABASE_URL = ((import.meta.env.VITE_EXTERNAL_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL) as string).replace(/\/rest\/v1\/?$/, '');
 export const EXTERNAL_SUPABASE_ANON_KEY = (import.meta.env.VITE_EXTERNAL_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) as string;
 
 export const externalSupabase: SupabaseClient<Database> = createClient<Database>(
