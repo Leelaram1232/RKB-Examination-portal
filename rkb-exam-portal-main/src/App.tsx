@@ -18,7 +18,7 @@ import AIQuestionAssistant from "@/pages/admin/AIQuestionAssistant";
 import SessionManagement from "./pages/admin/SessionManagement";
 import LiveMonitoring from "./pages/admin/LiveMonitoring";
 import ExamRegistration from "./pages/ExamRegistration";
-import ExamRegistrationWizard from "./pages/ExamRegistrationWizard";
+import RegistrationFlow from "./pages/RegistrationFlow";
 import ExamLogin from "./pages/ExamLogin";
 import ExamInstructions from "./pages/ExamInstructions";
 import ExamInterface from "./pages/ExamInterface";
@@ -49,7 +49,7 @@ const App = () => (
             {/* Public Routes */}
             <Route path="/" element={<Index />} />
             <Route path="/admin/login" element={<AdminLogin />} />
-            <Route path="/exam/:examId/register" element={<ExamRegistrationWizard />} />
+            <Route path="/exam/:examId/register" element={<RegistrationFlow />} />
             <Route path="/exam/:examId/login" element={<ExamLogin />} />
             <Route path="/exam/:examId/instructions" element={<ExamInstructions />} />
             <Route path="/exam/:examId/take" element={<ExamInterface />} />

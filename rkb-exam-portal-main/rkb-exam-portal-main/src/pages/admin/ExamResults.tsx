@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Printer, RefreshCw, Trophy, Loader2, Eye, Download, FileDown, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Printer, RefreshCw, Trophy, Loader2, Eye, Download, FileDown, Trash2, Users, Mail } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeExternalFunction } from '@/lib/externalSupabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -90,6 +90,7 @@ export default function ExamResults() {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
+  const [isSendingEmail, setIsSendingEmail] = useState<string | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -237,6 +238,22 @@ export default function ExamResults() {
 
     toast.success('Results published successfully!');
     setExamInfo((prev) => prev ? { ...prev, results_published: true, results_published_at: new Date().toISOString() } : null);
+
+    // Trigger email notifications in background
+    console.log('[Results] Triggering student email notifications...');
+    invokeExternalFunction('send-result-emails', { exam_id: examId })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[Results] Failed to send emails:', error);
+          toast.error('Results published, but failed to trigger email notifications.');
+        } else {
+          console.log('[Results] Email notifications triggered:', data);
+          toast.info('Email notifications are being sent to all registered students.');
+        }
+      })
+      .catch(err => {
+        console.error('[Results] Unexpected error triggering emails:', err);
+      });
   };
 
   const handleUnpublishResults = async () => {
@@ -691,6 +708,189 @@ export default function ExamResults() {
     }
   };
 
+  const generateIndividualScorecardPDF = async (result: StudentResult): Promise<string | null> => {
+    if (!examInfo) return null;
+
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      // Colors
+      const primaryColor: [number, number, number] = [25, 118, 210]; // Blue
+      const darkText: [number, number, number] = [33, 33, 33];
+      const grayText: [number, number, number] = [117, 117, 117];
+      const successColor: [number, number, number] = [76, 175, 80];
+      const dangerColor: [number, number, number] = [244, 67, 54];
+
+      // Header Background
+      doc.setFillColor(...primaryColor);
+      doc.rect(0, 0, pageWidth, 40, 'F');
+
+      // Logo placeholder / Organization Name
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.text('RKB EDUCATION MANAGEMENT SYSTEM', 10, 10);
+
+      // Main Title
+      doc.setFontSize(22);
+      doc.setFont('helvetica', 'bold');
+      doc.text('OFFICIAL SCORECARD', pageWidth / 2, 22, { align: 'center' });
+
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${examInfo.exam_name} (${examInfo.exam_code})`, pageWidth / 2, 32, { align: 'center' });
+
+      // Student Info Box
+      doc.setDrawColor(200, 200, 200);
+      doc.roundedRect(10, 45, pageWidth - 20, 45, 2, 2, 'S');
+      
+      doc.setTextColor(...darkText);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CANDIDATE INFORMATION', 15, 52);
+      doc.line(15, 54, 60, 54);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...grayText);
+      
+      const leftColX = 15;
+      const rightColX = pageWidth / 2;
+      let y = 62;
+
+      doc.text('Name:', leftColX, y);
+      doc.text('Reg. No:', rightColX, y);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...darkText);
+      doc.text(result.student_name.toUpperCase(), leftColX + 30, y);
+      doc.text(result.registration_number, rightColX + 35, y);
+      
+      y += 10;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...grayText);
+      doc.text('Email:', leftColX, y);
+      doc.text('Exam Date:', rightColX, y);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...darkText);
+      doc.text(result.email, leftColX + 30, y);
+      doc.text(formatDate(examInfo.exam_date), rightColX + 35, y);
+
+      y += 10;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...grayText);
+      doc.text('Rank:', leftColX, y);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...primaryColor);
+      doc.setFontSize(14);
+      doc.text(result.rank ? `#${result.rank}` : 'N/A', leftColX + 30, y);
+
+      // Result Summary
+      doc.setFontSize(10);
+      doc.setTextColor(...darkText);
+      doc.text('PERFORMANCE SUMMARY', 15, 100);
+      doc.line(15, 102, 65, 102);
+
+      const summaryY = 110;
+      doc.setFillColor(245, 245, 245);
+      doc.roundedRect(10, summaryY, pageWidth - 20, 25, 2, 2, 'F');
+
+      const colW = (pageWidth - 20) / 4;
+      
+      const stats = [
+        { label: 'Obtained Marks', value: `${result.obtained_marks} / ${examInfo.total_marks}` },
+        { label: 'Correct', value: result.correct_count.toString() },
+        { label: 'Wrong', value: result.wrong_count.toString() },
+        { label: 'Status', value: result.is_pass ? 'QUALIFIED' : 'NOT QUALIFIED', color: result.is_pass ? successColor : dangerColor }
+      ];
+
+      stats.forEach((stat, i) => {
+        const x = 10 + (i * colW) + (colW / 2);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayText);
+        doc.setFontSize(8);
+        doc.text(stat.label, x, summaryY + 8, { align: 'center' });
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...(stat.color || darkText));
+        doc.setFontSize(11);
+        doc.text(stat.value, x, summaryY + 18, { align: 'center' });
+      });
+
+      // Section Wise Table
+      if (result.section_wise_scores) {
+        const sectionData = Object.entries(result.section_wise_scores).map(([name, scores]) => [
+          name,
+          scores.total_marks,
+          scores.correct,
+          scores.wrong,
+          scores.marks.toFixed(1)
+        ]);
+
+        autoTable(doc, {
+          startY: 145,
+          head: [['Section Name', 'Max Marks', 'Correct', 'Wrong', 'Marks Obtained']],
+          body: sectionData,
+          theme: 'striped',
+          headStyles: { fillColor: primaryColor },
+          styles: { halign: 'center' },
+          columnStyles: { 0: { halign: 'left' } }
+        });
+      }
+
+      // Footer
+      doc.setFontSize(8);
+      doc.setTextColor(...grayText);
+      doc.text('This is a computer-generated document. Generated by RKB Examination Portal.', pageWidth / 2, pageHeight - 15, { align: 'center' });
+      doc.text(`Generated on: ${new Date().toLocaleString('en-IN')}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+
+      return doc.output('datauristring').split(',')[1];
+    } catch (error) {
+      console.error('Individual PDF generation error:', error);
+      return null;
+    }
+  };
+
+  const handleSendIndividualEmail = async (result: StudentResult) => {
+    setIsSendingEmail(result.id);
+    
+    try {
+      // 1. Generate PDF base64
+      const pdfBase64 = await generateIndividualScorecardPDF(result);
+      
+      if (!pdfBase64) {
+        toast.error('Failed to generate scorecard PDF');
+        return;
+      }
+
+      // 2. Call Edge Function
+      const { data, error } = await invokeExternalFunction('send-result-emails', {
+        exam_id: examId,
+        student_id: result.student_id,
+        pdf_attachment: pdfBase64,
+        pdf_filename: `${result.registration_number}_Scorecard.pdf`
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      toast.success(`Result email sent to ${result.student_name}`);
+    } catch (error: any) {
+      console.error('Email send error:', error);
+      toast.error(error.message || 'Failed to send email');
+    } finally {
+      setIsSendingEmail(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <AdminLayout title="Exam Results" description="Loading...">
@@ -948,6 +1148,19 @@ export default function ExamResults() {
                               <Eye className="w-4 h-4" />
                             </Button>
                           </Link>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleSendIndividualEmail(result)}
+                            disabled={isSendingEmail === result.id}
+                            title="Send Result Email"
+                          >
+                            {isSendingEmail === result.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            ) : (
+                              <Mail className="w-4 h-4 text-primary" />
+                            )}
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"

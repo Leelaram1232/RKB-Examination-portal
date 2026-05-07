@@ -85,6 +85,16 @@ const examSchema = z.object({
   signature_required: z.boolean().default(false),
   approval_required: z.boolean().default(true),
   notify_on_approval: z.boolean().default(true),
+  // Advanced Access Control
+  access_type: z.enum(['free', 'internal_only', 'external_paid', 'paid_all']).default('free'),
+  external_price: z.coerce.number().min(0).default(0),
+  internal_price: z.coerce.number().min(0).default(0),
+  internal_free_access: z.boolean().default(true),
+  allow_external_registrations: z.boolean().default(true),
+  payment_required: z.boolean().default(false),
+  is_scholarship_exam: z.boolean().default(false),
+  registration_limit: z.coerce.number().optional(),
+  visibility: z.enum(['public', 'private', 'internal_only']).default('public'),
 });
 
 type ExamFormData = z.infer<typeof examSchema>;
@@ -141,6 +151,15 @@ const ExamForm = () => {
       signature_required: false,
       approval_required: true,
       notify_on_approval: true,
+      // Advanced Access Control
+      access_type: 'free',
+      external_price: 0,
+      internal_price: 0,
+      internal_free_access: true,
+      allow_external_registrations: true,
+      payment_required: false,
+      is_scholarship_exam: false,
+      visibility: 'public',
     },
   });
 
@@ -261,6 +280,16 @@ const ExamForm = () => {
             signature_required: (data as any).signature_required || false,
             approval_required: (data as any).approval_required ?? true,
             notify_on_approval: (data as any).notify_on_approval ?? true,
+            // Advanced Access Control
+            access_type: (data as any).access_type || 'free',
+            external_price: (data as any).external_price || 0,
+            internal_price: (data as any).internal_price || 0,
+            internal_free_access: (data as any).internal_free_access ?? true,
+            allow_external_registrations: (data as any).allow_external_registrations ?? true,
+            payment_required: (data as any).payment_required ?? false,
+            is_scholarship_exam: (data as any).is_scholarship_exam ?? false,
+            registration_limit: (data as any).registration_limit || undefined,
+            visibility: (data as any).visibility || 'public',
           });
           
           // Fetch exam subjects
@@ -314,6 +343,16 @@ const ExamForm = () => {
       signature_required: data.signature_required,
       approval_required: data.approval_required,
       notify_on_approval: data.notify_on_approval,
+      // Advanced Access Control
+      access_type: data.access_type,
+      external_price: data.external_price,
+      internal_price: data.internal_price,
+      internal_free_access: data.internal_free_access,
+      allow_external_registrations: data.allow_external_registrations,
+      payment_required: data.payment_required,
+      is_scholarship_exam: data.is_scholarship_exam,
+      registration_limit: data.registration_limit || null,
+      visibility: data.visibility,
     };
 
     let error;
@@ -400,463 +439,487 @@ const ExamForm = () => {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* Basic Information */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Basic Information</CardTitle>
-                <CardDescription>Enter the basic details of the examination</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="exam_name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Exam Name</FormLabel>
-                        <FormControl>
-                          <Input placeholder="e.g., RKB Science Olympiad 2025" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+            <Tabs defaultValue="basic" className="w-full">
+              <TabsList className="grid grid-cols-5 w-full mb-6">
+                <TabsTrigger value="basic">Basic Details</TabsTrigger>
+                <TabsTrigger value="access">Access Control</TabsTrigger>
+                <TabsTrigger value="payment">Payment Settings</TabsTrigger>
+                <TabsTrigger value="visibility">Visibility & Limits</TabsTrigger>
+                <TabsTrigger value="advanced">Advanced</TabsTrigger>
+              </TabsList>
 
-                  <FormField
-                    control={form.control}
-                    name="exam_code"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Exam Code</FormLabel>
-                        <FormControl>
-                          <Input placeholder="e.g., RKB-SCI-2025" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+              <TabsContent value="basic" className="space-y-6">
+                {/* Basic Information */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Basic Information</CardTitle>
+                    <CardDescription>Enter the basic details of the examination</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="exam_name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Exam Name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="e.g., RKB Science Olympiad 2025" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description</FormLabel>
-                      <FormControl>
-                        <Textarea 
-                          placeholder="Brief description of the examination..."
-                          rows={3}
-                          {...field} 
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="instructions"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Instructions</FormLabel>
-                      <FormControl>
-                        <Textarea 
-                          placeholder="Exam instructions for students..."
-                          rows={4}
-                          {...field} 
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-
-            {/* Subjects */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Subjects</CardTitle>
-                <CardDescription>Select subjects included in this examination</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {subjects.length === 0 ? (
-                  <div className="text-center py-6">
-                    <p className="text-muted-foreground mb-4">No subjects available</p>
-                    <Button type="button" onClick={() => setShowAddSubjectDialog(true)}>
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add First Subject
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                      {subjects.map((subject) => (
-                        <label
-                          key={subject.id}
-                          htmlFor={`subject-${subject.id}`}
-                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
-                            selectedSubjects.includes(subject.id) 
-                              ? 'border-primary bg-primary/5' 
-                              : 'hover:border-muted-foreground/50'
-                          }`}
-                        >
-                          <Checkbox 
-                            id={`subject-${subject.id}`}
-                            checked={selectedSubjects.includes(subject.id)} 
-                            onCheckedChange={() => toggleSubject(subject.id)}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{subject.name}</p>
-                            {subject.code && (
-                              <p className="text-xs text-muted-foreground">{subject.code}</p>
-                            )}
-                          </div>
-                        </label>
-                      ))}
+                      <FormField
+                        control={form.control}
+                        name="exam_code"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Exam Code</FormLabel>
+                            <FormControl>
+                              <Input placeholder="e.g., RKB-SCI-2025" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
-                    
-                    {selectedSubjects.length > 0 && subjects.length > 0 && (
-                      <div className="pt-2">
-                        <p className="text-sm text-muted-foreground mb-2">Selected subjects:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {selectedSubjects
-                            .map(id => subjects.find(s => s.id === id))
-                            .filter((subject): subject is Subject => subject !== undefined)
-                            .map(subject => (
-                              <Badge key={subject.id} variant="secondary" className="gap-1">
-                                {subject.name}
-                                <X 
-                                  className="w-3 h-3 cursor-pointer" 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleSubject(subject.id);
-                                  }} 
-                                />
-                              </Badge>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-                
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => setShowAddSubjectDialog(true)}
-                  className="w-full"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add New Subject
-                </Button>
-              </CardContent>
-            </Card>
 
-            {/* Registration Settings */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Registration Settings</CardTitle>
-                <CardDescription>Configure registration type, fees, and requirements</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="registration_type"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Registration Type</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="free">Free</SelectItem>
-                            <SelectItem value="paid">Paid</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          Choose whether registration is free or paid
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {form.watch('registration_type') === 'paid' && (
                     <FormField
                       control={form.control}
-                      name="registration_amount"
+                      name="description"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Registration Amount (₹)</FormLabel>
+                          <FormLabel>Description</FormLabel>
                           <FormControl>
-                            <Input type="number" min={1} placeholder="Enter amount" {...field} />
+                            <Textarea 
+                              placeholder="Brief description of the examination..."
+                              rows={3}
+                              {...field} 
+                            />
                           </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="instructions"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Instructions</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="Exam instructions for students..."
+                              rows={4}
+                              {...field} 
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+                </Card>
+
+                {/* Schedule */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Schedule</CardTitle>
+                    <CardDescription>Set the examination date, time, and duration</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="exam_date"
+                        render={({ field }) => {
+                          const value = field.value ? new Date(field.value) : undefined;
+                          return (
+                            <FormItem className="flex flex-col">
+                              <FormLabel>Exam Date</FormLabel>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <FormControl>
+                                    <Button
+                                      variant="outline"
+                                      className="justify-start text-left font-normal"
+                                    >
+                                      {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
+                                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </FormControl>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar
+                                    mode="single"
+                                    selected={value}
+                                    onSelect={(date) => {
+                                      if (!date) {
+                                        field.onChange('');
+                                      } else {
+                                        field.onChange(format(date, 'yyyy-MM-dd'));
+                                      }
+                                    }}
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <FormMessage />
+                            </FormItem>
+                          );
+                        }}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="exam_time"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Start Time</FormLabel>
+                            <FormControl>
+                              <Input type="time" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="duration_minutes"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Duration (minutes)</FormLabel>
+                            <FormControl>
+                              <Input type="number" min={1} {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="access" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Access Control</CardTitle>
+                    <CardDescription>Define who can access and register for this examination</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="access_type"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Exam Access Type</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select access type" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="free">Free For All</SelectItem>
+                              <SelectItem value="internal_only">Internal Students Only</SelectItem>
+                              <SelectItem value="external_paid">Paid For External Students</SelectItem>
+                              <SelectItem value="paid_all">Paid For Everyone</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <FormDescription>
-                            Amount to be paid for registration
+                            Determines the general policy for student entry
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                  )}
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="photo_required"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Student Photo</FormLabel>
-                          <FormDescription>
-                            Require photo upload
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="signature_required"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Signature Photo</FormLabel>
-                          <FormDescription>
-                            Require signature upload
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="approval_required"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Approval Required</FormLabel>
-                          <FormDescription>
-                            Admin approval needed
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="notify_on_approval"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Notify on Approval</FormLabel>
-                          <FormDescription>
-                            Send email to student
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Schedule */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Schedule</CardTitle>
-                <CardDescription>Set the examination date, time, and duration</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="exam_date"
-                    render={({ field }) => {
-                      const value = field.value ? new Date(field.value) : undefined;
-                      return (
-                        <FormItem className="flex flex-col">
-                          <FormLabel>Exam Date</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant="outline"
-                                  className="justify-start text-left font-normal"
-                                >
-                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={value}
-                                onSelect={(date) => {
-                                  if (!date) {
-                                    field.onChange('');
-                                  } else {
-                                    // Store as local date string YYYY-MM-DD (avoid timezone shift)
-                                    field.onChange(format(date, 'yyyy-MM-dd'));
-                                  }
-                                }}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormField
+                        control={form.control}
+                        name="internal_free_access"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                            <div className="space-y-0.5">
+                              <FormLabel className="text-base">Internal Free Access</FormLabel>
+                              <FormDescription>
+                                Allow RKB internal students for free
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
                               />
-                            </PopoverContent>
-                          </Popover>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="allow_external_registrations"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                            <div className="space-y-0.5">
+                              <FormLabel className="text-base">Allow External Students</FormLabel>
+                              <FormDescription>
+                                Open exam for non-RKB students
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="approval_required"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">Admin Approval Required</FormLabel>
+                            <FormDescription>
+                              Registrations must be manually approved
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="payment" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Payment Settings</CardTitle>
+                    <CardDescription>Configure pricing for internal and external students</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="payment_required"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">Payment Required</FormLabel>
+                            <FormDescription>
+                              Enable online payment flow (Cashfree)
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    {form.watch('payment_required') && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
+                        <FormField
+                          control={form.control}
+                          name="external_price"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>External Student Price (₹)</FormLabel>
+                              <FormControl>
+                                <Input type="number" min={0} {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="internal_price"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Internal Student Price (₹)</FormLabel>
+                              <FormControl>
+                                <Input type="number" min={0} {...field} />
+                              </FormControl>
+                              <FormDescription>Set to 0 if internal access is free</FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+
+                    <FormField
+                      control={form.control}
+                      name="is_scholarship_exam"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">Scholarship Exam</FormLabel>
+                            <FormDescription>
+                              Mark as scholarship assessment
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="visibility" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Visibility & Limits</CardTitle>
+                    <CardDescription>Control exam appearance and student capacity</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="visibility"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Exam Visibility</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select visibility" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="public">Public (Visible to All)</SelectItem>
+                              <SelectItem value="private">Private (Link Only)</SelectItem>
+                              <SelectItem value="internal_only">Internal Only</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
-                      );
-                    }}
-                  />
+                      )}
+                    />
 
-                  <FormField
-                    control={form.control}
-                    name="exam_time"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Start Time</FormLabel>
-                        <FormControl>
-                          <Input type="time" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="duration_minutes"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Duration (minutes)</FormLabel>
-                        <FormControl>
-                          <Input type="number" min={1} {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="registration_start"
-                    render={({ field }) => {
-                      const value = field.value ? new Date(field.value) : undefined;
-                      return (
-                        <FormItem className="flex flex-col">
-                          <FormLabel>Registration Opens</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant="outline"
-                                  className="justify-start text-left font-normal"
-                                >
-                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={value}
-                                onSelect={(date) => {
-                                  if (!date) {
-                                    field.onChange('');
-                                  } else {
-                                    field.onChange(format(date, 'yyyy-MM-dd'));
-                                  }
-                                }}
-                              />
-                            </PopoverContent>
-                          </Popover>
+                    <FormField
+                      control={form.control}
+                      name="registration_limit"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Registration Limit</FormLabel>
+                          <FormControl>
+                            <Input type="number" placeholder="No limit" {...field} />
+                          </FormControl>
+                          <FormDescription>Maximum number of students allowed</FormDescription>
                           <FormMessage />
                         </FormItem>
-                      );
-                    }}
-                  />
+                      )}
+                    />
 
-                  <FormField
-                    control={form.control}
-                    name="registration_end"
-                    render={({ field }) => {
-                      const value = field.value ? new Date(field.value) : undefined;
-                      return (
-                        <FormItem className="flex flex-col">
-                          <FormLabel>Registration Closes</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant="outline"
-                                  className="justify-start text-left font-normal"
-                                >
-                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={value}
-                                onSelect={(date) => {
-                                  if (!date) {
-                                    field.onChange('');
-                                  } else {
-                                    field.onChange(format(date, 'yyyy-MM-dd'));
-                                  }
-                                }}
-                              />
-                            </PopoverContent>
-                          </Popover>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
+                      <FormField
+                        control={form.control}
+                        name="registration_start"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-col">
+                            <FormLabel>Registration Opens</FormLabel>
+                            <Input type="date" {...field} />
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="registration_end"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-col">
+                            <FormLabel>Registration Closes</FormLabel>
+                            <Input type="date" {...field} />
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="advanced" className="space-y-6">
+                {/* Proctoring Settings (Existing) */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Proctoring & Security</CardTitle>
+                    <CardDescription>Configure AI proctoring and exam rules</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="proctoring_enabled"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">AI Proctoring</FormLabel>
+                            <FormDescription>Enable camera and face monitoring</FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    
+                    {/* Add other advanced fields here */}
+                    <FormField
+                      control={form.control}
+                      name="status"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Exam Status</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select status" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="draft">Draft</SelectItem>
+                              <SelectItem value="registration_open">Registration Open</SelectItem>
+                              <SelectItem value="registration_closed">Registration Closed</SelectItem>
+                              <SelectItem value="conducted">Conducted</SelectItem>
+                              <SelectItem value="results_published">Results Published</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
-                      );
-                    }}
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                      )}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
 
             {/* Marking Scheme */}
             <Card>

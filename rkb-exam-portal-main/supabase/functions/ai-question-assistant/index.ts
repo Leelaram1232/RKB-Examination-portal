@@ -185,50 +185,92 @@ async function callMathpixPdf(
   );
 }
 
-function extractPageRangesFromPrompt(text: string): string | null {
-  const t = (text || '').toLowerCase().trim();
-  if (!t) return null;
+interface UserIntent {
+  pageRanges: string | null;
+  questionRange: { start: number; end: number } | null;
+  extractAll: boolean;
+  subjects: string[];
+  topics: string[];
+}
 
-  // User intent shortcuts
+function parseUserIntent(text: string): UserIntent {
+  const t = (text || '').toLowerCase().trim();
+  const intent: UserIntent = {
+    pageRanges: null,
+    questionRange: null,
+    extractAll: false,
+    subjects: [],
+    topics: [],
+  };
+
+  if (!t) return intent;
+
+  // 1. All/Everything Intent
   if (
     t.includes('everything') ||
     t.includes('all pages') ||
     t.includes('all page') ||
     t.includes('entire pdf') ||
     t.includes('whole pdf') ||
-    t.includes('whole document')
+    t.includes('whole document') ||
+    t.includes('all question') ||
+    t.includes('extract all') ||
+    t.includes('full question')
   ) {
-    // Mathpix can hit compute limits for large ranges.
-    // Start with a larger-but-safe chunk first; user can request the next chunk later.
-    return '1-20';
+    intent.extractAll = true;
+    intent.pageRanges = '1-60'; // Increased default for "All"
   }
 
-  // Examples:
-  // "page 1-10"
-  // "pages 1 to 5"
-  const rangeMatch = t.match(/pages?\s*(\d+)\s*(?:-|to)\s*(\d+)/i);
-  if (rangeMatch) {
-    const a = rangeMatch[1];
-    const b = rangeMatch[2];
-    return `${a}-${b}`;
+  // 2. Page Ranges
+  const pageRangeMatch = t.match(/pages?\s*(\d+)\s*(?:-|to)\s*(\d+)/i);
+  if (pageRangeMatch) {
+    intent.pageRanges = `${pageRangeMatch[1]}-${pageRangeMatch[2]}`;
+  } else {
+    const singlePageMatch = t.match(/page\s*(\d+)/i);
+    if (singlePageMatch) {
+      intent.pageRanges = `${singlePageMatch[1]}-${singlePageMatch[1]}`;
+    }
   }
 
-  // Single-page requests: "page 7" -> "7-7"
-  const singlePageMatch = t.match(/page\s*(\d+)/i);
-  if (singlePageMatch) {
-    const n = singlePageMatch[1];
-    return `${n}-${n}`;
+  // 3. Question Ranges
+  // "extract questions from 5 to 15" or "questions 10-20"
+  const qRangeMatch = t.match(/(?:questions?|q)\s*(?:from\s*)?(\d+)\s*(?:-|to)\s*(\d+)/i);
+  if (qRangeMatch) {
+    intent.questionRange = {
+      start: Number.parseInt(qRangeMatch[1], 10),
+      end: Number.parseInt(qRangeMatch[2], 10),
+    };
+    // If we have a question range but no page range, we guess the pages.
+    // Heuristic: ~5 questions per page. Q5-15 might be on pages 1-4.
+    if (!intent.pageRanges) {
+      const estimatedStartPage = Math.max(1, Math.floor(intent.questionRange.start / 5));
+      const estimatedEndPage = Math.max(estimatedStartPage, Math.ceil(intent.questionRange.end / 4) + 1);
+      intent.pageRanges = `${estimatedStartPage}-${estimatedEndPage}`;
+    }
   }
 
-  // Example:
-  // "pages 1,2,3"
-  const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
-  if (listMatch) {
-    const cleaned = listMatch[1].replace(/\s+/g, '');
-    if (cleaned) return cleaned;
+  // 4. Subjects
+  const commonSubjects = ['mathematics', 'maths', 'math', 'physics', 'chemistry', 'biology', 'botany', 'zoology'];
+  for (const s of commonSubjects) {
+    if (t.includes(s)) intent.subjects.push(s);
   }
 
-  return null;
+  // 5. Topics/Chapters
+  // This is harder, but we can look for "from [topic]" or "[topic] questions"
+  const topicKeywords = ['thermodynamics', 'optics', 'algebra', 'calculus', 'mechanics', 'organic', 'inorganic', 'genetics', 'trigonometry'];
+  for (const tp of topicKeywords) {
+    if (t.includes(tp)) intent.topics.push(tp);
+  }
+
+  // Handle explicit lists of pages
+  if (!intent.pageRanges) {
+    const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
+    if (listMatch) {
+      intent.pageRanges = listMatch[1].replace(/\s+/g, '');
+    }
+  }
+
+  return intent;
 }
 
 type PageRange = { a: number; b: number };
@@ -971,6 +1013,46 @@ async function runExamQualityAudit(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
+  const extractQuestionsFromText = (text: string) => {
+    const cleaned = (text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+    const tryParseJson = (jsonText: string) => {
+      const repairLatexBackslashes = (s: string) => {
+        let out = ''; let inString = false; let escape = false;
+        const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
+        for (let i = 0; i < s.length; i++) {
+          const ch = s[i];
+          if (!inString) { out += ch; if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) inString = true; continue; }
+          if (escape) { out += ch; escape = false; continue; }
+          if (ch === '\\') {
+            const next = s[i + 1] ?? ''; const next2 = s[i + 2] ?? '';
+            const isJsonEsc = next === '"' || next === '\\' || next === '/' || next === 'u' || (/[bfnrt]/.test(next) && (!next2 || !/[A-Za-z]/.test(next2)));
+            out += isJsonEsc ? '\\' : '\\\\'; escape = true; continue;
+          }
+          if (ch === '"') { inString = false; out += ch; continue; }
+          out += ch;
+        }
+        return out;
+      };
+      try { return JSON.parse(jsonText); } catch {
+        try {
+          const repaired = repairLatexBackslashes(jsonText);
+          return JSON.parse(repaired.replace(/,(\s*[\]}])/g, '$1'));
+        } catch {
+          const repaired = repairLatexBackslashes(jsonText);
+          const lastBrace = repaired.lastIndexOf('}');
+          if (lastBrace > 0) try { return JSON.parse(repaired.substring(0, lastBrace + 1) + ']'); } catch { return []; }
+          return [];
+        }
+      }
+    };
+    const tagMatch = cleaned.match(/<questions_json>\s*([\s\S]*?)(?:<\/questions_json>|$)/i);
+    if (tagMatch && tagMatch[1].trim()) return tryParseJson(tagMatch[1].trim());
+    const arrMatch = cleaned.match(/(\[[\s\S]*)/);
+    if (arrMatch) return tryParseJson(arrMatch[1]);
+    return [];
+  };
+
+
   try {
     const body = await req.json();
     const { messages, file_url, exam_id, subject_id, action, llm_mode: llmModeBody } = body as AssistantRequest;
@@ -1062,9 +1144,8 @@ Deno.serve(async (req) => {
     let ocrError: string | null = null;
     const lastUserMessage =
       [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-    const requestedPageRanges = extractPageRangesFromPrompt(lastUserMessage);
-    // Mathpix can time out on whole large PDFs, so default to a small chunk when user didn't specify.
-    const pageSpecToUse = requestedPageRanges || '1-10';
+    const userIntent = parseUserIntent(lastUserMessage);
+    const pageSpecToUse = userIntent.pageRanges || '1-10';
     const requestedRanges = parsePageSpec(pageSpecToUse);
     // Fallback safety: if parsing failed, keep the default chunk.
     const rangesToUse = requestedRanges.length > 0 ? requestedRanges : [{ a: 1, b: 10 }];
@@ -1096,12 +1177,12 @@ Deno.serve(async (req) => {
           // Any range support:
           // - If total pages requested is small, OCR page-by-page (robust vs image-only pages).
           // - If total pages requested is large, OCR in safe chunks (reduces timeouts).
-          const collected: string[] = [];
+          const ocrChunks: string[] = [];
           let totalReadable = 0;
           let pagesWithText = 0;
           let processedTotal = 0;
 
-          const OCR_CHUNK_SIZE = 10;
+          const OCR_CHUNK_SIZE = 8; // Slightly smaller chunks for better extraction focus
 
           const ocrOneRangeChunked = async (start: number, end: number) => {
             for (let s = start; s <= end; s += OCR_CHUNK_SIZE) {
@@ -1110,14 +1191,14 @@ Deno.serve(async (req) => {
               const chunk = await callMathpixPdf(file_url, mathpixId, mathpixKey, chunkSpec);
               processedTotal += (e - s + 1);
               if (chunk.ocrText?.trim()) {
-                collected.push(`\n\n[REQUESTED_PAGES ${chunkSpec}]\n` + chunk.ocrText);
+                ocrChunks.push(`\n\n[PAGES ${chunkSpec}]\n` + chunk.ocrText);
               }
               totalReadable += chunk.readableChars || 0;
               if ((chunk.readableChars || 0) >= 200) pagesWithText += 1;
             }
           };
 
-          if (totalPagesRequested <= 12) {
+          if (totalPagesRequested <= 10) {
             for (const r of rangesToUse) {
               for (let p = r.a; p <= r.b; p++) {
                 const pageRange = `${p}-${p}`;
@@ -1125,7 +1206,7 @@ Deno.serve(async (req) => {
                   const per = await callMathpixPdf(file_url, mathpixId, mathpixKey, pageRange);
                   processedTotal += 1;
                   if (per.ocrText?.trim()) {
-                    collected.push(`\n\n[REQUESTED_PAGE ${p}]\n` + per.ocrText);
+                    ocrChunks.push(`\n\n[PAGE ${p}]\n` + per.ocrText);
                   }
                   totalReadable += per.readableChars || 0;
                   if ((per.readableChars || 0) >= 200) pagesWithText += 1;
@@ -1141,7 +1222,7 @@ Deno.serve(async (req) => {
           }
 
           processedPagesCount = processedTotal;
-          ocrContext = collected.join('\n');
+          ocrContext = ocrChunks.join('\n');
 
           console.log('[Assistant] OCR merged pages:', { requested: pageSpecToUse, pagesWithText, totalReadable, processedTotal });
 
@@ -1191,10 +1272,8 @@ Deno.serve(async (req) => {
 
     // Groq on-demand tier has strict token/TPM limits.
     // When OCR is large, we must be very aggressive to stay below TPM.
-    // (Groq "Requested" in this error is still high even after truncation,
-    // so we reduce more.)
-    const MAX_OCR_CONTEXT_CHARS = 8000;
-    const MAX_MESSAGE_CHARS = 1200;
+    const MAX_OCR_CONTEXT_CHARS = llm_mode === 'groq' ? 8000 : 120000; 
+    const MAX_MESSAGE_CHARS = 2000;
 
     const truncateText = (s: string, maxChars: number) => {
       if (!s) return s;
@@ -1202,10 +1281,9 @@ Deno.serve(async (req) => {
       return s.slice(0, maxChars) + '... [TRUNCATED]';
     };
 
-    // Truncate OCR context again right before embedding into the system prompt.
-    // (We already truncate inside Mathpix, but we keep this as defense-in-depth.)
+    // Truncate OCR context right before embedding into the system prompt.
     if (ocrContext && ocrContext.length > MAX_OCR_CONTEXT_CHARS) {
-      console.log('[Assistant] Truncating OCR context for Groq from', ocrContext.length, 'to', MAX_OCR_CONTEXT_CHARS, 'chars');
+      console.log(`[Assistant] Truncating OCR context for ${llm_mode} from ${ocrContext.length} to ${MAX_OCR_CONTEXT_CHARS} chars`);
       ocrContext = truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS);
     }
 
@@ -1220,80 +1298,34 @@ Deno.serve(async (req) => {
     const generateSystemPrompt = `You are an advanced exam question generator integrated into the RKB Exam Portal.
 Your task is to generate high-quality, non-repeating exam questions based on the user's request.
 
+### USER INTENT & FILTERING:
+${userIntent.questionRange ? `- EXTRACT ONLY questions numbered ${userIntent.questionRange.start} to ${userIntent.questionRange.end}.` : ''}
+${userIntent.subjects.length > 0 ? `- EXTRACT ONLY questions for these subjects: ${userIntent.subjects.join(', ')}.` : ''}
+${userIntent.topics.length > 0 ? `- EXTRACT ONLY questions for these topics/chapters: ${userIntent.topics.join(', ')}.` : ''}
+${userIntent.extractAll ? '- EXTRACT ALL questions found in the provided context. Do NOT skip any.' : ''}
+
 ### STRICT RULES:
-
-1. **Question Types Supported**:
-   - Multiple Choice Questions (MCQs)
-   - Fill in the Blanks
-
-2. **MCQ Requirements**:
-   - Each question must have exactly 4 options.
-   - Only ONE option must be correct.
-   - Clearly mark the correct answer.
-   - Options should be realistic and not obvious.
-
-3. **Fill in the Blanks**:
-   - Provide the question with a blank ______ in the text.
-   - Provide the correct answer separately.
-
-4. **No Repetition Policy**:
-   - NEVER repeat questions within the same response.
-   - NEVER repeat questions from previous responses in the same session.
-   - Maintain uniqueness in wording and concept.
-
-5. **Quality Constraints**:
-   - Questions must be clear, grammatically correct, and exam-level.
-   - Avoid ambiguous or trick questions unless explicitly asked.
-   - Ensure factual correctness.
-
-6. **Output Format (STRICT)**:
-   You must provide the questions in a human-readable format FIRST, followed by a JSON block.
-   
-   **For MCQs:**
-   Q1. <Question>
-   A. <Option 1>
-   B. <Option 2>
-   C. <Option 3>
-   D. <Option 4>
-   Correct Answer: <Option Letter>
-
-   **For Fill in the Blanks:**
-   Q1. <Sentence with blank ______>
-   Answer: <Correct Answer>
-
-7. **Numbering & Difficulty**:
-   - If the user asks for multiple questions:
-     - Number them sequentially (Q1, Q2, Q3...)
-     - Mix difficulty levels (easy, medium, hard)
-
-8. **Context Handling**:
-   - If insufficient context is provided, assume a standard academic level unless specified.
-
-9. **Behavioral Rules**:
-   - Do NOT explain answers unless explicitly asked.
-   - Ensure every response is fresh, unique, and non-repetitive.
-
-### TECHNICAL REQUIREMENTS:
-- **LANGUAGE SUPPORT**: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English. Preserve regional languages.
-- **JSON BLOCK REQUIRED**: You MUST append a JSON array wrapped in <questions_json> and </questions_json> tags at the end of your response.
+1. **Question Types Supported**: MCQ and Fill in the Blanks.
+2. **MCQ Requirements**: 4 options, ONE correct.
+3. **No Repetition**: NEVER repeat questions. Ensure full coverage of the requested range/subject.
+4. **Output Format**: Human-readable followed by <questions_json> block.
+5. **Language**: Preserve Telugu, Hindi, etc., as found in OCR.
 
 ### JSON SCHEMA:
 [
   {
-    "question_text": "text with LaTeX $...$ or regional language",
+    "question_text": "...",
     "question_type": "MCQ" | "FILL_BLANK",
-    "option_a": "Text...", "option_b": "Text...", "option_c": "Text...", "option_d": "Text...",
+    "option_a": "...", "option_b": "...", "option_c": "...", "option_d": "...",
     "correct_option": "A|B|C|D",
-    "correct_answer": "Numerical/Textual answer",
-    "section_name": "Section A",
-    "marks": 4,
-    "has_image": false,
-    "image_url": null
+    "correct_answer": "...",
+    "section_name": "...",
+    "marks": 4
   }
 ]
 
 Current context:
-${ocrContext ? `OCR Extracted Content: \n${truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS)}` : 'No file uploaded.'}
+${ocrContext ? `OCR Extracted Content: \n${ocrContext}` : 'No file uploaded.'}
 Subject ID: ${subject_id || 'Not specified'}
 Exam ID: ${exam_id || 'Not specified'}`;
 
@@ -1389,169 +1421,59 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
       return g.choices?.[0]?.message?.content ?? '';
     };
 
+    const isLargeExtraction = file_url && (userIntent.extractAll || (userIntent.questionRange && (userIntent.questionRange.end - userIntent.questionRange.start) >= 15) || totalPagesRequested > 8);
+    
     let assistantContent = '';
-    const tryGemini = async () => {
-      const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
-      return await callGeminiRaw(geminiKey, systemPrompt, convo, false, 8192);
-    };
+    let allExtractedQuestions: any[] = [];
 
-    if (llm_mode === 'groq') {
-      console.log('[Assistant] LLM mode: Groq (llama-3.3-70b-versatile)');
-      const groqData = await callGroq(groqMessages, 0.2);
-      assistantContent = groqData.choices?.[0]?.message?.content ?? '';
-    } else if (llm_mode === 'gemini') {
-      console.log('[Assistant] LLM mode: Gemini');
-      try {
-        assistantContent = await tryGemini();
-      } catch (e) {
-        if (groqKey) {
-          console.warn('[Assistant] Gemini failed (404/Quota/Error). EMERGENCY FALLBACK to Groq...');
-          const groqData = await callGroq(groqMessages, 0.2);
-          assistantContent = `[NOTICE: Gemini Unavailable. Using Llama-3 Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
+    if (isLargeExtraction && ocrChunks && ocrChunks.length > 1) {
+      console.log('[Assistant] Chunked extraction loop starting. Chunks:', ocrChunks.length);
+      for (let i = 0; i < ocrChunks.length; i++) {
+        const chunk = ocrChunks[i];
+        console.log(`[Assistant] Processing chunk ${i+1}/${ocrChunks.length}...`);
+        const chunkPrompt = generateSystemPrompt.replace('OCR Extracted Content:', `OCR Extracted Content (CHUNK ${i+1}/${ocrChunks.length}):`).replace(ocrContext, chunk);
+        const chunkMessages = [{ role: 'system', content: chunkPrompt }, ...trimmedMessages];
+        let chunkResponse = '';
+        if (llm_mode === 'groq') {
+          const res = await callGroq(chunkMessages, 0.1);
+          chunkResponse = res.choices?.[0]?.message?.content ?? '';
+        } else if (llm_mode === 'gemini') {
+          const convo = trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
+          chunkResponse = await callGeminiRaw(geminiKey, chunkPrompt, convo, false, 8192);
         } else {
-          throw e;
+          const res = await callGroq(chunkMessages, 0.1);
+          chunkResponse = res.choices?.[0]?.message?.content ?? '';
         }
+        const chunkQuestions = extractQuestionsFromText(chunkResponse);
+        if (Array.isArray(chunkQuestions)) allExtractedQuestions.push(...chunkQuestions);
+        const readablePart = chunkResponse.split('<questions_json>')[0]?.trim();
+        if (readablePart) assistantContent += `\n\n[CHUNK ${i+1}]:\n${readablePart}`;
       }
+      assistantContent = `### Full Extraction Results\nExtracted **${allExtractedQuestions.length}** questions from ${processedPagesCount} pages.\n\n` + assistantContent;
     } else {
-      console.log('[Assistant] LLM mode: Both (Groq draft → Gemini merge)');
-      const groqData = await callGroq(groqMessages, 0.2);
-      const draft = groqData.choices?.[0]?.message?.content ?? '';
-      const refineUser = `Another model (Groq) produced the draft below. Perform a rigorous quality check and improve it.
-YOU MUST FOLLOW THESE STRICT RULES:
-(1) HUMAN-READABLE FIRST: Provide the questions in the exact format (Q1. <Question>, A., B., C., D., Correct Answer:) before the JSON block.
-(2) NO HALLUCINATIONS: Solve each question yourself. If the correct answer is missing or wrong, YOU MUST fix it.
-(3) PRESERVE LANGUAGES: Keep Telugu, Hindi, etc., as found in the draft or OCR.
-(4) JSON BLOCK: Append the JSON array wrapped in <questions_json> at the very end.
-(5) NO EXPLANATIONS: Do not explain the answers.
-
-DRAFT TO IMPROVE:
-${draft.slice(0, 120000)}`;
-      
-      try {
-        const merged = await callGeminiRaw(geminiKey, systemPrompt, refineUser, false, 8192);
-        assistantContent = merged.trim() ? merged : draft;
-      } catch (e) {
-        console.warn('[Assistant] Gemini refinement failed (Quota/API). Using raw Groq draft.', e);
-        assistantContent = `[NOTICE: Gemini Refinement Unavailable. Using Draft]\n\n` + draft;
+      if (llm_mode === 'groq') {
+        const groqData = await callGroq(groqMessages, 0.2);
+        assistantContent = groqData.choices?.[0]?.message?.content ?? '';
+      } else if (llm_mode === 'gemini') {
+        try { assistantContent = await callGeminiRaw(geminiKey, systemPrompt, trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n'), false, 8192); } catch {
+          if (groqKey) {
+            const groqData = await callGroq(groqMessages, 0.2);
+            assistantContent = `[NOTICE: Gemini Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
+          } else throw new Error('Gemini failed');
+        }
+      } else {
+        const groqData = await callGroq(groqMessages, 0.2);
+        const draft = groqData.choices?.[0]?.message?.content ?? '';
+        try {
+          const merged = await callGeminiRaw(geminiKey, systemPrompt, `Improve this assistant output (fix JSON if needed):\n${draft}`, false, 8192);
+          assistantContent = merged.trim() ? merged : draft;
+        } catch { assistantContent = draft; }
       }
+      const parsed = extractQuestionsFromText(assistantContent);
+      if (Array.isArray(parsed)) allExtractedQuestions = parsed;
     }
-    console.log('[Assistant] RAW CONTENT:', assistantContent.substring(0, 500) + '...');
-    // Track the best "raw" LLM text we have (may include <questions_json>).
-    // If parsing into `questions` fails, we will return this text in `content` so the UI can still parse it.
-    let bestRawTextForUi = assistantContent;
 
-    const extractQuestionsFromText = (text: string) => {
-      const cleaned = (text || '')
-        .replace(/```(?:json)?/gi, '')
-        .replace(/```/g, '')
-        .trim();
-
-      const tryParseJson = (jsonText: string) => {
-        const repairLatexBackslashes = (s: string) => {
-          let out = '';
-          let inString = false;
-          let escape = false;
-          const isHex = (ch: string) => /^[0-9a-fA-F]$/.test(ch);
-          for (let i = 0; i < s.length; i++) {
-            const ch = s[i];
-            if (!inString) {
-              out += ch;
-              if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) inString = true;
-              continue;
-            }
-            if (escape) {
-              out += ch;
-              escape = false;
-              continue;
-            }
-            if (ch === '\\') {
-              const next = s[i + 1] ?? '';
-              const next2 = s[i + 2] ?? '';
-              const isDefinitelyJsonEscape = (() => {
-                if (!next) return false;
-                if (next === '"' || next === '\\' || next === '/') return true;
-                if (next === 'u') {
-                  const h1 = s[i + 2] ?? '', h2 = s[i + 3] ?? '', h3 = s[i + 4] ?? '', h4 = s[i + 5] ?? '';
-                  return Boolean(h1 && h2 && h3 && h4 && isHex(h1) && isHex(h2) && isHex(h3) && isHex(h4));
-                }
-                if (/[bfnrt]/.test(next)) {
-                  if (next2 && /[A-Za-z]/.test(next2)) return false;
-                  return true;
-                }
-                return false;
-              })();
-              out += isDefinitelyJsonEscape ? '\\' : '\\\\';
-              escape = true;
-              continue;
-            }
-            if (ch === '"') {
-              inString = false;
-              out += ch;
-              continue;
-            }
-            out += ch;
-          }
-          return out;
-        };
-
-        try {
-          return JSON.parse(jsonText) as unknown;
-        } catch (e1) {
-          try {
-            const repaired = repairLatexBackslashes(jsonText);
-            const fixedCommas = repaired.replace(/,(\s*[\]}])/g, '$1');
-            return JSON.parse(fixedCommas) as unknown;
-          } catch (e2) {
-            // Attempt to recover truncated JSON if the LLM stopped mid-generation
-            try {
-              const repaired = repairLatexBackslashes(jsonText);
-              // Aggressive truncation recovery: find the last complete object in the array
-              const lastBrace = repaired.lastIndexOf('}');
-              if (lastBrace > 0) {
-                const truncatedFixed = repaired.substring(0, lastBrace + 1) + ']';
-                const parsed = JSON.parse(truncatedFixed);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  console.warn('[Assistant] Recovered truncated JSON array. Length:', parsed.length);
-                  return parsed;
-                }
-              }
-            } catch (e3) {
-              console.warn('[Assistant] Truncation recovery failed:', (e3 as Error).message);
-            }
-            
-            const msg1 = e1 instanceof Error ? e1.message : String(e1);
-            const msg2 = e2 instanceof Error ? e2.message : String(e2);
-            console.error('[Assistant] JSON parse failed after repair:', { msg1, msg2 });
-            throw e2;
-          }
-        }
-      };
-
-      // 1) Preferred: <questions_json>...</questions_json> (tolerate missing closing tag if truncated)
-      const tagMatch = cleaned.match(/<questions_json>\s*([\s\S]*?)(?:<\/questions_json>|$)/i);
-      if (tagMatch && tagMatch[1].trim()) {
-        try {
-          return tryParseJson(tagMatch[1].trim());
-        } catch (e) {
-          console.error('[Assistant] Tagged JSON parse failed:', (e as Error).message);
-        }
-      }
-
-      // 2) Best-effort: first JSON array in the text (tolerate missing closing bracket if truncated)
-      const arrMatch = cleaned.match(/(\[[\s\S]*)/);
-      if (arrMatch) {
-        try {
-          return tryParseJson(arrMatch[1]);
-        } catch (e) {
-          console.error('[Assistant] Array JSON parse failed:', (e as Error).message);
-        }
-      }
-
-      return [];
-    };
-
-    const extracted = extractQuestionsFromText(assistantContent);
-    let questions: unknown[] = Array.isArray(extracted) ? extracted : [];
+    let questions: unknown[] = allExtractedQuestions;
 
     // Groq sometimes outputs LaTeX inside JSON strings using sequences like `\f`, `\r`, `\t`, etc.
     // JSON.parse treats these as valid JSON escapes and converts them into control characters

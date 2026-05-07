@@ -18,17 +18,20 @@ interface DashboardStats {
   pendingApprovals: number;
   approvedRegistrations: number;
   totalStudents: number;
+  internalRegistrations: number;
+  externalRegistrations: number;
+  totalRevenue: number;
+  pendingPayments: number;
 }
 
 const AdminDashboard = () => {
   const { user, signOut } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
-    totalExams: 0,
-    activeExams: 0,
-    totalRegistrations: 0,
-    pendingApprovals: 0,
-    approvedRegistrations: 0,
     totalStudents: 0,
+    internalRegistrations: 0,
+    externalRegistrations: 0,
+    totalRevenue: 0,
+    pendingPayments: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -50,7 +53,13 @@ const AdminDashboard = () => {
           client.from('registrations').select('*', { count: 'exact', head: true }).eq('approval_status', 'pending'),
           client.from('registrations').select('*', { count: 'exact', head: true }).eq('approval_status', 'approved'),
           client.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'student'),
+          client.from('registrations').select('*', { count: 'exact', head: true }).eq('student_type', 'internal'),
+          client.from('registrations').select('*', { count: 'exact', head: true }).eq('student_type', 'external'),
+          client.from('registrations').select('payment_amount').eq('payment_status', 'completed'),
+          client.from('registrations').select('*', { count: 'exact', head: true }).eq('payment_status', 'pending'),
         ]);
+
+        const totalRev = (revenueData as any[])?.reduce((sum, r) => sum + (r.payment_amount || 0), 0) || 0;
 
         return {
           totalExams: totalExams || 0,
@@ -59,6 +68,10 @@ const AdminDashboard = () => {
           pendingApprovals: pendingAppr || 0,
           approvedRegistrations: approvedRegs || 0,
           totalStudents: totalStuds || 0,
+          internalRegistrations: internalRegs || 0,
+          externalRegistrations: externalRegs || 0,
+          totalRevenue: totalRev,
+          pendingPayments: pendingPay || 0,
         };
       };
 
@@ -66,12 +79,11 @@ const AdminDashboard = () => {
       const externalStats = await fetchFromClient(externalSupabase);
 
       setStats({
-        totalExams: Math.max(internalStats.totalExams, externalStats.totalExams),
-        activeExams: Math.max(internalStats.activeExams, externalStats.activeExams),
-        totalRegistrations: Math.max(internalStats.totalRegistrations, externalStats.totalRegistrations),
-        pendingApprovals: Math.max(internalStats.pendingApprovals, externalStats.pendingApprovals),
-        approvedRegistrations: Math.max(internalStats.approvedRegistrations, externalStats.approvedRegistrations),
         totalStudents: Math.max(internalStats.totalStudents, externalStats.totalStudents),
+        internalRegistrations: Math.max(internalStats.internalRegistrations, externalStats.internalRegistrations),
+        externalRegistrations: Math.max(internalStats.externalRegistrations, externalStats.externalRegistrations),
+        totalRevenue: Math.max(internalStats.totalRevenue, externalStats.totalRevenue),
+        pendingPayments: Math.max(internalStats.pendingPayments, externalStats.pendingPayments),
       });
 
       setIsLoading(false);
@@ -213,14 +225,66 @@ const AdminDashboard = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                System Status
+                Revenue Generated
               </CardTitle>
-              <BarChart3 className="w-4 h-4 text-green-500" />
+              <Shield className="w-4 h-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-green-600">Active</div>
+              <div className="text-3xl font-bold text-green-600">₹{stats.totalRevenue}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                All systems operational
+                From external registrations
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Internal vs External
+              </CardTitle>
+              <Users className="w-4 h-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-end gap-2">
+                <div className="text-3xl font-bold">{stats.internalRegistrations}</div>
+                <div className="text-sm text-muted-foreground pb-1">/ {stats.externalRegistrations}</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Internal / External students
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Pending Payments
+              </CardTitle>
+              <Clock className="w-4 h-4 text-orange-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-orange-600">{stats.pendingPayments}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Awaiting completion
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Conversion Rate
+              </CardTitle>
+              <BarChart3 className="w-4 h-4 text-indigo-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-indigo-600">
+                {stats.externalRegistrations > 0 
+                  ? Math.round(((stats.externalRegistrations - stats.pendingPayments) / stats.externalRegistrations) * 100) 
+                  : 0}%
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Paid / Total External Students
               </p>
             </CardContent>
           </Card>
