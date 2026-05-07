@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    const { type, registration_id, force_resend }: EmailRequest = await req.json();
+    const { type, registration_id, force_resend, phone, email }: EmailRequest = await req.json();
 
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
