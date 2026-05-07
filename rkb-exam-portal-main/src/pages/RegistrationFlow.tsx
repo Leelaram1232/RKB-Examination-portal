@@ -211,8 +211,8 @@ const RegistrationFlow = () => {
     setLoading(true);
 
     try {
-      // Check if registration already exists
-      const { data: existingReg } = await externalSupabase
+      // Check if registration already exists in INTERNAL database
+      const { data: existingReg } = await supabase
         .from('registrations')
         .select('id')
         .eq('exam_id', examId)
