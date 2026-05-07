@@ -108,13 +108,16 @@ const RegistrationFlow = () => {
 
         // 1. PRIMARY CHECK: Search RKB App Database (External)
         console.log(`[Verification] Checking RKB App DB for: ${searchEmail} / ${searchPhone}`);
-        const { data: externalProfile, error: extErr } = await externalSupabase
-          .from('profiles')
-          .select('id, full_name')
-          .or(`email.ilike."${searchEmail}",mobile.eq."${searchPhone}"`)
-          .maybeSingle();
         
-        if (extErr) console.error('[Verification] RKB App DB error:', extErr);
+        const [extEmailRes, extPhoneRes] = await Promise.all([
+          externalSupabase.from('profiles').select('id, full_name').ilike('email', searchEmail).maybeSingle(),
+          externalSupabase.from('profiles').select('id, full_name').eq('mobile', searchPhone).maybeSingle()
+        ]);
+        
+        if (extEmailRes.error) console.error('[Verification] RKB Email Search Error:', JSON.stringify(extEmailRes.error));
+        if (extPhoneRes.error) console.error('[Verification] RKB Phone Search Error:', JSON.stringify(extPhoneRes.error));
+
+        const externalProfile = extEmailRes.data || extPhoneRes.data;
 
         if (externalProfile) {
           console.log('[Verification] Student found in RKB App DB:', externalProfile.full_name);
@@ -124,13 +127,16 @@ const RegistrationFlow = () => {
         } else {
           // 2. SECONDARY CHECK: Check Internal Portal Database
           console.log('[Verification] Not found in RKB App, checking Portal DB...');
-          const { data: localProfile, error: locErr } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .or(`email.ilike."${searchEmail}",mobile.eq."${searchPhone}"`)
-            .maybeSingle();
           
-          if (locErr) console.error('[Verification] Portal DB error:', locErr);
+          const [locEmailRes, locPhoneRes] = await Promise.all([
+            supabase.from('profiles').select('id, full_name').ilike('email', searchEmail).maybeSingle(),
+            supabase.from('profiles').select('id, full_name').eq('mobile', searchPhone).maybeSingle()
+          ]);
+          
+          if (locEmailRes.error) console.error('[Verification] Portal Email Search Error:', JSON.stringify(locEmailRes.error));
+          if (locPhoneRes.error) console.error('[Verification] Portal Phone Search Error:', JSON.stringify(locPhoneRes.error));
+
+          const localProfile = locEmailRes.data || locPhoneRes.data;
 
           if (localProfile) {
             console.log('[Verification] Student found in Portal DB:', localProfile.full_name);
