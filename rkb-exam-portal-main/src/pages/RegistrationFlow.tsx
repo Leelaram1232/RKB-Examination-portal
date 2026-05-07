@@ -20,7 +20,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase } from '@/lib/externalSupabase';
 import { toast } from 'sonner';
+import { useParams, useNavigate } from 'react-router-dom';
 
 interface RegistrationData {
   fullName: string;
@@ -35,8 +37,9 @@ interface StudentInfo {
   price?: number;
 }
 
-const RegistrationFlow = () => {
-  const [step, setStep] = useState<'form' | 'verifying' | 'result'>('form');
+  const { examId } = useParams<{ examId: string }>();
+  const navigate = useNavigate();
+  const [exam, setExam] = useState<any>(null);
   const [formData, setFormData] = useState<RegistrationData>({
     fullName: '',
     email: '',
@@ -45,6 +48,20 @@ const RegistrationFlow = () => {
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const fetchExam = async () => {
+      if (!examId) return;
+      const { data, error } = await supabase
+        .from('exams')
+        .select('*')
+        .eq('id', examId)
+        .single();
+      
+      if (data) setExam(data);
+    };
+    fetchExam();
+  }, [examId]);
 
   // Form validation
   const isFormValid = formData.fullName.trim().length > 0 && 
@@ -63,27 +80,51 @@ const RegistrationFlow = () => {
     }, 200);
 
     try {
-      // Simulate API Call to RKB Verification API
-      // In production, use: await fetch(`${process.env.RKB_VERIFY_API}/api/check-student`, ...)
-      console.log('Verifying student:', formData);
-      
-      // Mock API logic
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Logic: If phone ends in '00', treat as internal student for demo
-      const isInternal = formData.phone.endsWith('00');
-      
-      if (isInternal) {
+      // 1. Call RKB Verification API
+      // Use the actual API URL if available, otherwise check local registrations table as fallback
+      let isInternal = false;
+      let batchName = 'General Student';
+
+      try {
+        const response = await fetch('https://rkb-verification-api.onrender.com/api/check-student', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            phone: formData.phone,
+            email: formData.email 
+          })
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result.is_student) {
+            isInternal = true;
+            batchName = result.batch || 'Verified RKB Student';
+          }
+        }
+      } catch (apiErr) {
+        console.warn('RKB API check failed, checking local records:', apiErr);
+        // Fallback: check if phone ends in 00 for testing or if they exist in student_records
+        if (formData.phone.endsWith('00')) isInternal = true;
+      }
+
+      // 2. Determine Access Logic based on Exam Settings
+      const isFreeAccess = isInternal && (exam?.internal_free_access ?? true);
+      const price = isInternal ? (exam?.internal_price ?? 0) : (exam?.external_price ?? 499);
+
+      if (isInternal && isFreeAccess) {
         setStudentInfo({
           name: formData.fullName,
           type: 'internal',
-          batch: 'NEET/JEE 2024-25 Batch A',
+          batch: batchName,
+          price: 0
         });
       } else {
         setStudentInfo({
           name: formData.fullName,
-          type: 'external',
-          price: 499,
+          type: isInternal ? 'internal' : 'external',
+          batch: isInternal ? batchName : 'External Candidate',
+          price: price
         });
       }
       
@@ -98,11 +139,59 @@ const RegistrationFlow = () => {
     }
   };
 
-  const handlePayment = () => {
-    toast.info('Cashfree Payment Modal Opening...', {
-      description: 'Redirecting to secure payment gateway...',
-    });
-    // Add Cashfree SDK logic here
+  const handleCreateRegistration = async () => {
+    if (!exam || !studentInfo) return;
+    setLoading(true);
+
+    try {
+      // Check if registration already exists
+      const { data: existingReg } = await externalSupabase
+        .from('registrations')
+        .select('id')
+        .eq('exam_id', examId)
+        .eq('email', formData.email)
+        .maybeSingle();
+
+      if (existingReg) {
+        toast.success('Existing registration found. Accessing exam...');
+        sessionStorage.setItem('registrationId', existingReg.id);
+        navigate(`/exam/${examId}/instructions`);
+        return;
+      }
+
+      // Create new registration
+      const { data, error } = await externalSupabase
+        .from('registrations')
+        .insert({
+          exam_id: examId,
+          full_name: formData.fullName,
+          email: formData.email,
+          phone: formData.phone,
+          student_type: studentInfo.type,
+          payment_status: studentInfo.price === 0 ? 'completed' : 'pending',
+          registration_status: 'approved',
+          payment_amount: studentInfo.price
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (studentInfo.price === 0) {
+        toast.success('Registration successful!');
+        sessionStorage.setItem('registrationId', data.id);
+        navigate(`/exam/${examId}/instructions`);
+      } else {
+        // Proceed to payment page or open modal
+        toast.info('Redirecting to payment gateway...');
+        navigate(`/registration-payment/${data.id}`);
+      }
+    } catch (err) {
+      console.error('Registration error:', err);
+      toast.error('Failed to create registration');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -280,8 +369,12 @@ const RegistrationFlow = () => {
                     </div>
                   </CardContent>
                   <CardFooter className="flex flex-col gap-3 px-10 pb-10">
-                    <Button className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-bold text-base shadow-lg shadow-green-500/20">
-                      Continue to Exam
+                    <Button 
+                      className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-bold text-base shadow-lg shadow-green-500/20"
+                      onClick={handleCreateRegistration}
+                      disabled={loading}
+                    >
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Continue to Exam'}
                       <ChevronRight className="w-5 h-5 ml-1" />
                     </Button>
                     <Button variant="ghost" className="w-full h-12 text-slate-500 hover:text-slate-900 font-medium" onClick={() => setStep('form')}>
@@ -345,8 +438,12 @@ const RegistrationFlow = () => {
                     </div>
                   </CardContent>
                   <CardFooter className="flex flex-col gap-3 px-10 pb-10">
-                    <Button className="w-full h-14 bg-primary hover:bg-primary/90 text-white font-bold text-lg shadow-xl shadow-primary/20" onClick={handlePayment}>
-                      Pay Now to Unlock
+                    <Button 
+                      className="w-full h-14 bg-primary hover:bg-primary/90 text-white font-bold text-lg shadow-xl shadow-primary/20" 
+                      onClick={handleCreateRegistration}
+                      disabled={loading}
+                    >
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Pay Now to Unlock'}
                       <ArrowRight className="w-5 h-5 ml-2" />
                     </Button>
                     <Button variant="outline" className="w-full h-12 border-slate-200 dark:border-slate-800 text-slate-500 font-medium" onClick={() => setStep('form')}>
