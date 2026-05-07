@@ -74,6 +74,19 @@ interface StudentInfo {
     setStep('verifying');
     setProgress(0);
     
+    // 0. CHECK IF EXAM IS FREE FOR ALL - Skip verification if it is
+    if (exam?.access_type === 'free') {
+      console.log('Exam is free for all, bypassing verification...');
+      setProgress(100);
+      setStudentInfo({
+        name: formData.fullName,
+        type: 'external',
+        price: 0
+      });
+      setTimeout(() => setStep('result'), 300);
+      return;
+    }
+
     // Animate progress bar for feel
     const interval = setInterval(() => {
       setProgress(prev => (prev < 90 ? prev + 10 : prev));
@@ -104,33 +117,31 @@ interface StudentInfo {
         }
       } catch (apiErr) {
         console.warn('RKB API check failed, checking local records:', apiErr);
-        // Fallback: check if phone ends in 00 for testing or if they exist in student_records
         if (formData.phone.endsWith('00')) isInternal = true;
       }
 
-      // 2. Determine Access Logic based on Exam Settings
+      // 2. Determine Access Logic
+      // If internal AND exam allows free internal access -> price 0
       const isFreeAccess = isInternal && (exam?.internal_free_access ?? true);
-      const price = isInternal ? (exam?.internal_price ?? 0) : (exam?.external_price ?? 499);
+      const price = isFreeAccess ? 0 : (isInternal ? (exam?.internal_price ?? 0) : (exam?.external_price ?? 499));
 
-      if (isInternal && isFreeAccess) {
-        setStudentInfo({
-          name: formData.fullName,
-          type: 'internal',
-          batch: batchName,
-          price: 0
-        });
-      } else {
-        setStudentInfo({
-          name: formData.fullName,
-          type: isInternal ? 'internal' : 'external',
-          batch: isInternal ? batchName : 'External Candidate',
-          price: price
-        });
-      }
+      setStudentInfo({
+        name: formData.fullName,
+        type: isInternal ? 'internal' : 'external',
+        batch: isInternal ? batchName : 'External Candidate',
+        price: price
+      });
       
       clearInterval(interval);
       setProgress(100);
-      setTimeout(() => setStep('result'), 500);
+      
+      // AUTO-PROCEED if verified and free
+      if (price === 0) {
+        toast.success('Access verified! Initializing exam...');
+        setTimeout(() => handleCreateRegistration(), 1000);
+      } else {
+        setTimeout(() => setStep('result'), 500);
+      }
       
     } catch (error) {
       clearInterval(interval);
