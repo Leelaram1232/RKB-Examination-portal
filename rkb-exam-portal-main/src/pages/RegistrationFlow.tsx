@@ -107,26 +107,33 @@ const RegistrationFlow = () => {
         const searchPhone = formData.phone.trim();
 
         // 1. PRIMARY CHECK: Search RKB App Database (External)
-        const { data: externalProfile } = await externalSupabase
+        console.log(`[Verification] Checking RKB App DB for: ${searchEmail} / ${searchPhone}`);
+        const { data: externalProfile, error: extErr } = await externalSupabase
           .from('profiles')
           .select('id, full_name')
-          .or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`)
+          .or(`email.ilike."${searchEmail}",mobile.eq."${searchPhone}"`)
           .maybeSingle();
         
+        if (extErr) console.error('[Verification] RKB App DB error:', extErr);
+
         if (externalProfile) {
-          console.log('Found profile in RKB App database:', externalProfile);
+          console.log('[Verification] Student found in RKB App DB:', externalProfile.full_name);
           isInternal = true;
           batchName = 'Verified RKB Student';
           foundStudentId = externalProfile.id;
         } else {
           // 2. SECONDARY CHECK: Check Internal Portal Database
-          const { data: localProfile } = await supabase
+          console.log('[Verification] Not found in RKB App, checking Portal DB...');
+          const { data: localProfile, error: locErr } = await supabase
             .from('profiles')
-            .select('id')
-            .or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`)
+            .select('id, full_name')
+            .or(`email.ilike."${searchEmail}",mobile.eq."${searchPhone}"`)
             .maybeSingle();
           
+          if (locErr) console.error('[Verification] Portal DB error:', locErr);
+
           if (localProfile) {
+            console.log('[Verification] Student found in Portal DB:', localProfile.full_name);
             isInternal = true;
             batchName = 'Portal Student';
             foundStudentId = localProfile.id;
