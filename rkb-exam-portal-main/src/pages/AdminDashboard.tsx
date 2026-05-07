@@ -45,7 +45,11 @@ const AdminDashboard = () => {
           { count: totalRegs },
           { count: pendingAppr },
           { count: approvedRegs },
-          { count: totalStuds }
+          { count: totalStuds },
+          { count: internalRegs },
+          { count: externalRegs },
+          { data: revenueData },
+          { count: pendingPay }
         ] = await Promise.all([
           client.from('exams').select('*', { count: 'exact', head: true }),
           client.from('exams').select('*', { count: 'exact', head: true }).eq('is_active', true),
@@ -75,8 +79,10 @@ const AdminDashboard = () => {
         };
       };
 
-      const internalStats = await fetchFromClient(supabase);
-      const externalStats = await fetchFromClient(externalSupabase);
+      const [internalStats, externalStats] = await Promise.all([
+        fetchFromClient(supabase),
+        fetchFromClient(externalSupabase)
+      ]);
 
       setStats({
         totalStudents: Math.max(internalStats.totalStudents, externalStats.totalStudents),
