@@ -35,6 +35,7 @@ interface StudentInfo {
   type: 'internal' | 'external';
   batch?: string;
   price?: number;
+  studentId?: string;
 }
 
 const RegistrationFlow = () => {
@@ -119,6 +120,7 @@ const RegistrationFlow = () => {
       }
 
       // 2. BACKUP: Check local profiles table if API failed or returned false
+      let foundStudentId = '';
       if (!isInternal) {
         const { data: localProfile } = await externalSupabase
           .from('profiles')
@@ -130,6 +132,7 @@ const RegistrationFlow = () => {
           console.log('Found local profile, treating as internal:', localProfile);
           isInternal = true;
           batchName = 'Registered RKB Student';
+          foundStudentId = localProfile.id;
         }
       }
 
@@ -141,11 +144,9 @@ const RegistrationFlow = () => {
       let price = exam?.external_price ?? 499;
 
       if (isInternal) {
-        // If internal, free access depends on 'internal_free_access' toggle or if type is 'paid_external'
         isFreeAccess = (exam?.internal_free_access ?? true) || (exam?.access_type === 'paid_external');
         price = isFreeAccess ? 0 : (exam?.internal_price ?? 0);
       } else {
-        // If external student
         isFreeAccess = (exam?.access_type === 'free');
         price = isFreeAccess ? 0 : (exam?.external_price ?? 499);
       }
@@ -154,7 +155,8 @@ const RegistrationFlow = () => {
         name: formData.fullName,
         type: isInternal ? 'internal' : 'external',
         batch: isInternal ? batchName : 'External Candidate',
-        price: price
+        price: price,
+        studentId: foundStudentId
       });
       
       clearInterval(interval);
@@ -196,18 +198,24 @@ const RegistrationFlow = () => {
       }
 
       // Create new registration
+      const registrationPayload: any = {
+        exam_id: examId,
+        full_name: formData.fullName,
+        email: formData.email,
+        phone: formData.phone,
+        student_type: studentInfo.type,
+        payment_status: studentInfo.price === 0 ? 'completed' : 'pending',
+        registration_status: 'approved',
+        payment_amount: studentInfo.price
+      };
+
+      if (studentInfo.studentId) {
+        registrationPayload.student_id = studentInfo.studentId;
+      }
+
       const { data, error } = await externalSupabase
         .from('registrations')
-        .insert({
-          exam_id: examId,
-          full_name: formData.fullName,
-          email: formData.email,
-          phone: formData.phone,
-          student_type: studentInfo.type,
-          payment_status: studentInfo.price === 0 ? 'completed' : 'pending',
-          registration_status: 'approved',
-          payment_amount: studentInfo.price
-        })
+        .insert(registrationPayload)
         .select()
         .single();
 
