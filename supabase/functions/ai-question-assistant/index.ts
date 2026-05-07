@@ -185,50 +185,92 @@ async function callMathpixPdf(
   );
 }
 
-function extractPageRangesFromPrompt(text: string): string | null {
-  const t = (text || '').toLowerCase().trim();
-  if (!t) return null;
+interface UserIntent {
+  pageRanges: string | null;
+  questionRange: { start: number; end: number } | null;
+  extractAll: boolean;
+  subjects: string[];
+  topics: string[];
+}
 
-  // User intent shortcuts
+function parseUserIntent(text: string): UserIntent {
+  const t = (text || '').toLowerCase().trim();
+  const intent: UserIntent = {
+    pageRanges: null,
+    questionRange: null,
+    extractAll: false,
+    subjects: [],
+    topics: [],
+  };
+
+  if (!t) return intent;
+
+  // 1. All/Everything Intent
   if (
     t.includes('everything') ||
     t.includes('all pages') ||
     t.includes('all page') ||
     t.includes('entire pdf') ||
     t.includes('whole pdf') ||
-    t.includes('whole document')
+    t.includes('whole document') ||
+    t.includes('all question') ||
+    t.includes('extract all') ||
+    t.includes('full question')
   ) {
-    // Mathpix can hit compute limits for large ranges.
-    // Start with a larger-but-safe chunk first; user can request the next chunk later.
-    return '1-20';
+    intent.extractAll = true;
+    intent.pageRanges = '1-60'; // Increased default for "All"
   }
 
-  // Examples:
-  // "page 1-10"
-  // "pages 1 to 5"
-  const rangeMatch = t.match(/pages?\s*(\d+)\s*(?:-|to)\s*(\d+)/i);
-  if (rangeMatch) {
-    const a = rangeMatch[1];
-    const b = rangeMatch[2];
-    return `${a}-${b}`;
+  // 2. Page Ranges
+  const pageRangeMatch = t.match(/pages?\s*(\d+)\s*(?:-|to)\s*(\d+)/i);
+  if (pageRangeMatch) {
+    intent.pageRanges = `${pageRangeMatch[1]}-${pageRangeMatch[2]}`;
+  } else {
+    const singlePageMatch = t.match(/page\s*(\d+)/i);
+    if (singlePageMatch) {
+      intent.pageRanges = `${singlePageMatch[1]}-${singlePageMatch[1]}`;
+    }
   }
 
-  // Single-page requests: "page 7" -> "7-7"
-  const singlePageMatch = t.match(/page\s*(\d+)/i);
-  if (singlePageMatch) {
-    const n = singlePageMatch[1];
-    return `${n}-${n}`;
+  // 3. Question Ranges
+  // "extract questions from 5 to 15" or "questions 10-20"
+  const qRangeMatch = t.match(/(?:questions?|q)\s*(?:from\s*)?(\d+)\s*(?:-|to)\s*(\d+)/i);
+  if (qRangeMatch) {
+    intent.questionRange = {
+      start: Number.parseInt(qRangeMatch[1], 10),
+      end: Number.parseInt(qRangeMatch[2], 10),
+    };
+    // If we have a question range but no page range, we guess the pages.
+    // Heuristic: ~5 questions per page. Q5-15 might be on pages 1-4.
+    if (!intent.pageRanges) {
+      const estimatedStartPage = Math.max(1, Math.floor(intent.questionRange.start / 5));
+      const estimatedEndPage = Math.max(estimatedStartPage, Math.ceil(intent.questionRange.end / 4) + 1);
+      intent.pageRanges = `${estimatedStartPage}-${estimatedEndPage}`;
+    }
   }
 
-  // Example:
-  // "pages 1,2,3"
-  const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
-  if (listMatch) {
-    const cleaned = listMatch[1].replace(/\s+/g, '');
-    if (cleaned) return cleaned;
+  // 4. Subjects
+  const commonSubjects = ['mathematics', 'maths', 'math', 'physics', 'chemistry', 'biology', 'botany', 'zoology'];
+  for (const s of commonSubjects) {
+    if (t.includes(s)) intent.subjects.push(s);
   }
 
-  return null;
+  // 5. Topics/Chapters
+  // This is harder, but we can look for "from [topic]" or "[topic] questions"
+  const topicKeywords = ['thermodynamics', 'optics', 'algebra', 'calculus', 'mechanics', 'organic', 'inorganic', 'genetics', 'trigonometry'];
+  for (const tp of topicKeywords) {
+    if (t.includes(tp)) intent.topics.push(tp);
+  }
+
+  // Handle explicit lists of pages
+  if (!intent.pageRanges) {
+    const listMatch = t.match(/pages?\s*((?:\d+\s*,\s*)*\d+)/i);
+    if (listMatch) {
+      intent.pageRanges = listMatch[1].replace(/\s+/g, '');
+    }
+  }
+
+  return intent;
 }
 
 type PageRange = { a: number; b: number };
@@ -1062,9 +1104,8 @@ Deno.serve(async (req) => {
     let ocrError: string | null = null;
     const lastUserMessage =
       [...messages].reverse().find((m) => m.role === 'user')?.content || '';
-    const requestedPageRanges = extractPageRangesFromPrompt(lastUserMessage);
-    // Mathpix can time out on whole large PDFs, so default to a small chunk when user didn't specify.
-    const pageSpecToUse = requestedPageRanges || '1-10';
+    const userIntent = parseUserIntent(lastUserMessage);
+    const pageSpecToUse = userIntent.pageRanges || '1-10';
     const requestedRanges = parsePageSpec(pageSpecToUse);
     // Fallback safety: if parsing failed, keep the default chunk.
     const rangesToUse = requestedRanges.length > 0 ? requestedRanges : [{ a: 1, b: 10 }];
@@ -1191,10 +1232,8 @@ Deno.serve(async (req) => {
 
     // Groq on-demand tier has strict token/TPM limits.
     // When OCR is large, we must be very aggressive to stay below TPM.
-    // (Groq "Requested" in this error is still high even after truncation,
-    // so we reduce more.)
-    const MAX_OCR_CONTEXT_CHARS = 8000;
-    const MAX_MESSAGE_CHARS = 1200;
+    const MAX_OCR_CONTEXT_CHARS = llm_mode === 'groq' ? 8000 : 120000; 
+    const MAX_MESSAGE_CHARS = 2000;
 
     const truncateText = (s: string, maxChars: number) => {
       if (!s) return s;
@@ -1202,10 +1241,9 @@ Deno.serve(async (req) => {
       return s.slice(0, maxChars) + '... [TRUNCATED]';
     };
 
-    // Truncate OCR context again right before embedding into the system prompt.
-    // (We already truncate inside Mathpix, but we keep this as defense-in-depth.)
+    // Truncate OCR context right before embedding into the system prompt.
     if (ocrContext && ocrContext.length > MAX_OCR_CONTEXT_CHARS) {
-      console.log('[Assistant] Truncating OCR context for Groq from', ocrContext.length, 'to', MAX_OCR_CONTEXT_CHARS, 'chars');
+      console.log(`[Assistant] Truncating OCR context for ${llm_mode} from ${ocrContext.length} to ${MAX_OCR_CONTEXT_CHARS} chars`);
       ocrContext = truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS);
     }
 
@@ -1220,80 +1258,34 @@ Deno.serve(async (req) => {
     const generateSystemPrompt = `You are an advanced exam question generator integrated into the RKB Exam Portal.
 Your task is to generate high-quality, non-repeating exam questions based on the user's request.
 
+### USER INTENT & FILTERING:
+${userIntent.questionRange ? `- EXTRACT ONLY questions numbered ${userIntent.questionRange.start} to ${userIntent.questionRange.end}.` : ''}
+${userIntent.subjects.length > 0 ? `- EXTRACT ONLY questions for these subjects: ${userIntent.subjects.join(', ')}.` : ''}
+${userIntent.topics.length > 0 ? `- EXTRACT ONLY questions for these topics/chapters: ${userIntent.topics.join(', ')}.` : ''}
+${userIntent.extractAll ? '- EXTRACT ALL questions found in the provided context. Do NOT skip any.' : ''}
+
 ### STRICT RULES:
-
-1. **Question Types Supported**:
-   - Multiple Choice Questions (MCQs)
-   - Fill in the Blanks
-
-2. **MCQ Requirements**:
-   - Each question must have exactly 4 options.
-   - Only ONE option must be correct.
-   - Clearly mark the correct answer.
-   - Options should be realistic and not obvious.
-
-3. **Fill in the Blanks**:
-   - Provide the question with a blank ______ in the text.
-   - Provide the correct answer separately.
-
-4. **No Repetition Policy**:
-   - NEVER repeat questions within the same response.
-   - NEVER repeat questions from previous responses in the same session.
-   - Maintain uniqueness in wording and concept.
-
-5. **Quality Constraints**:
-   - Questions must be clear, grammatically correct, and exam-level.
-   - Avoid ambiguous or trick questions unless explicitly asked.
-   - Ensure factual correctness.
-
-6. **Output Format (STRICT)**:
-   You must provide the questions in a human-readable format FIRST, followed by a JSON block.
-   
-   **For MCQs:**
-   Q1. <Question>
-   A. <Option 1>
-   B. <Option 2>
-   C. <Option 3>
-   D. <Option 4>
-   Correct Answer: <Option Letter>
-
-   **For Fill in the Blanks:**
-   Q1. <Sentence with blank ______>
-   Answer: <Correct Answer>
-
-7. **Numbering & Difficulty**:
-   - If the user asks for multiple questions:
-     - Number them sequentially (Q1, Q2, Q3...)
-     - Mix difficulty levels (easy, medium, hard)
-
-8. **Context Handling**:
-   - If insufficient context is provided, assume a standard academic level unless specified.
-
-9. **Behavioral Rules**:
-   - Do NOT explain answers unless explicitly asked.
-   - Ensure every response is fresh, unique, and non-repetitive.
-
-### TECHNICAL REQUIREMENTS:
-- **LANGUAGE SUPPORT**: Support Telugu (తెలుగు), Hindi, Tamil, Kannada and English. Preserve regional languages.
-- **JSON BLOCK REQUIRED**: You MUST append a JSON array wrapped in <questions_json> and </questions_json> tags at the end of your response.
+1. **Question Types Supported**: MCQ and Fill in the Blanks.
+2. **MCQ Requirements**: 4 options, ONE correct.
+3. **No Repetition**: NEVER repeat questions. Ensure full coverage of the requested range/subject.
+4. **Output Format**: Human-readable followed by <questions_json> block.
+5. **Language**: Preserve Telugu, Hindi, etc., as found in OCR.
 
 ### JSON SCHEMA:
 [
   {
-    "question_text": "text with LaTeX $...$ or regional language",
+    "question_text": "...",
     "question_type": "MCQ" | "FILL_BLANK",
-    "option_a": "Text...", "option_b": "Text...", "option_c": "Text...", "option_d": "Text...",
+    "option_a": "...", "option_b": "...", "option_c": "...", "option_d": "...",
     "correct_option": "A|B|C|D",
-    "correct_answer": "Numerical/Textual answer",
-    "section_name": "Section A",
-    "marks": 4,
-    "has_image": false,
-    "image_url": null
+    "correct_answer": "...",
+    "section_name": "...",
+    "marks": 4
   }
 ]
 
 Current context:
-${ocrContext ? `OCR Extracted Content: \n${truncateText(ocrContext, MAX_OCR_CONTEXT_CHARS)}` : 'No file uploaded.'}
+${ocrContext ? `OCR Extracted Content: \n${ocrContext}` : 'No file uploaded.'}
 Subject ID: ${subject_id || 'Not specified'}
 Exam ID: ${exam_id || 'Not specified'}`;
 
