@@ -116,6 +116,15 @@ const RegistrationApproval = () => {
     try {
       setIsLoading(true);
       
+      // 1. Fetch exams from internal database
+      const fetchExams = async (client: any) => {
+        const { data } = await client
+          .from('exams')
+          .select('id, exam_name, exam_code, exam_date, notify_on_approval')
+          .order('exam_name');
+        return data || [];
+      };
+
       const internalExams = await fetchExams(internalSupabase);
       setExams(internalExams);
 
