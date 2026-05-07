@@ -9,9 +9,11 @@ const corsHeaders = {
 };
 
 interface EmailRequest {
-  type: 'payment_success' | 'registration_approved' | 'exam_reminder';
-  registration_id: string;
+  type: 'payment_success' | 'registration_approved' | 'exam_reminder' | 'verify';
+  registration_id?: string;
   force_resend?: boolean;
+  phone?: string;
+  email?: string;
 }
 
 interface SmtpResult {
@@ -141,6 +143,21 @@ Deno.serve(async (req) => {
       ? createClient(externalUrl, externalKey) 
       : createClient(internalUrl, internalKey);
 
+    // HANDLE VERIFICATION PROXY
+    if (type === 'verify') {
+      const response = await fetch('https://rkb-verification-api.onrender.com/api/check-student', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, email })
+      });
+      const result = await response.json();
+      return new Response(JSON.stringify(result), { 
+        status: response.ok ? 200 : 400, 
+        headers: corsHeaders 
+      });
+    }
+
+    if (!registration_id) throw new Error('Registration ID required');
     const registration = await fetchRegistrationData(primaryClient, registration_id);
     if (!registration) throw new Error('Registration not found');
 

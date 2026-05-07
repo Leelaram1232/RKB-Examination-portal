@@ -101,25 +101,21 @@ const RegistrationFlow = () => {
       let batchName = 'General Student';
 
       try {
-        // 1. First, check the external verification API
-        const response = await fetch('https://rkb-verification-api.onrender.com/api/check-student', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            phone: formData.phone,
-            email: formData.email 
-          })
+        // 1. Check verification via Edge Function proxy (to avoid CORS)
+        const { data: result, error: apiErr } = await supabase.functions.invoke('finalize-registration', {
+          body: { 
+            type: 'verify',
+            phone: formData.phone.trim(),
+            email: formData.email.trim() 
+          }
         });
 
-        if (response.ok) {
-          const result = await response.json();
-          if (result.is_student) {
-            isInternal = true;
-            batchName = result.batch || 'Verified RKB Student';
-          }
+        if (!apiErr && result && result.is_student) {
+          isInternal = true;
+          batchName = result.batch || 'Verified RKB Student';
         }
       } catch (apiErr) {
-        console.warn('RKB API check failed, trying local profiles check:', apiErr);
+        console.warn('RKB API proxy check failed, trying local profiles check:', apiErr);
       }
 
       // 2. BACKUP: Check local profiles table if API failed or returned false
@@ -127,7 +123,7 @@ const RegistrationFlow = () => {
         const { data: localProfile } = await externalSupabase
           .from('profiles')
           .select('id, full_name')
-          .or(`email.eq.${formData.email},phone.eq.${formData.phone}`)
+          .or(`email.eq.${formData.email.trim()},mobile.eq.${formData.phone.trim()}`)
           .maybeSingle();
         
         if (localProfile) {
@@ -141,9 +137,18 @@ const RegistrationFlow = () => {
       if (!isInternal && formData.phone.endsWith('00')) isInternal = true;
 
       // 2. Determine Access Logic
-      // If internal AND exam allows free internal access -> price 0
-      const isFreeAccess = isInternal && (exam?.internal_free_access ?? true);
-      const price = isFreeAccess ? 0 : (isInternal ? (exam?.internal_price ?? 0) : (exam?.external_price ?? 499));
+      let isFreeAccess = false;
+      let price = exam?.external_price ?? 499;
+
+      if (isInternal) {
+        // If internal, free access depends on 'internal_free_access' toggle or if type is 'paid_external'
+        isFreeAccess = (exam?.internal_free_access ?? true) || (exam?.access_type === 'paid_external');
+        price = isFreeAccess ? 0 : (exam?.internal_price ?? 0);
+      } else {
+        // If external student
+        isFreeAccess = (exam?.access_type === 'free');
+        price = isFreeAccess ? 0 : (exam?.external_price ?? 499);
+      }
 
       setStudentInfo({
         name: formData.fullName,
