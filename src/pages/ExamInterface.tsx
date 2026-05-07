@@ -537,31 +537,31 @@ export default function ExamInterface() {
 
       const maxRetries = isBackgroundSync ? 0 : 3;
       
-      // Update local state and backup immediately
-      setAnswers((prev) => {
-        const newMap = new Map(prev);
-        const ans = {
-          question_id: questionId,
-          selected_option: selectedOption,
-          text_answer: textAnswer,
-          is_marked_for_review: !!isMarkedForReview,
-        };
-        newMap.set(questionId, ans);
-        
-        // Save full map to localStorage for persistence across reloads
-        const backupData = Object.fromEntries(newMap);
-        localStorage.setItem(`exam_backup_${session.session_id}`, JSON.stringify(backupData));
-        
-        return newMap;
-      });
-
-      if (!isBackgroundSync) {
-        setUnsyncedAnswers(prev => new Set(prev).add(questionId));
-        setSyncStatus('syncing');
-      }
-
       try {
-        // Try upsert
+        // Update local state and backup immediately
+        setAnswers((prev) => {
+          const newMap = new Map(prev);
+          const ans = {
+            question_id: questionId,
+            selected_option: selectedOption,
+            text_answer: textAnswer,
+            is_marked_for_review: !!isMarkedForReview,
+          };
+          newMap.set(questionId, ans);
+          
+          // Save full map to localStorage for persistence across reloads
+          const backupData = Object.fromEntries(newMap);
+          localStorage.setItem(`exam_backup_${session.session_id}`, JSON.stringify(backupData));
+          
+          return newMap;
+        });
+
+        if (!isBackgroundSync) {
+          setUnsyncedAnswers(prev => new Set(prev).add(questionId));
+          setSyncStatus('syncing');
+        }
+
+        // Try upsert first
         const { error } = await supabase
           .from('student_answers')
           .upsert({
@@ -573,7 +573,30 @@ export default function ExamInterface() {
             answered_at: new Date().toISOString()
           }, { onConflict: 'session_id,question_id' });
 
-        if (error) throw error;
+        if (error) {
+          console.error(`[SAVE_ANSWER] Upsert error on question ${questionId}:`, error);
+          
+          if (retryCount < maxRetries) {
+            setTimeout(() => {
+              saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1, false);
+            }, (retryCount + 1) * 1000);
+            return;
+          } else {
+            // Final fallback: try simple insert
+            const { error: insertError } = await supabase
+              .from('student_answers')
+              .insert({
+                session_id: session.session_id,
+                question_id: questionId,
+                selected_option: selectedOption,
+                text_answer: textAnswer,
+                is_marked_for_review: !!isMarkedForReview,
+                answered_at: new Date().toISOString()
+              });
+            
+            if (insertError) throw insertError;
+          }
+        }
 
         // Success!
         setUnsyncedAnswers(prev => {
@@ -583,40 +606,8 @@ export default function ExamInterface() {
           return next;
         });
       } catch (err: any) {
-        console.error(`[SAVE_ANSWER] Error on question ${questionId}:`, err);
-        
-        if (retryCount < maxRetries) {
-          setTimeout(() => {
-            saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1, false);
-          }, (retryCount + 1) * 1000);
-        } else {
-              // This might create duplicates but is better than losing data
-              const { error: insertError } = await supabase
-                .from('student_answers')
-                .insert({
-                  session_id: session.session_id,
-                  question_id: questionId,
-                  selected_option: selectedOption,
-                  text_answer: textAnswer,
-                  is_marked_for_review: !!isMarkedForReview,
-                  answered_at: new Date().toISOString()
-                });
-              
-              if (insertError) throw insertError;
-            }
-
-            // If we got here, one of the fallbacks worked
-            setUnsyncedAnswers(prev => {
-              const next = new Set(prev);
-              next.delete(questionId);
-              if (next.size === 0) setSyncStatus('synced');
-              return next;
-            });
-          } catch (e) {
-            console.error('[SAVE_ANSWER] All fallbacks failed:', e);
-            setSyncStatus(navigator.onLine ? 'error' : 'offline');
-          }
-        }
+        console.error(`[SAVE_ANSWER] All attempts failed for question ${questionId}:`, err);
+        setSyncStatus(navigator.onLine ? 'error' : 'offline');
       }
     },
     [session]
