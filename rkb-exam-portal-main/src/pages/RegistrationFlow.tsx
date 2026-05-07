@@ -100,50 +100,62 @@ const RegistrationFlow = () => {
       // Use the actual API URL if available, otherwise check local registrations table as fallback
       let isInternal = false;
       let batchName = 'General Student';
+      let foundStudentId = '';
 
       try {
-        // 1. Check verification via Edge Function proxy (to avoid CORS)
-        const { data: result, error: apiErr } = await supabase.functions.invoke('finalize-registration', {
-          body: { 
-            type: 'verify',
-            phone: formData.phone.trim(),
-            email: formData.email.trim() 
-          }
-        });
-
-        if (!apiErr && result && result.is_student) {
-          isInternal = true;
-          batchName = result.batch || 'Verified RKB Student';
-        }
-      } catch (apiErr) {
-        console.warn('RKB API proxy check failed, trying local profiles check:', apiErr);
-      }
-
-      // 2. BACKUP: Check BOTH internal and external profiles tables
-      let foundStudentId = '';
-      if (!isInternal) {
         const searchEmail = formData.email.trim();
         const searchPhone = formData.phone.trim();
 
-        const [localRes, externalRes] = await Promise.all([
-          supabase.from('profiles').select('id').or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`).maybeSingle(),
-          externalSupabase.from('profiles').select('id').or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`).maybeSingle()
-        ]);
-
-        const foundProfile = localRes.data || externalRes.data;
+        // 1. PRIMARY CHECK: Search RKB App Database (External)
+        const { data: externalProfile } = await externalSupabase
+          .from('profiles')
+          .select('id, full_name')
+          .or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`)
+          .maybeSingle();
         
-        if (foundProfile) {
-          console.log('Found profile in database, treating as internal:', foundProfile);
+        if (externalProfile) {
+          console.log('Found profile in RKB App database:', externalProfile);
           isInternal = true;
           batchName = 'Verified RKB Student';
-          foundStudentId = foundProfile.id;
+          foundStudentId = externalProfile.id;
+        } else {
+          // 2. SECONDARY CHECK: Check Internal Portal Database
+          const { data: localProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`)
+            .maybeSingle();
+          
+          if (localProfile) {
+            isInternal = true;
+            batchName = 'Portal Student';
+            foundStudentId = localProfile.id;
+          }
+        }
+      } catch (dbErr) {
+        console.warn('Database verification failed, trying API proxy:', dbErr);
+        // 3. FALLBACK: Try Edge Function API Proxy
+        try {
+          const { data: result } = await supabase.functions.invoke('finalize-registration', {
+            body: { 
+              type: 'verify',
+              phone: formData.phone.trim(),
+              email: formData.email.trim() 
+            }
+          });
+          if (result?.is_student) {
+            isInternal = true;
+            batchName = result.batch || 'Verified Student';
+          }
+        } catch (apiErr) {
+          console.error('All verification methods failed');
         }
       }
 
       // Fallback for testing
       if (!isInternal && formData.phone.endsWith('00')) isInternal = true;
 
-      // 2. Determine Access Logic
+      // Determine Access Logic
       let isFreeAccess = false;
       let price = exam?.external_price ?? 499;
 
