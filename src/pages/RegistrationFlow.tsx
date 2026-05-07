@@ -37,6 +37,8 @@ interface StudentInfo {
   price?: number;
 }
 
+const RegistrationFlow = () => {
+  const [step, setStep] = useState<'form' | 'verifying' | 'result'>('form');
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
   const [exam, setExam] = useState<any>(null);
