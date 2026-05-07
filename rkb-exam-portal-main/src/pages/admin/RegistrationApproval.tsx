@@ -128,6 +128,11 @@ const RegistrationApproval = () => {
       const internalExams = await fetchExams(internalSupabase);
       setExams(internalExams);
 
+      const examsMap = new Map<string, any>();
+      internalExams.forEach(e => {
+        if (!examsMap.has(e.id)) examsMap.set(e.id, e);
+      });
+
       // 2. Fetch registrations from internal database
       const fetchRegs = async (client: any) => {
         const { data, error } = await client
