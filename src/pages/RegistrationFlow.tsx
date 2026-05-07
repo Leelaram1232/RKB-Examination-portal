@@ -119,20 +119,24 @@ const RegistrationFlow = () => {
         console.warn('RKB API proxy check failed, trying local profiles check:', apiErr);
       }
 
-      // 2. BACKUP: Check local profiles table if API failed or returned false
+      // 2. BACKUP: Check BOTH internal and external profiles tables
       let foundStudentId = '';
       if (!isInternal) {
-        const { data: localProfile } = await externalSupabase
-          .from('profiles')
-          .select('id, full_name')
-          .or(`email.eq.${formData.email.trim()},mobile.eq.${formData.phone.trim()}`)
-          .maybeSingle();
+        const searchEmail = formData.email.trim();
+        const searchPhone = formData.phone.trim();
+
+        const [localRes, externalRes] = await Promise.all([
+          supabase.from('profiles').select('id').or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`).maybeSingle(),
+          externalSupabase.from('profiles').select('id').or(`email.ilike.${searchEmail},mobile.eq.${searchPhone}`).maybeSingle()
+        ]);
+
+        const foundProfile = localRes.data || externalRes.data;
         
-        if (localProfile) {
-          console.log('Found local profile, treating as internal:', localProfile);
+        if (foundProfile) {
+          console.log('Found profile in database, treating as internal:', foundProfile);
           isInternal = true;
-          batchName = 'Registered RKB Student';
-          foundStudentId = localProfile.id;
+          batchName = 'Verified RKB Student';
+          foundStudentId = foundProfile.id;
         }
       }
 
