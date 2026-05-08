@@ -79,23 +79,6 @@ const examSchema = z.object({
   voice_monitoring_enabled: z.boolean().default(false),
   screen_recording_enabled: z.boolean().default(false),
   liberty_level: z.enum(['strict', 'moderate', 'relaxed']).default('moderate'),
-  // New registration settings
-  registration_type: z.enum(['free', 'paid']).default('free'),
-  registration_amount: z.coerce.number().min(0).default(0),
-  photo_required: z.boolean().default(false),
-  signature_required: z.boolean().default(false),
-  approval_required: z.boolean().default(true),
-  notify_on_approval: z.boolean().default(true),
-  // Advanced Access Control
-  access_type: z.enum(['free', 'internal_only', 'external_paid', 'paid_all']).default('free'),
-  external_price: z.coerce.number().min(0).default(0),
-  internal_price: z.coerce.number().min(0).default(0),
-  internal_free_access: z.boolean().default(true),
-  allow_external_registrations: z.boolean().default(true),
-  payment_required: z.boolean().default(false),
-  is_scholarship_exam: z.boolean().default(false),
-  registration_limit: z.coerce.number().optional(),
-  visibility: z.enum(['public', 'private', 'internal_only']).default('public'),
 });
 
 type ExamFormData = z.infer<typeof examSchema>;
@@ -145,22 +128,6 @@ const ExamForm = () => {
       voice_monitoring_enabled: false,
       screen_recording_enabled: false,
       liberty_level: 'moderate',
-      // New registration settings
-      registration_type: 'free',
-      registration_amount: 0,
-      photo_required: false,
-      signature_required: false,
-      approval_required: true,
-      notify_on_approval: true,
-      // Advanced Access Control
-      access_type: 'free',
-      external_price: 0,
-      internal_price: 0,
-      internal_free_access: true,
-      allow_external_registrations: true,
-      payment_required: false,
-      is_scholarship_exam: false,
-      visibility: 'public',
     },
   });
 
@@ -274,23 +241,6 @@ const ExamForm = () => {
             voice_monitoring_enabled: (data as any).voice_monitoring_enabled || false,
             screen_recording_enabled: (data as any).screen_recording_enabled || false,
             liberty_level: ((data as any).liberty_level as 'strict' | 'moderate' | 'relaxed') || 'moderate',
-            // New registration settings
-            registration_type: ((data as any).registration_type as 'free' | 'paid') || 'free',
-            registration_amount: (data as any).registration_amount || 0,
-            photo_required: (data as any).photo_required || false,
-            signature_required: (data as any).signature_required || false,
-            approval_required: (data as any).approval_required ?? true,
-            notify_on_approval: (data as any).notify_on_approval ?? true,
-            // Advanced Access Control
-            access_type: (data as any).access_type || 'free',
-            external_price: (data as any).external_price || 0,
-            internal_price: (data as any).internal_price || 0,
-            internal_free_access: (data as any).internal_free_access ?? true,
-            allow_external_registrations: (data as any).allow_external_registrations ?? true,
-            payment_required: (data as any).payment_required ?? false,
-            is_scholarship_exam: (data as any).is_scholarship_exam ?? false,
-            registration_limit: (data as any).registration_limit || undefined,
-            visibility: (data as any).visibility || 'public',
           });
           
           // Fetch exam subjects
@@ -337,23 +287,7 @@ const ExamForm = () => {
       voice_monitoring_enabled: data.voice_monitoring_enabled,
       screen_recording_enabled: data.screen_recording_enabled,
       liberty_level: data.liberty_level,
-      // New registration settings
-      registration_type: data.registration_type,
-      registration_amount: data.registration_type === 'paid' ? data.registration_amount : 0,
-      photo_required: data.photo_required,
-      signature_required: data.signature_required,
-      approval_required: data.approval_required,
-      notify_on_approval: data.notify_on_approval,
-      // Advanced Access Control
-      access_type: data.access_type,
-      external_price: data.external_price,
-      internal_price: data.internal_price,
-      internal_free_access: data.internal_free_access,
-      allow_external_registrations: data.allow_external_registrations,
-      payment_required: data.payment_required,
-      is_scholarship_exam: data.is_scholarship_exam,
-      registration_limit: data.registration_limit || null,
-      visibility: data.visibility,
+      liberty_level: data.liberty_level,
     };
 
     let error;
@@ -441,11 +375,8 @@ const ExamForm = () => {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid grid-cols-5 w-full mb-6">
+              <TabsList className="grid grid-cols-2 w-full mb-6">
                 <TabsTrigger value="basic">Basic Details</TabsTrigger>
-                <TabsTrigger value="access">Access Control</TabsTrigger>
-                <TabsTrigger value="payment">Payment Settings</TabsTrigger>
-                <TabsTrigger value="visibility">Visibility & Limits</TabsTrigger>
                 <TabsTrigger value="advanced">Advanced</TabsTrigger>
               </TabsList>
 
@@ -601,243 +532,8 @@ const ExamForm = () => {
                         )}
                       />
                     </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
 
-              <TabsContent value="access" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Access Control</CardTitle>
-                    <CardDescription>Define who can access and register for this examination</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <FormField
-                      control={form.control}
-                      name="access_type"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Exam Access Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select access type" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="free">Free For All</SelectItem>
-                              <SelectItem value="internal_only">Internal Students Only</SelectItem>
-                              <SelectItem value="external_paid">Paid For External Students</SelectItem>
-                              <SelectItem value="paid_all">Paid For Everyone</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
-                            Determines the general policy for student entry
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <FormField
-                        control={form.control}
-                        name="internal_free_access"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">Internal Free Access</FormLabel>
-                              <FormDescription>
-                                Allow RKB internal students for free
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="allow_external_registrations"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">Allow External Students</FormLabel>
-                              <FormDescription>
-                                Open exam for non-RKB students
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="approval_required"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                          <div className="space-y-0.5">
-                            <FormLabel className="text-base">Admin Approval Required</FormLabel>
-                            <FormDescription>
-                              Registrations must be manually approved
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="payment" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Payment Settings</CardTitle>
-                    <CardDescription>Configure pricing for internal and external students</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <FormField
-                      control={form.control}
-                      name="payment_required"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                          <div className="space-y-0.5">
-                            <FormLabel className="text-base">Payment Required</FormLabel>
-                            <FormDescription>
-                              Enable online payment flow (Cashfree)
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    {form.watch('payment_required') && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t">
-                        <FormField
-                          control={form.control}
-                          name="external_price"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>External Student Price (₹)</FormLabel>
-                              <FormControl>
-                                <Input type="number" min={0} {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="internal_price"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Internal Student Price (₹)</FormLabel>
-                              <FormControl>
-                                <Input type="number" min={0} {...field} />
-                              </FormControl>
-                              <FormDescription>Set to 0 if internal access is free</FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                    )}
-
-                    <FormField
-                      control={form.control}
-                      name="is_scholarship_exam"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                          <div className="space-y-0.5">
-                            <FormLabel className="text-base">Scholarship Exam</FormLabel>
-                            <FormDescription>
-                              Mark as scholarship assessment
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="visibility" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Visibility & Limits</CardTitle>
-                    <CardDescription>Control exam appearance and student capacity</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <FormField
-                      control={form.control}
-                      name="visibility"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Exam Visibility</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select visibility" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="public">Public (Visible to All)</SelectItem>
-                              <SelectItem value="private">Private (Link Only)</SelectItem>
-                              <SelectItem value="internal_only">Internal Only</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="registration_limit"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Registration Limit</FormLabel>
-                          <FormControl>
-                            <Input type="number" placeholder="No limit" {...field} />
-                          </FormControl>
-                          <FormDescription>Maximum number of students allowed</FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="registration_start"
@@ -864,6 +560,8 @@ const ExamForm = () => {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+
 
               <TabsContent value="advanced" className="space-y-6">
                 {/* Proctoring Settings (Existing) */}
