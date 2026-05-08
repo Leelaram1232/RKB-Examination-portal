@@ -211,9 +211,27 @@ Deno.serve(async (req) => {
     const registrationNumber = `${examRow.exam_code}-${String(sequenceNumber).padStart(4, '0')}`;
     console.log('Generated registration number:', registrationNumber);
 
-    // 4) Determine payment status based on exam type
+    // 4) Determine initial status based on exam settings
     const isPaid = examRow.registration_type === 'paid';
     const paymentStatus = isPaid ? 'pending' : 'not_required';
+    
+    // Auto-approve if NO approval required AND it's either not paid or we want to pre-approve paid ones
+    // Usually, paid exams stay pending until payment, but approval_status is about admin review.
+    let approvalStatus = 'pending';
+    let examLoginEnabled = false;
+    let approvedAt = null;
+    let approvalRemarks = null;
+
+    if (examRow.approval_required !== true) {
+      if (!isPaid) {
+        // Free exam + no approval required = Auto Approved
+        approvalStatus = 'approved';
+        examLoginEnabled = true;
+        approvedAt = new Date().toISOString();
+        approvalRemarks = 'Auto-approved (Free Registration)';
+      }
+      // For paid exams, we wait for payment success (handled in verify-payment/webhook)
+    }
 
     // 5) Create registration row
     const registrationId = crypto.randomUUID();
@@ -224,11 +242,13 @@ Deno.serve(async (req) => {
         exam_id: data.exam_id,
         student_id: profileId,
         registration_date: new Date().toISOString(),
-        approval_status: 'pending',
+        approval_status: approvalStatus,
         registration_number: registrationNumber,
         payment_status: paymentStatus,
         payment_amount: isPaid ? examRow.registration_amount : null,
-        exam_login_enabled: false,
+        exam_login_enabled: examLoginEnabled,
+        approved_at: approvedAt,
+        approval_remarks: approvalRemarks,
         photo_url: data.photo_url || null,
         signature_url: data.signature_url || null,
       })

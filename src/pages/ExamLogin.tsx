@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { PublicLayout } from '@/components/layout/PublicLayout';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/supabase';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),

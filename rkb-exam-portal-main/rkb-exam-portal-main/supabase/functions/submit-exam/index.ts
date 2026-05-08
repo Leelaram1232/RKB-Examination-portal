@@ -8,6 +8,7 @@ const corsHeaders = {
 interface SubmitExamData {
   session_id: string;
   is_auto_submit?: boolean;
+  is_terminated_by_admin?: boolean;
 }
 
 // Valid exam statuses for submission
@@ -297,7 +298,7 @@ Deno.serve(async (req) => {
         end_time: new Date().toISOString(),
         is_auto_submitted: data.is_auto_submit || false,
         is_blocked: false,
-        exam_status: 'finally_submitted', // NEW: Set final status
+        exam_status: data.is_terminated_by_admin ? 'terminated_by_admin' : 'finally_submitted',
       })
       .eq('id', data.session_id);
 

@@ -1065,29 +1065,14 @@ Deno.serve(async (req) => {
       if (!exam_id) {
         throw new Error('exam_id is required for exam quality audit');
       }
-      const supabaseUrl = Deno.env.get('SUPABASE_URL');
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured');
-      }
-      const extUrl = Deno.env.get('EXTERNAL_SUPABASE_URL')?.trim();
-      const extKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')?.trim();
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      
+      const auditClient = createClient(supabaseUrl, supabaseKey);
+      const questionFetch = 'primary';
+      console.log('[Audit] Using Portal Database for questions table');
 
-      let auditClient = createClient(supabaseUrl, supabaseKey);
-      let questionFetch: 'primary' | 'external' | 'primary_fallback' = 'primary';
-      if (extUrl && extKey) {
-        auditClient = createClient(extUrl, extKey);
-        questionFetch = 'external';
-        console.log('[Audit] Using EXTERNAL_SUPABASE_* for questions table');
-      }
-
-      let audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
-      if (audit.total_questions === 0 && questionFetch === 'external') {
-        console.warn('[Audit] 0 rows from external; retrying primary SUPABASE_URL');
-        auditClient = createClient(supabaseUrl, supabaseKey);
-        questionFetch = 'primary_fallback';
-        audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
-      }
+      const audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
 
       const BUILD_MARKER = 'ai-question-assistant@2026-05-04.audit';
       return new Response(

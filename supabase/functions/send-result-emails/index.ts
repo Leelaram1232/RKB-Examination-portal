@@ -85,13 +85,7 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const internalSupabase = createClient(supabaseUrl, supabaseKey);
-
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
-    const supabase = (externalUrl && externalKey) 
-      ? createClient(externalUrl, externalKey) 
-      : internalSupabase;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // 1. Fetch Exam Details
     const { data: exam, error: examError } = await supabase

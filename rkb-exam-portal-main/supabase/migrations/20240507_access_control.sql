@@ -15,7 +15,11 @@ ALTER TABLE registrations
 ADD COLUMN IF NOT EXISTS student_type TEXT DEFAULT 'external',
 ADD COLUMN IF NOT EXISTS verified_by_api BOOLEAN DEFAULT false,
 ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'pending',
-ADD COLUMN IF NOT EXISTS registration_status TEXT DEFAULT 'pending';
+ADD COLUMN IF NOT EXISTS registration_status TEXT DEFAULT 'pending',
+ADD COLUMN IF NOT EXISTS full_name TEXT,
+ADD COLUMN IF NOT EXISTS email TEXT,
+ADD COLUMN IF NOT EXISTS phone TEXT,
+ADD COLUMN IF NOT EXISTS payment_amount DECIMAL(10, 2) DEFAULT 0.00;
 
 -- Create index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_registrations_exam_id ON registrations(exam_id);

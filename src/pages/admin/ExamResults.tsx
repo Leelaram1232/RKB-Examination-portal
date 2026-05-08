@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, Printer, RefreshCw, Trophy, Loader2, Eye, Download, FileDown, Trash2, Users, Mail } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/supabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';

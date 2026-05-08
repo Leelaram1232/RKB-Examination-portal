@@ -9,7 +9,6 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
 import {
   Table,
   TableBody,
@@ -55,6 +54,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MathRenderer } from '@/components/exam/MathRenderer';
 
 interface Question {
   id: string;
@@ -496,15 +496,17 @@ const QuestionManagement = () => {
         correct_answer: q.correct_answer,
       }));
 
-      const { data, error } = await invokeExternalFunction<any>('ai-question-assistant', {
-        action: 'review',
-        messages: [
-          {
-            role: 'user',
-            content: `Please review these questions for mistakes based on the system prompt instructions.\n\n${JSON.stringify(payload)}`
-          }
-        ],
-        exam_id: selectedExamId
+      const { data, error } = await supabase.functions.invoke<any>('ai-question-assistant', {
+        body: {
+          action: 'review',
+          messages: [
+            {
+              role: 'user',
+              content: `Please review these questions for mistakes based on the system prompt instructions.\n\n${JSON.stringify(payload)}`
+            }
+          ],
+          exam_id: selectedExamId
+        }
       });
 
       if (error) throw error;
@@ -1009,8 +1011,8 @@ const QuestionManagement = () => {
                                 </div>
                               </TableCell>
                               <TableCell className="font-medium">{question.question_number}</TableCell>
-                              <TableCell className="max-w-md truncate">
-                                {question.question_text}
+                              <TableCell className="max-w-md">
+                                <MathRenderer content={question.question_text} />
                               </TableCell>
                               <TableCell>
                                 {questionSubject ? (

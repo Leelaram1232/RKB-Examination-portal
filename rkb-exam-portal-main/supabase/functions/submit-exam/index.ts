@@ -28,15 +28,15 @@ Deno.serve(async (req) => {
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
     // Create clients
-    const internalSupabase = createClient(internalUrl, internalKey);
-    let externalSupabase = null;
+    const supabase = createClient(internalUrl, internalKey);
+    let null = null;
     if (externalUrl && externalKey) {
-      externalSupabase = createClient(externalUrl, externalKey);
+      null = createClient(externalUrl, externalKey);
     }
 
     // Determine primary client (where registrations live)
-    const primaryClient = externalSupabase || internalSupabase;
-    console.log('[submit-exam] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+    const supabase = null || supabase;
+    console.log('[submit-exam] Using Database:', null ? 'EXTERNAL' : 'INTERNAL');
 
     const data: SubmitExamData = await req.json();
     console.log('[submit-exam] Parsed Data:', { 
@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     }
 
     // Get session with registration and exam details - now including exam_status
-    const { data: session, error: sessionError } = await primaryClient
+    const { data: session, error: sessionError } = await supabase
       .from('exam_sessions')
       .select(`
         id,
@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
     });
 
     // Check if result already exists
-    const { data: existingResult } = await primaryClient
+    const { data: existingResult } = await supabase
       .from('results')
       .select('id')
       .eq('session_id', data.session_id)
@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
     // For resumed sessions, delete old result before creating new one
     if (existingResult && currentStatus === 'resumed') {
       console.log('Deleting old result for resumed session:', existingResult.id);
-      await primaryClient.from('results').delete().eq('id', existingResult.id);
+      await supabase.from('results').delete().eq('id', existingResult.id);
     } else if (existingResult && currentStatus !== 'resumed') {
       // If result exists and not resumed, this is already evaluated
       return new Response(
@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
     }
 
     // Get all questions for this exam with section_name for section-wise scoring
-    const questionsClient = externalSupabase || primaryClient;
+    const questionsClient = null || supabase;
     const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
       .select('id, correct_option, correct_answer, marks, section_name, question_type')
@@ -171,7 +171,7 @@ Deno.serve(async (req) => {
     console.log('Total questions for exam:', questions?.length || 0);
 
     // Get student answers
-    const { data: answers, error: answersError } = await primaryClient
+    const { data: answers, error: answersError } = await supabase
       .from('student_answers')
       .select('question_id, selected_option, text_answer')
       .eq('session_id', data.session_id);
@@ -290,7 +290,7 @@ Deno.serve(async (req) => {
     });
 
     // Mark session as completed with new exam_status
-    const { error: updateSessionError } = await primaryClient
+    const { error: updateSessionError } = await supabase
       .from('exam_sessions')
       .update({
         is_completed: true,
@@ -311,7 +311,7 @@ Deno.serve(async (req) => {
     }
 
     // Disable exam login
-    const { error: disableLoginError } = await primaryClient
+    const { error: disableLoginError } = await supabase
       .from('registrations')
       .update({ exam_login_enabled: false })
       .eq('id', registration.id);
@@ -321,7 +321,7 @@ Deno.serve(async (req) => {
     }
 
     // Create result record
-    const { data: result, error: resultError } = await primaryClient
+    const { data: result, error: resultError } = await supabase
       .from('results')
       .insert({
         exam_id: exam.id,

@@ -52,7 +52,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Json } from '@/integrations/supabase/types';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 
 interface ExamSession {
   id: string;
@@ -134,7 +134,7 @@ const SessionManagement = () => {
       if (examData) {
         setExam(examData);
       } else {
-        const { data: extExamData } = await externalSupabase
+        const { data: extExamData } = await supabase
           .from('exams')
           .select('id, exam_name, exam_code, max_violations, auto_submit_on_violations')
           .eq('id', examId)
@@ -170,7 +170,7 @@ const SessionManagement = () => {
 
       const [internalData, externalData] = await Promise.all([
         fetchRegsAndProfiles(supabase, 'INTERNAL'),
-        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
+        fetchRegsAndProfiles(supabase, 'EXTERNAL')
       ]);
 
       const regMap = new Map<string, any>();
@@ -214,7 +214,7 @@ const SessionManagement = () => {
 
       const [internalSessions, externalSessions] = await Promise.all([
         fetchSessions(supabase, 'INTERNAL'),
-        fetchSessions(externalSupabase, 'EXTERNAL')
+        fetchSessions(supabase, 'EXTERNAL')
       ]);
 
       console.log(`[SessionManagement] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
@@ -271,14 +271,14 @@ const SessionManagement = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
       .subscribe();
 
-    const externalChannel = externalSupabase
+    const externalChannel = supabase
       .channel('session-mgmt-realtime-ext')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      externalSupabase.removeChannel(externalChannel);
+      supabase.removeChannel(externalChannel);
     };
   }, [examId, navigate]);
 
@@ -304,7 +304,7 @@ const SessionManagement = () => {
         .from('exam_sessions')
         .update(resumePayload)
         .eq('id', selectedSession.id),
-      externalSupabase
+      supabase
         .from('exam_sessions')
         .update(resumePayload)
         .eq('id', selectedSession.id),
@@ -320,7 +320,7 @@ const SessionManagement = () => {
           .from('registrations')
           .update({ exam_login_enabled: true })
           .eq('id', selectedSession.registration_id),
-        externalSupabase
+        supabase
           .from('registrations')
           .update({ exam_login_enabled: true })
           .eq('id', selectedSession.registration_id),
@@ -329,7 +329,7 @@ const SessionManagement = () => {
       // Also delete old result if exists (for resumed exams)
       await Promise.all([
         supabase.from('results').delete().eq('session_id', selectedSession.id),
-        externalSupabase.from('results').delete().eq('session_id', selectedSession.id),
+        supabase.from('results').delete().eq('session_id', selectedSession.id),
       ]);
 
       toast.success('Student can now continue the exam. They will resume from where they left off.');

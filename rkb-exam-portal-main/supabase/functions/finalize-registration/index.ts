@@ -136,12 +136,8 @@ Deno.serve(async (req) => {
 
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
 
-    const primaryClient = (externalUrl && externalKey) 
-      ? createClient(externalUrl, externalKey) 
-      : createClient(internalUrl, internalKey);
+    const primaryClient = createClient(internalUrl, internalKey);
 
     // HANDLE VERIFICATION PROXY
     if (type === 'verify') {

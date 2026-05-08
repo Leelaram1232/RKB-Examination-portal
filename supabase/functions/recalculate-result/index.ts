@@ -19,28 +19,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const internalUrl = Deno.env.get('SUPABASE_URL');
-    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    if (!internalUrl || !internalKey) {
-      console.error('[RECALCULATE-RESULT] CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing from Edge Function Secrets!');
-      return new Response(
-        JSON.stringify({ error: 'Backend secrets not configured. Please set SUPABASE_URL and Service Key.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const internalSupabase = createClient(internalUrl, internalKey);
-    
-    // SMART CLIENT SELECTION:
-    const useExternal = !!(externalUrl && externalKey && externalUrl !== internalUrl);
-    const primaryClient = useExternal 
-      ? createClient(externalUrl, externalKey) 
-      : internalSupabase;
-
-    console.log('[RECALCULATE-RESULT] Target Project:', useExternal ? 'EXTERNAL' : 'INTERNAL/SAME');
+    const primaryClient = createClient(supabaseUrl, supabaseKey);
+    console.log('[RECALCULATE-RESULT] Using Portal Database');
 
     const rawBody = await req.text();
     console.log('[RECALCULATE-RESULT] Raw Body:', rawBody);

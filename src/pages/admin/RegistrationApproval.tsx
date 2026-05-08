@@ -116,7 +116,7 @@ const RegistrationApproval = () => {
     try {
       setIsLoading(true);
       
-      // 1. Fetch exams from internal database
+      // 1. Fetch exams from both databases
       const fetchExams = async (client: any) => {
         const { data } = await client
           .from('exams')
@@ -125,44 +125,39 @@ const RegistrationApproval = () => {
         return data || [];
       };
 
-      const internalExams = await fetchExams(internalSupabase);
-      setExams(internalExams);
-
+      const examsList = await fetchExams(internalSupabase);
       const examsMap = new Map<string, any>();
-      internalExams.forEach(e => {
+      examsList.forEach(e => {
         if (!examsMap.has(e.id)) examsMap.set(e.id, e);
       });
+      setExams(Array.from(examsMap.values()));
 
-      // 2. Fetch registrations from internal database
-      const fetchRegs = async (client: any) => {
-        const { data, error } = await client
-          .from('registrations')
-          .select(`
-            id, exam_id, student_id, registration_number, created_at,
-            approval_status, approval_remarks, approved_at, exam_login_enabled,
-            exam_password, payment_status, payment_amount, transaction_id,
-            photo_url, signature_url, cashfree_order_id
-          `)
-          .order('created_at', { ascending: false });
-        return { data: data || [], error };
-      };
+      // 2. Fetch registrations
+      const { data: allRegs, error: regsError } = await internalSupabase
+        .from('registrations')
+        .select(`
+          id, exam_id, student_id, registration_number, created_at,
+          approval_status, approval_remarks, approved_at, exam_login_enabled,
+          exam_password, payment_status, payment_amount, transaction_id,
+          photo_url, signature_url, cashfree_order_id
+        `)
+        .order('created_at', { ascending: false });
 
-      const internalRegs = await fetchRegs(internalSupabase);
-      const allRegs = internalRegs.data;
+      if (regsError) {
+        toast.error('Failed to load registrations');
+        return;
+      }
+
       const studentIds = Array.from(new Set(allRegs.map(r => r.student_id).filter(Boolean)));
 
-      // 3. Fetch profiles from both databases
-      const fetchProfiles = async (client: any) => {
-        const { data } = await client
-          .from('profiles')
-          .select('id, full_name, email, mobile, gender, date_of_birth, class, school_name, board, academic_year, address, city, state, pincode, percentage')
-          .in('id', studentIds);
-        return data || [];
-      };
+      // 3. Fetch profiles
+      const { data: profilesList } = await internalSupabase
+        .from('profiles')
+        .select('id, full_name, email, mobile, gender, date_of_birth, class, school_name, board, academic_year, address, city, state, pincode, percentage')
+        .in('id', studentIds);
 
-      const internalProfiles = await fetchProfiles(internalSupabase);
       const profilesMap = new Map<string, any>();
-      internalProfiles.forEach(p => {
+      (profilesList || []).forEach(p => {
         if (!profilesMap.has(p.id)) profilesMap.set(p.id, p);
       });
 
@@ -222,7 +217,7 @@ const RegistrationApproval = () => {
         }
       }
 
-      // Update internal DB
+      // Update registration status
       const { error } = await internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
 
       if (error) {

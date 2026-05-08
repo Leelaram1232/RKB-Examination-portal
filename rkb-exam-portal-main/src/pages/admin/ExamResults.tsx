@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, Printer, RefreshCw, Trophy, Loader2, Eye, Download, FileDown, Trash2, Users, Mail } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -241,7 +240,7 @@ export default function ExamResults() {
 
     // Trigger email notifications in background
     console.log('[Results] Triggering student email notifications...');
-    invokeExternalFunction('send-result-emails', { exam_id: examId })
+    supabase.functions.invoke('send-result-emails', { body: { exam_id: examId } })
       .then(({ data, error }) => {
         if (error) {
           console.error('[Results] Failed to send emails:', error);
@@ -294,7 +293,9 @@ export default function ExamResults() {
     
     try {
       console.warn(`[DEBUG] Invoking recalculate-result for ${sessionId}...`);
-      const { data: result, error } = await invokeExternalFunction<any>('recalculate-result', { session_id: sessionId });
+      const { data: result, error } = await supabase.functions.invoke<any>('recalculate-result', { 
+        body: { session_id: sessionId } 
+      });
 
       if (error) {
         throw error;
@@ -320,7 +321,9 @@ export default function ExamResults() {
     setIsCalculatingRanks(true);
     
     try {
-      const { data: result, error } = await invokeExternalFunction<any>('calculate-rankings', { exam_id: examId });
+      const { data: result, error } = await supabase.functions.invoke<any>('calculate-rankings', { 
+        body: { exam_id: examId } 
+      });
 
       if (error) {
         throw error;

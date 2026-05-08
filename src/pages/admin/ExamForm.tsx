@@ -35,7 +35,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -81,6 +80,10 @@ const examSchema = z.object({
   liberty_level: z.enum(['strict', 'moderate', 'relaxed']).default('moderate'),
   registration_type: z.enum(['free', 'paid']).default('free'),
   registration_amount: z.coerce.number().min(0).default(0),
+  photo_required: z.boolean().default(false),
+  signature_required: z.boolean().default(false),
+  approval_required: z.boolean().default(true),
+  notify_on_approval: z.boolean().default(true),
 });
 
 type ExamFormData = z.infer<typeof examSchema>;
@@ -132,6 +135,10 @@ const ExamForm = () => {
       liberty_level: 'moderate',
       registration_type: 'free',
       registration_amount: 0,
+      photo_required: false,
+      signature_required: false,
+      approval_required: true,
+      notify_on_approval: true,
     },
   });
 
@@ -247,6 +254,10 @@ const ExamForm = () => {
             liberty_level: ((data as any).liberty_level as 'strict' | 'moderate' | 'relaxed') || 'moderate',
             registration_type: (data as any).registration_type || 'free',
             registration_amount: (data as any).registration_amount || 0,
+            photo_required: (data as any).photo_required || false,
+            signature_required: (data as any).signature_required || false,
+            approval_required: (data as any).approval_required ?? true,
+            notify_on_approval: (data as any).notify_on_approval ?? true,
           });
           
           // Fetch exam subjects
@@ -294,7 +305,11 @@ const ExamForm = () => {
       screen_recording_enabled: data.screen_recording_enabled,
       liberty_level: data.liberty_level,
       registration_type: data.registration_type,
-      registration_amount: data.registration_amount,
+      registration_amount: data.registration_type === 'paid' ? data.registration_amount : 0,
+      photo_required: data.photo_required,
+      signature_required: data.signature_required,
+      approval_required: data.approval_required,
+      notify_on_approval: data.notify_on_approval,
     };
 
     console.log('[ExamForm] Submitting examData:', examData);
@@ -384,85 +399,212 @@ const ExamForm = () => {
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid grid-cols-2 w-full mb-6">
-                <TabsTrigger value="basic">Basic Details</TabsTrigger>
-                <TabsTrigger value="advanced">Advanced</TabsTrigger>
-              </TabsList>
+            {/* Basic Information */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Basic Information</CardTitle>
+                <CardDescription>Enter the basic details of the examination</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="exam_name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Exam Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g., RKB Science Olympiad 2025" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <TabsContent value="basic" className="space-y-6">
-                {/* Basic Information */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Basic Information</CardTitle>
-                    <CardDescription>Enter the basic details of the examination</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="exam_name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Exam Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="e.g., RKB Science Olympiad 2025" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                  <FormField
+                    control={form.control}
+                    name="exam_code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Exam Code</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g., RKB-SCI-2025" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-                      <FormField
-                        control={form.control}
-                        name="exam_code"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Exam Code</FormLabel>
-                            <FormControl>
-                              <Input placeholder="e.g., RKB-SCI-2025" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea 
+                          placeholder="Brief description of the examination..."
+                          rows={3}
+                          {...field} 
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="instructions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Instructions</FormLabel>
+                      <FormControl>
+                        <Textarea 
+                          placeholder="Exam instructions for students..."
+                          rows={4}
+                          {...field} 
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Subjects */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Subjects</CardTitle>
+                <CardDescription>Select subjects included in this examination</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {subjects.length === 0 ? (
+                  <div className="text-center py-6">
+                    <p className="text-muted-foreground mb-4">No subjects available</p>
+                    <Button type="button" onClick={() => setShowAddSubjectDialog(true)}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add First Subject
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                      {subjects.map((subject) => (
+                        <label
+                          key={subject.id}
+                          htmlFor={`subject-${subject.id}`}
+                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${
+                            selectedSubjects.includes(subject.id) 
+                              ? 'border-primary bg-primary/5' 
+                              : 'hover:border-muted-foreground/50'
+                          }`}
+                        >
+                          <Checkbox 
+                            id={`subject-${subject.id}`}
+                            checked={selectedSubjects.includes(subject.id)} 
+                            onCheckedChange={() => toggleSubject(subject.id)}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{subject.name}</p>
+                            {subject.code && (
+                              <p className="text-xs text-muted-foreground">{subject.code}</p>
+                            )}
+                          </div>
+                        </label>
+                      ))}
                     </div>
+                    
+                    {selectedSubjects.length > 0 && subjects.length > 0 && (
+                      <div className="pt-2">
+                        <p className="text-sm text-muted-foreground mb-2">Selected subjects:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSubjects
+                            .map(id => subjects.find(s => s.id === id))
+                            .filter((subject): subject is Subject => subject !== undefined)
+                            .map(subject => (
+                              <Badge key={subject.id} variant="secondary" className="gap-1">
+                                {subject.name}
+                                <X 
+                                  className="w-3 h-3 cursor-pointer" 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSubject(subject.id);
+                                  }} 
+                                />
+                              </Badge>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+                
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setShowAddSubjectDialog(true)}
+                  className="w-full"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add New Subject
+                </Button>
+              </CardContent>
+            </Card>
 
+            {/* Registration Settings */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Registration Settings</CardTitle>
+                <CardDescription>Configure registration type, fees, and requirements</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="registration_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Registration Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="free">Free</SelectItem>
+                            <SelectItem value="paid">Paid</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          Choose whether registration is free or paid
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {form.watch('registration_type') === 'paid' && (
                     <FormField
                       control={form.control}
-                      name="description"
+                      name="registration_amount"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Description</FormLabel>
+                          <FormLabel>Registration Amount (₹)</FormLabel>
                           <FormControl>
-                            <Textarea 
-                              placeholder="Brief description of the examination..."
-                              rows={3}
-                              {...field} 
-                            />
+                            <Input type="number" min={1} placeholder="Enter amount" {...field} />
                           </FormControl>
+                          <FormDescription>
+                            Amount to be paid for registration
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-
-                    <FormField
-                      control={form.control}
-                      name="instructions"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Instructions</FormLabel>
-                          <FormControl>
-                            <Textarea 
-                              placeholder="Exam instructions for students..."
-                              rows={4}
-                              {...field} 
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+<<<<<<< HEAD
                   </CardContent>
                 </Card>
 
@@ -587,99 +729,258 @@ const ExamForm = () => {
                           <FormItem>
                             <FormLabel>Registration Type</FormLabel>
                             <Select onValueChange={field.onChange} value={field.value}>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="photo_required"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Student Photo</FormLabel>
+                          <FormDescription>
+                            Require photo upload
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="signature_required"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Signature Photo</FormLabel>
+                          <FormDescription>
+                            Require signature upload
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="approval_required"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Approval Required</FormLabel>
+                          <FormDescription>
+                            Admin approval needed
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="notify_on_approval"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Notify on Approval</FormLabel>
+                          <FormDescription>
+                            Send email to student
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Schedule */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Schedule</CardTitle>
+                <CardDescription>Set the examination date, time, and duration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="exam_date"
+                    render={({ field }) => {
+                      const value = field.value ? new Date(field.value) : undefined;
+                      return (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>Exam Date</FormLabel>
+                          <Popover>
+                            <PopoverTrigger asChild>
                               <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select type" />
-                                </SelectTrigger>
+                                <Button
+                                  variant="outline"
+                                  className="justify-start text-left font-normal"
+                                >
+                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
+                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                </Button>
                               </FormControl>
-                              <SelectContent>
-                                <SelectItem value="free">Free</SelectItem>
-                                <SelectItem value="paid">Paid</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {form.watch('registration_type') === 'paid' && (
-                        <FormField
-                          control={form.control}
-                          name="registration_amount"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Amount (₹)</FormLabel>
-                              <FormControl>
-                                <Input type="number" min={0} {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-
-
-              <TabsContent value="advanced" className="space-y-6">
-                {/* Proctoring Settings (Existing) */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Proctoring & Security</CardTitle>
-                    <CardDescription>Configure AI proctoring and exam rules</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <FormField
-                      control={form.control}
-                      name="proctoring_enabled"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                          <div className="space-y-0.5">
-                            <FormLabel className="text-base">AI Proctoring</FormLabel>
-                            <FormDescription>Enable camera and face monitoring</FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    
-                    {/* Add other advanced fields here */}
-                    <FormField
-                      control={form.control}
-                      name="status"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Exam Status</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select status" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="draft">Draft</SelectItem>
-                              <SelectItem value="registration_open">Registration Open</SelectItem>
-                              <SelectItem value="registration_closed">Registration Closed</SelectItem>
-                              <SelectItem value="conducted">Conducted</SelectItem>
-                              <SelectItem value="results_published">Results Published</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={value}
+                                onSelect={(date) => {
+                                  if (!date) {
+                                    field.onChange('');
+                                  } else {
+                                    // Store as local date string YYYY-MM-DD (avoid timezone shift)
+                                    field.onChange(format(date, 'yyyy-MM-dd'));
+                                  }
+                                }}
+                              />
+                            </PopoverContent>
+                          </Popover>
                           <FormMessage />
                         </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
+                      );
+                    }}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="exam_time"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Start Time</FormLabel>
+                        <FormControl>
+                          <Input type="time" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="duration_minutes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Duration (minutes)</FormLabel>
+                        <FormControl>
+                          <Input type="number" min={1} {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="registration_start"
+                    render={({ field }) => {
+                      const value = field.value ? new Date(field.value) : undefined;
+                      return (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>Registration Opens</FormLabel>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <FormControl>
+                                <Button
+                                  variant="outline"
+                                  className="justify-start text-left font-normal"
+                                >
+                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
+                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                </Button>
+                              </FormControl>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={value}
+                                onSelect={(date) => {
+                                  if (!date) {
+                                    field.onChange('');
+                                  } else {
+                                    field.onChange(format(date, 'yyyy-MM-dd'));
+                                  }
+                                }}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="registration_end"
+                    render={({ field }) => {
+                      const value = field.value ? new Date(field.value) : undefined;
+                      return (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>Registration Closes</FormLabel>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <FormControl>
+                                <Button
+                                  variant="outline"
+                                  className="justify-start text-left font-normal"
+                                >
+                                  {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
+                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                </Button>
+                              </FormControl>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={value}
+                                onSelect={(date) => {
+                                  if (!date) {
+                                    field.onChange('');
+                                  } else {
+                                    field.onChange(format(date, 'yyyy-MM-dd'));
+                                  }
+                                }}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Marking Scheme */}
             <Card>

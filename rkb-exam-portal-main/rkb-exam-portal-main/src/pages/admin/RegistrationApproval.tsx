@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Eye, Search, User, Power, RefreshCw, Mail, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase as internalSupabase } from '@/integrations/supabase/client';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { toast } from 'sonner';
 import {
   Table,
@@ -38,6 +39,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 // Interface for registration with profile data joined
 interface Registration {
@@ -112,76 +114,63 @@ const RegistrationApproval = () => {
 
   const fetchRegistrations = async () => {
     try {
-      // Fetch exams for filter dropdown and for mapping exam details
-      const { data: examsData } = await supabase
-        .from('exams')
-        .select('id, exam_name, exam_code, exam_date, notify_on_approval')
-        .order('exam_name');
-
-      if (examsData) {
-        setExams(examsData);
-      }
-
-      // Create exam lookup map
-      const examMap = new Map(
-        (examsData || []).map((exam: any) => [exam.id, exam])
-      );
-
-      // Fetch registrations WITHOUT join to avoid schema cache issues
-      const { data: registrationsData, error: regError } = await supabase
-        .from('registrations')
-        .select(`
-          id,
-          exam_id,
-          student_id,
-          registration_number,
-          created_at,
-          approval_status,
-          approval_remarks,
-          approved_at,
-          exam_login_enabled,
-          exam_password,
-          payment_status,
-          payment_amount,
-          transaction_id,
-          photo_url,
-          signature_url,
-          cashfree_order_id
-        `)
-        .order('created_at', { ascending: false });
-
-      if (regError) {
-        toast.error(`Failed to fetch registrations: ${regError.message}`);
-        console.error('[RegistrationApproval] registrations fetch error:', regError);
-        setIsLoading(false);
-        return;
-      }
-
-      // Get unique student IDs to fetch profiles separately
-      const studentIds = [...new Set((registrationsData || []).map(r => r.student_id).filter(Boolean))];
+      setIsLoading(true);
       
-      // Fetch profiles separately
-      let profileMap = new Map<string, any>();
-      if (studentIds.length > 0) {
-        const { data: profilesData, error: profilesError } = await supabase
+      // 1. Fetch exams from internal database
+      const fetchExams = async (client: any) => {
+        const { data } = await client
+          .from('exams')
+          .select('id, exam_name, exam_code, exam_date, notify_on_approval')
+          .order('exam_name');
+        return data || [];
+      };
+
+      const internalExams = await fetchExams(internalSupabase);
+      setExams(internalExams);
+
+      const examsMap = new Map<string, any>();
+      internalExams.forEach(e => {
+        if (!examsMap.has(e.id)) examsMap.set(e.id, e);
+      });
+
+      // 2. Fetch registrations from internal database
+      const fetchRegs = async (client: any) => {
+        const { data, error } = await client
+          .from('registrations')
+          .select(`
+            id, exam_id, student_id, registration_number, created_at,
+            approval_status, approval_remarks, approved_at, exam_login_enabled,
+            exam_password, payment_status, payment_amount, transaction_id,
+            photo_url, signature_url, cashfree_order_id
+          `)
+          .order('created_at', { ascending: false });
+        return { data: data || [], error };
+      };
+
+      const internalRegs = await fetchRegs(internalSupabase);
+      const allRegs = internalRegs.data;
+      const studentIds = Array.from(new Set(allRegs.map(r => r.student_id).filter(Boolean)));
+
+      // 3. Fetch profiles from both databases
+      const fetchProfiles = async (client: any) => {
+        const { data } = await client
           .from('profiles')
           .select('id, full_name, email, mobile, gender, date_of_birth, class, school_name, board, academic_year, address, city, state, pincode, percentage')
           .in('id', studentIds);
+        return data || [];
+      };
 
-        if (profilesError) {
-          console.error('[RegistrationApproval] profiles fetch error:', profilesError);
-          // Continue without profile data rather than failing completely
-        } else {
-          profileMap = new Map((profilesData || []).map(p => [p.id, p]));
-        }
-      }
+      const internalProfiles = await fetchProfiles(internalSupabase);
+      const profilesMap = new Map<string, any>();
+      internalProfiles.forEach(p => {
+        if (!profilesMap.has(p.id)) profilesMap.set(p.id, p);
+      });
 
-      // Map exam details and profile data to each registration
-      const registrationsWithDetails = (registrationsData || []).map((reg: any) => {
-        const profile = profileMap.get(reg.student_id) || {};
+      // 4. Map everything together
+      const finalRegistrations = allRegs.map(reg => {
+        const profile = profilesMap.get(reg.student_id) || {};
         return {
           ...reg,
-          // Flatten profile fields to root level
           full_name: profile.full_name || 'N/A',
           email: profile.email || 'N/A',
           mobile: profile.mobile,
@@ -196,12 +185,11 @@ const RegistrationApproval = () => {
           state: profile.state,
           pincode: profile.pincode,
           percentage: profile.percentage,
-          // Map exam details
-          exams: reg.exam_id ? examMap.get(reg.exam_id) || null : null,
+          exams: reg.exam_id ? examsMap.get(reg.exam_id) || null : null,
         };
       });
 
-      setRegistrations(registrationsWithDetails as Registration[]);
+      setRegistrations(finalRegistrations as Registration[]);
     } catch (err) {
       console.error('[RegistrationApproval] unexpected error:', err);
       toast.error('Failed to load registrations');
@@ -234,10 +222,8 @@ const RegistrationApproval = () => {
         }
       }
 
-      const { error } = await supabase
-        .from('registrations')
-        .update(updateData)
-        .eq('id', selectedRegistration.id);
+      // Update internal DB
+      const { error } = await internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
 
       if (error) {
         toast.error(`Failed to ${actionType} registration`);
@@ -245,6 +231,7 @@ const RegistrationApproval = () => {
         return;
       }
 
+      // If at least one update succeeded, we continue
       const shouldNotify = selectedRegistration.exams?.notify_on_approval ?? true;
 
       if (actionType === 'approve') {
@@ -256,7 +243,7 @@ const RegistrationApproval = () => {
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-          const emailPromise = invokeExternalFunction('send-notification-email', {
+          const emailPromise = invokeExternalFunction('finalize-registration', {
             type: 'registration_approved',
             registration_id: selectedRegistration.id,
           });
@@ -303,10 +290,7 @@ const RegistrationApproval = () => {
       updateData.exam_login_enabled = true;
     }
 
-    const { error } = await supabase
-      .from('registrations')
-      .update(updateData)
-      .in('id', Array.from(selectedIds));
+    const { error } = await internalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
 
     if (error) {
       setIsProcessing(false);
@@ -326,7 +310,7 @@ const RegistrationApproval = () => {
         if (!shouldNotify) return { regId, success: true, skipped: true };
         
         try {
-          const { data, error } = await invokeExternalFunction('send-notification-email', {
+          const { data, error } = await invokeExternalFunction('finalize-registration', {
             type: 'registration_approved',
             registration_id: regId,
           });
@@ -362,10 +346,7 @@ const RegistrationApproval = () => {
   const toggleExamLogin = async (registration: Registration) => {
     const newStatus = !registration.exam_login_enabled;
     
-    const { error } = await supabase
-      .from('registrations')
-      .update({ exam_login_enabled: newStatus })
-      .eq('id', registration.id);
+    const { error } = await internalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to toggle exam login');
@@ -385,10 +366,7 @@ const RegistrationApproval = () => {
     const dob = new Date(registration.date_of_birth);
     const newPassword = format(dob, 'ddMMyy');
 
-    const { error } = await supabase
-      .from('registrations')
-      .update({ exam_password: newPassword })
-      .eq('id', registration.id);
+    const { error } = await internalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to regenerate password');
@@ -396,6 +374,43 @@ const RegistrationApproval = () => {
     } else {
       toast.success(`Password regenerated: ${newPassword}`);
       fetchRegistrations();
+    }
+  };
+
+  const resendApprovalEmail = async (registration: Registration) => {
+    setIsProcessing(true);
+    toast.info(`Sending approval email to ${registration.full_name}...`);
+    try {
+      const { error } = await invokeExternalFunction('finalize-registration', {
+        type: 'registration_approved',
+        registration_id: registration.id,
+        force_resend: true
+      });
+      if (error) throw error;
+      toast.success('Approval email sent successfully!');
+    } catch (err) {
+      console.error('Failed to send email:', err);
+      toast.error('Failed to send email. Check logs.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const sendReminderEmail = async (registration: Registration) => {
+    setIsProcessing(true);
+    toast.info(`Sending exam reminder to ${registration.full_name}...`);
+    try {
+      const { error } = await invokeExternalFunction('finalize-registration', {
+        type: 'exam_reminder',
+        registration_id: registration.id,
+      });
+      if (error) throw error;
+      toast.success('Exam reminder sent successfully!');
+    } catch (err) {
+      console.error('Failed to send reminder:', err);
+      toast.error('Failed to send reminder. Check logs.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -538,38 +553,41 @@ const RegistrationApproval = () => {
         {selectedIds.size > 0 && (
           <Card className="bg-primary/5 border-primary/20">
             <CardContent className="py-4">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <span className="font-medium text-sm">
                   {selectedIds.size} registration(s) selected
                 </span>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                   <Button
                     variant="outline"
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => setSelectedIds(new Set())}
                   >
-                    Clear Selection
+                    Clear
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => {
                       setBulkActionType('reject');
                       setShowBulkActionDialog(true);
                     }}
                   >
                     <XCircle className="w-4 h-4 mr-2" />
-                    Reject Selected
+                    Reject
                   </Button>
                   <Button
                     size="sm"
+                    className="flex-1 sm:flex-none"
                     onClick={() => {
                       setBulkActionType('approve');
                       setShowBulkActionDialog(true);
                     }}
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Approve Selected
+                    Approve
                   </Button>
                 </div>
               </div>
@@ -585,7 +603,7 @@ const RegistrationApproval = () => {
               {filteredRegistrations.length} registration{filteredRegistrations.length !== 1 ? 's' : ''} found
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0 sm:p-6">
             {filteredRegistrations.length === 0 ? (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
@@ -599,16 +617,17 @@ const RegistrationApproval = () => {
                 </p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={pendingFiltered.length > 0 && selectedIds.size === pendingFiltered.length}
-                        onCheckedChange={toggleSelectAll}
-                        disabled={pendingFiltered.length === 0}
-                      />
-                    </TableHead>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={pendingFiltered.length > 0 && selectedIds.size === pendingFiltered.length}
+                          onCheckedChange={toggleSelectAll}
+                          disabled={pendingFiltered.length === 0}
+                        />
+                      </TableHead>
                     <TableHead>Student</TableHead>
                     <TableHead>Exam</TableHead>
                     <TableHead>Reg. Number</TableHead>
@@ -668,7 +687,7 @@ const RegistrationApproval = () => {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex justify-end items-center gap-1 min-w-[120px]">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -715,6 +734,34 @@ const RegistrationApproval = () => {
                                 </TooltipTrigger>
                                 <TooltipContent>Regenerate Password</TooltipContent>
                               </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => resendApprovalEmail(reg)}
+                                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  >
+                                    <Mail className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Resend Approval Email</TooltipContent>
+                              </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => sendReminderEmail(reg)}
+                                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                  >
+                                    <Bell className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Send Exam Reminder</TooltipContent>
+                              </Tooltip>
                             </>
                           )}
 
@@ -754,8 +801,9 @@ const RegistrationApproval = () => {
                   ))}
                 </TableBody>
               </Table>
-            )}
-          </CardContent>
+            </div>
+          )}
+        </CardContent>
         </Card>
 
         {/* Details Dialog */}

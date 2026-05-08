@@ -21,21 +21,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Create clients
-    const internalSupabase = createClient(internalUrl, internalKey);
-    let externalSupabase = null;
-    if (externalUrl && externalKey) {
-      externalSupabase = createClient(externalUrl, externalKey);
-    }
-
-    // Determine primary client (where registrations live)
-    const primaryClient = externalSupabase || internalSupabase;
-    console.log('[save-answer] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+    // Create primary client (where registrations live)
+    const primaryClient = createClient(internalUrl, internalKey);
+    console.log('[save-answer] Using Portal Database');
 
     const body: SaveAnswerRequest = await req.json();
     

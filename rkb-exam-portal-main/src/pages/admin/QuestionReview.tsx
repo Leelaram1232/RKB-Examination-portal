@@ -32,6 +32,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle, Eye, Save, Loader2, RefreshCw } from 'lucide-react';
+import { MathRenderer } from '@/components/exam/MathRenderer';
 
 interface Question {
   id: string;
@@ -341,8 +342,8 @@ export default function QuestionReview() {
                         <TableCell className="font-medium">
                           {question.exams?.exam_name || 'N/A'}
                         </TableCell>
-                        <TableCell className="max-w-xs truncate">
-                          {question.question_text}
+                        <TableCell className="max-w-xs">
+                          <MathRenderer content={question.question_text} />
                         </TableCell>
                         <TableCell>
                           {question.correct_option ? (

@@ -22,9 +22,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase } from '@/lib/supabase';
 import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 interface ActiveSession {
@@ -88,7 +88,7 @@ const LiveMonitoring = () => {
         setExam(examData);
       } else {
         // Try external
-        const { data: extExamData } = await externalSupabase
+        const { data: extExamData } = await supabase
           .from('exams')
           .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
           .eq('id', examId)
@@ -134,7 +134,7 @@ const LiveMonitoring = () => {
 
       const [internalData, externalData] = await Promise.all([
         fetchRegsAndProfiles(supabase, 'INTERNAL'),
-        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
+        fetchRegsAndProfiles(supabase, 'EXTERNAL')
       ]);
 
       // Merge registrations and profiles
@@ -181,7 +181,7 @@ const LiveMonitoring = () => {
 
       const [internalSessions, externalSessions] = await Promise.all([
         fetchSessions(supabase, 'INTERNAL'),
-        fetchSessions(externalSupabase, 'EXTERNAL')
+        fetchSessions(supabase, 'EXTERNAL')
       ]);
 
       console.log(`[LiveMonitoring] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
@@ -237,8 +237,8 @@ const LiveMonitoring = () => {
       // 4. Get signed URLs for snapshots/screens
       const sessionsWithSignedUrls = await Promise.all(finalSessions.map(async (s) => {
         try {
-          const snapshotUrl = s.latest_snapshot_url ? await getSignedUrl(externalSupabase as any, s.latest_snapshot_url) : null;
-          const screenUrl = s.latest_screen_url ? await getSignedUrl(externalSupabase as any, s.latest_screen_url) : null;
+          const snapshotUrl = s.latest_snapshot_url ? await getSignedUrl(supabase as any, s.latest_snapshot_url) : null;
+          const screenUrl = s.latest_screen_url ? await getSignedUrl(supabase as any, s.latest_screen_url) : null;
           return { ...s, snapshotUrl, screenUrl };
         } catch (e) {
           return s;
@@ -339,7 +339,7 @@ const LiveMonitoring = () => {
         if (status === 'SUBSCRIBED') setIsConnected(true);
       });
 
-    const externalChannel = externalSupabase
+    const externalChannel = supabase
       .channel('exam-sessions-realtime-ext')
       .on(
         'postgres_changes',
@@ -356,7 +356,7 @@ const LiveMonitoring = () => {
 
     return () => {
       supabase.removeChannel(channel);
-      externalSupabase.removeChannel(externalChannel);
+      supabase.removeChannel(externalChannel);
     };
   }, [examId]);
 
@@ -386,7 +386,7 @@ const LiveMonitoring = () => {
     if (!objectPath) return null;
 
     // Helper to try a specific Supabase client (internal or external) for this object.
-    const tryClient = async (c: typeof supabase | typeof externalSupabase | null) => {
+    const tryClient = async (c: typeof supabase | typeof supabase | null) => {
       if (!c) return null;
       try {
         const { data, error } = await (c as any).storage
@@ -409,8 +409,8 @@ const LiveMonitoring = () => {
     const primary = await tryClient(client);
     if (primary) return primary;
 
-    const isPrimaryExternal = (client as any) === (externalSupabase as any);
-    const secondary = await tryClient(isPrimaryExternal ? supabase : (externalSupabase as any));
+    const isPrimaryExternal = (client as any) === (supabase as any);
+    const secondary = await tryClient(isPrimaryExternal ? supabase : (supabase as any));
     return secondary;
   };
 

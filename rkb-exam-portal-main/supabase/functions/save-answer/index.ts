@@ -100,12 +100,12 @@ Deno.serve(async (req) => {
 
     // Step 2: Check if answer already exists
     console.log('[save-answer] Step 2: Checking for existing answer...');
-    const { data: existingAnswer, error: existingError } = await primaryClient
+    const { data: existingAnswers, error: existingError } = await primaryClient
       .from('student_answers')
       .select('id')
       .eq('session_id', body.session_id)
       .eq('question_id', body.question_id)
-      .maybeSingle();
+      .limit(1);
 
     if (existingError) {
       console.error('ERROR: Existing answer query failed:', existingError);
@@ -114,6 +114,8 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const existingAnswer = existingAnswers && existingAnswers.length > 0 ? existingAnswers[0] : null;
 
     const now = new Date().toISOString();
 

@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Loader2, CreditCard, IndianRupee, Shield, CheckCircle2, ArrowLeft } from 'lucide-react';
@@ -52,7 +52,7 @@ const RegistrationPayment = () => {
         }
 
         // Fetch registration details from external Supabase
-        const { data, error } = await externalSupabase
+        const { data, error } = await supabase
           .from('registrations')
           .select(`
             id,
@@ -77,14 +77,14 @@ const RegistrationPayment = () => {
         }
 
         // Fetch exam details from external Supabase
-        const { data: examData } = await externalSupabase
+        const { data: examData } = await supabase
           .from('exams')
           .select('exam_name, exam_date')
           .eq('id', data.exam_id)
           .single();
 
         // Fetch profile details from external Supabase
-        const { data: profileData } = await externalSupabase
+        const { data: profileData } = await supabase
           .from('profiles')
           .select('full_name, email')
           .eq('id', data.student_id)

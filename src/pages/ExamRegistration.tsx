@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { CalendarIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -107,7 +107,7 @@ export default function ExamRegistration() {
       if (!examId) return;
 
       // Fetch exam from external Supabase
-      const { data, error } = await externalSupabase
+      const { data, error } = await supabase
         .from('exams')
         .select('id, exam_name, exam_code, description, exam_date, exam_time, duration_minutes, eligibility_class, eligibility_category, registration_end, registration_type, registration_amount')
         .eq('id', examId)
