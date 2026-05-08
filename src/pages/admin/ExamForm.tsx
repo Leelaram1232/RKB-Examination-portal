@@ -79,6 +79,8 @@ const examSchema = z.object({
   voice_monitoring_enabled: z.boolean().default(false),
   screen_recording_enabled: z.boolean().default(false),
   liberty_level: z.enum(['strict', 'moderate', 'relaxed']).default('moderate'),
+  registration_type: z.enum(['free', 'paid']).default('free'),
+  registration_amount: z.coerce.number().min(0).default(0),
 });
 
 type ExamFormData = z.infer<typeof examSchema>;
@@ -128,6 +130,8 @@ const ExamForm = () => {
       voice_monitoring_enabled: false,
       screen_recording_enabled: false,
       liberty_level: 'moderate',
+      registration_type: 'free',
+      registration_amount: 0,
     },
   });
 
@@ -241,6 +245,8 @@ const ExamForm = () => {
             voice_monitoring_enabled: (data as any).voice_monitoring_enabled || false,
             screen_recording_enabled: (data as any).screen_recording_enabled || false,
             liberty_level: ((data as any).liberty_level as 'strict' | 'moderate' | 'relaxed') || 'moderate',
+            registration_type: (data as any).registration_type || 'free',
+            registration_amount: (data as any).registration_amount || 0,
           });
           
           // Fetch exam subjects
@@ -533,6 +539,8 @@ const ExamForm = () => {
                       />
                     </div>
 
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
@@ -556,6 +564,55 @@ const ExamForm = () => {
                           </FormItem>
                         )}
                       />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Registration Type */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Registration Settings</CardTitle>
+                    <CardDescription>Configure if this exam is free or paid</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormField
+                        control={form.control}
+                        name="registration_type"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Registration Type</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="free">Free</SelectItem>
+                                <SelectItem value="paid">Paid</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {form.watch('registration_type') === 'paid' && (
+                        <FormField
+                          control={form.control}
+                          name="registration_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Amount (₹)</FormLabel>
+                              <FormControl>
+                                <Input type="number" min={0} {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </div>
                   </CardContent>
                 </Card>

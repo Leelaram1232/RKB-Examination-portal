@@ -18,6 +18,7 @@ import AIQuestionAssistant from "@/pages/admin/AIQuestionAssistant";
 import SessionManagement from "./pages/admin/SessionManagement";
 import LiveMonitoring from "./pages/admin/LiveMonitoring";
 import ExamRegistration from "./pages/ExamRegistration";
+import RegistrationFlow from "./pages/RegistrationFlow";
 import ExamLogin from "./pages/ExamLogin";
 import ExamInstructions from "./pages/ExamInstructions";
 import ExamInterface from "./pages/ExamInterface";
@@ -31,6 +32,8 @@ import ExamResults from "./pages/admin/ExamResults";
 import StudentAnswerReview from "./pages/admin/StudentAnswerReview";
 import TermsAndConditions from "./pages/TermsAndConditions";
 import RefundPolicy from "./pages/RefundPolicy";
+import PaymentStatus from "./pages/PaymentStatus";
+import RegistrationPayment from "./pages/RegistrationPayment";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -61,6 +64,8 @@ const App = () => (
             {/* Policy Pages */}
             <Route path="/terms" element={<TermsAndConditions />} />
             <Route path="/refund-policy" element={<RefundPolicy />} />
+            <Route path="/payment-status" element={<PaymentStatus />} />
+            <Route path="/registration-payment/:registrationId" element={<RegistrationPayment />} />
             
             {/* Protected Admin Routes */}
             <Route
