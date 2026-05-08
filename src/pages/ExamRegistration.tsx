@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { CalendarIcon, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { CalendarIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
