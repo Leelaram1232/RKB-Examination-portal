@@ -297,6 +297,7 @@ const ExamForm = () => {
       registration_amount: data.registration_amount,
     };
 
+    console.log('[ExamForm] Submitting examData:', examData);
     let error;
     let examId = id;
 
@@ -305,6 +306,7 @@ const ExamForm = () => {
         .from('exams')
         .update(examData)
         .eq('id', id);
+      console.log('[ExamForm] Update result:', result);
       error = result.error;
     } else {
       const result = await supabase
