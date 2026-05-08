@@ -293,7 +293,8 @@ const ExamForm = () => {
       voice_monitoring_enabled: data.voice_monitoring_enabled,
       screen_recording_enabled: data.screen_recording_enabled,
       liberty_level: data.liberty_level,
-      liberty_level: data.liberty_level,
+      registration_type: data.registration_type,
+      registration_amount: data.registration_amount,
     };
 
     let error;

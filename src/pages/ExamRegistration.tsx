@@ -47,6 +47,8 @@ interface Exam {
   eligibility_class: string | null;
   eligibility_category: string | null;
   registration_end: string;
+  registration_type: string | null;
+  registration_amount: number | null;
 }
 
 interface RegistrationSuccess {
@@ -121,6 +123,7 @@ export default function ExamRegistration() {
         return;
       }
 
+      console.log('[ExamRegistration] Fetched exam:', data);
       setExam(data);
       setIsLoading(false);
     };
