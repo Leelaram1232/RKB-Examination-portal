@@ -298,6 +298,7 @@ const ExamForm = () => {
     };
 
     console.log('[ExamForm] Submitting examData:', examData);
+    console.log('[ExamForm] Type:', examData.registration_type, 'Amount:', examData.registration_amount);
     let error;
     let examId = id;
 

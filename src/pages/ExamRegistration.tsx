@@ -124,6 +124,7 @@ export default function ExamRegistration() {
       }
 
       console.log('[ExamRegistration] Fetched exam:', data);
+      console.log('[ExamRegistration] Type:', data?.registration_type, 'Amount:', data?.registration_amount);
       setExam(data);
       setIsLoading(false);
     };
