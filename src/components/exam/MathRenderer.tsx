@@ -1,5 +1,6 @@
 import 'katex/dist/katex.min.css';
-import { InlineMath, BlockMath } from 'react-katex';
+import katex from 'katex';
+import { useEffect, useRef } from 'react';
 
 interface MathRendererProps {
   content: string;
@@ -16,6 +17,37 @@ const LATEX_COMMANDS = /\\[a-zA-Z]+|\^|_/;
 export function containsLatex(text: string): boolean {
   if (!text) return false;
   return INLINE_MATH_PATTERN.test(text) || BLOCK_MATH_PATTERN.test(text) || LATEX_COMMANDS.test(text);
+}
+
+// Safe KaTeX renderer component
+function SafeMath({ math, displayMode = false }: { math: string; displayMode?: boolean }) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      try {
+        // Fix common typos in data
+        const fixedMath = math
+          .replace(/\\rightarrrow/g, '\\rightarrow')
+          .replace(/\\leftarrrow/g, '\\leftarrow')
+          .replace(/\\rightarow/g, '\\rightarrow')
+          .replace(/\\leftarow/g, '\\leftarrow')
+          .replace(/\\bold/g, '\\mathbf');
+
+        katex.render(fixedMath, containerRef.current, {
+          displayMode,
+          throwOnError: false,
+          errorColor: 'inherit', // Prevent red text for errors
+          strict: false,
+          trust: true
+        });
+      } catch (e) {
+        containerRef.current.textContent = math;
+      }
+    }
+  }, [math, displayMode]);
+
+  return <span ref={containerRef} />;
 }
 
 // Parse and render text with LaTeX
@@ -53,21 +85,13 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
         // Display math: $$...$$ or \[...\]
         if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\[') && part.endsWith('\\]'))) {
           let math = part.startsWith('$$') ? part.slice(2, -2) : part.slice(2, -2);
-          try {
-            return <BlockMath key={index} math={math} />;
-          } catch (e) {
-            return <span key={index}>{part}</span>;
-          }
+          return <SafeMath key={index} math={math} displayMode={true} />;
         }
 
         // Inline math: $...$ or \(...\)
         if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\(') && part.endsWith('\\)'))) {
           let math = part.startsWith('$') ? part.slice(1, -1) : part.slice(2, -2);
-          try {
-            return <InlineMath key={index} math={math} />;
-          } catch (e) {
-            return <span key={index}>{part}</span>;
-          }
+          return <SafeMath key={index} math={math} displayMode={false} />;
         }
 
         // Plain text (still check for naked commands)
@@ -84,11 +108,16 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
   // Split by:
   // 1. word^word or word_word (naked powers/subscripts)
   // 2. LaTeX commands starting with \ (e.g. \alpha, \sqrt{...})
+  // 3. Environments like \begin{...}...\end{...}
   const parts: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   
-  // This regex finds math-like segments that aren't wrapped in delimiters
-  const regex = /((?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b)|(?:\\[a-zA-Z]+(?:\{[^}]*\})?))/g;
+  // This regex finds math-like segments that aren't wrapped in delimiters:
+  // 1. LaTeX commands with optional braced arguments: \sqrt{x}, \alpha
+  // 2. Superscripts/Subscripts with braces: ^{123}, _{abc}
+  // 3. Simple Superscripts/Subscripts: ^2, _i
+  // 4. Naked word-power-word: x^2, a_i
+  const regex = /((?:\\[a-zA-Z]+(?:\{[^}]*\})?)|(?:[\^_]\{[^}]*\})|(?:[\^_][a-zA-Z0-9])|(?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b))/g;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
@@ -98,12 +127,7 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
     }
     
     const math = match[0];
-    
-    try {
-      parts.push(<InlineMath key={match.index} math={math} />);
-    } catch (e) {
-      parts.push(match[0]);
-    }
+    parts.push(<SafeMath key={match.index} math={math} displayMode={false} />);
     
     lastIndex = match.index + match[0].length;
   }
@@ -119,42 +143,6 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
   }
 
   return <span className={className}>{parts}</span>;
-}
-
-// Format chemistry formulas
-export function formatChemistry(text: string): string {
-  // Convert common chemistry patterns to LaTeX
-  let result = text;
-  
-  // Subscripts for numbers after elements (H2O -> H_2O)
-  result = result.replace(/([A-Z][a-z]?)(\d+)/g, '$1_{$2}');
-  
-  // Superscripts for charges (Fe3+ -> Fe^{3+})
-  result = result.replace(/([A-Z][a-z]?)(\d*[+-])/g, '$1^{$2}');
-  
-  // Arrow reactions
-  result = result.replace(/->|→/g, '\\rightarrow');
-  result = result.replace(/<->|↔/g, '\\leftrightarrow');
-  
-  return result;
-}
-
-// Format physics equations
-export function formatPhysics(text: string): string {
-  let result = text;
-  
-  // Common physics symbols
-  result = result.replace(/(\b)alpha(\b)/gi, '\\alpha');
-  result = result.replace(/(\b)beta(\b)/gi, '\\beta');
-  result = result.replace(/(\b)gamma(\b)/gi, '\\gamma');
-  result = result.replace(/(\b)delta(\b)/gi, '\\delta');
-  result = result.replace(/(\b)theta(\b)/gi, '\\theta');
-  result = result.replace(/(\b)omega(\b)/gi, '\\omega');
-  result = result.replace(/(\b)mu(\b)/gi, '\\mu');
-  result = result.replace(/(\b)lambda(\b)/gi, '\\lambda');
-  result = result.replace(/(\b)pi(\b)/gi, '\\pi');
-  
-  return result;
 }
 
 export default MathRenderer;

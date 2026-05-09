@@ -1614,27 +1614,29 @@ const QuestionManagement = () => {
                       
                       <div>
                         <span className="font-semibold text-sm text-muted-foreground block mb-1">Question Text:</span>
-                        <p className="text-sm border p-2 rounded-md bg-background">{q.question_text}</p>
+                        <div className="text-sm border p-2 rounded-md bg-background">
+                          <MathRenderer content={q.question_text} />
+                        </div>
                       </div>
 
                       {q.question_type !== 'NUMERICAL' ? (
                         <div className="grid grid-cols-2 gap-2 text-sm mt-2">
                           <div className={cn("p-2 border rounded-md", q.correct_option === 'A' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
-                            <span className="font-semibold mr-2">A.</span> {q.option_a}
+                            <span className="font-semibold mr-2">A.</span> <MathRenderer content={q.option_a} />
                           </div>
                           <div className={cn("p-2 border rounded-md", q.correct_option === 'B' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
-                            <span className="font-semibold mr-2">B.</span> {q.option_b}
+                            <span className="font-semibold mr-2">B.</span> <MathRenderer content={q.option_b} />
                           </div>
                           <div className={cn("p-2 border rounded-md", q.correct_option === 'C' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
-                            <span className="font-semibold mr-2">C.</span> {q.option_c}
+                            <span className="font-semibold mr-2">C.</span> <MathRenderer content={q.option_c} />
                           </div>
                           <div className={cn("p-2 border rounded-md", q.correct_option === 'D' && "border-green-500 bg-green-50 dark:bg-green-950/20")}>
-                            <span className="font-semibold mr-2">D.</span> {q.option_d}
+                            <span className="font-semibold mr-2">D.</span> <MathRenderer content={q.option_d} />
                           </div>
                         </div>
                       ) : (
                         <div className="text-sm mt-2 p-2 border rounded-md border-green-500 bg-green-50 dark:bg-green-950/20">
-                          <span className="font-semibold mr-2">Correct Answer:</span> {q.correct_answer}
+                          <span className="font-semibold mr-2">Correct Answer:</span> <MathRenderer content={q.correct_answer || ''} />
                         </div>
                       )}
                     </CardContent>
@@ -1775,7 +1777,7 @@ const QuestionRow = ({
       <TableCell>
         <span className="font-mono bg-primary/10 text-primary px-2 py-1 rounded">
           {question.question_type === 'NUMERICAL'
-            ? (question.correct_answer ?? '-')
+            ? <MathRenderer content={question.correct_answer ?? '-'} />
             : question.correct_option}
         </span>
       </TableCell>
