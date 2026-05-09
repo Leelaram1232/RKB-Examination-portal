@@ -56,7 +56,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { MathRenderer } from '@/components/exam/MathRenderer';
+import { MathRenderer, containsLatex } from '@/components/exam/MathRenderer';
 
 interface Question {
   id: string;
@@ -1167,10 +1167,12 @@ const QuestionManagement = () => {
                   })}
                   placeholder="Enter the question..."
                 />
-                <div className="mt-2 p-2 border rounded bg-muted/50 min-h-[60px]">
-                  <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase">LaTeX Preview:</p>
-                  <MathRenderer content={currentQuestion.question_text || ''} />
-                </div>
+                {containsLatex(currentQuestion.question_text || '') && (
+                  <div className="mt-2 p-2 border rounded bg-muted/50">
+                    <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase">LaTeX Preview:</p>
+                    <MathRenderer content={currentQuestion.question_text || ''} />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -1233,9 +1235,11 @@ const QuestionManagement = () => {
                       option_a: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                    <MathRenderer content={currentQuestion.option_a || ''} />
-                  </div>
+                  {containsLatex(currentQuestion.option_a || '') && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                      <MathRenderer content={currentQuestion.option_a || ''} />
+                    </div>
+                  )}
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1289,9 +1293,11 @@ const QuestionManagement = () => {
                       option_b: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                    <MathRenderer content={currentQuestion.option_b || ''} />
-                  </div>
+                  {containsLatex(currentQuestion.option_b || '') && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                      <MathRenderer content={currentQuestion.option_b || ''} />
+                    </div>
+                  )}
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1345,9 +1351,11 @@ const QuestionManagement = () => {
                       option_c: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                    <MathRenderer content={currentQuestion.option_c || ''} />
-                  </div>
+                  {containsLatex(currentQuestion.option_c || '') && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                      <MathRenderer content={currentQuestion.option_c || ''} />
+                    </div>
+                  )}
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1401,9 +1409,11 @@ const QuestionManagement = () => {
                       option_d: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                    <MathRenderer content={currentQuestion.option_d || ''} />
-                  </div>
+                  {containsLatex(currentQuestion.option_d || '') && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                      <MathRenderer content={currentQuestion.option_d || ''} />
+                    </div>
+                  )}
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"

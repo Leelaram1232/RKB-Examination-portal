@@ -32,7 +32,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle, Eye, Save, Loader2, RefreshCw } from 'lucide-react';
-import { MathRenderer } from '@/components/exam/MathRenderer';
+import { MathRenderer, containsLatex } from '@/components/exam/MathRenderer';
 
 interface Question {
   id: string;
@@ -446,10 +446,12 @@ export default function QuestionReview() {
                     question_text: e.target.value
                   })}
                 />
-                <div className="mt-2 p-2 border rounded bg-muted/50">
-                  <p className="text-xs text-muted-foreground mb-1 font-semibold uppercase">Preview:</p>
-                  <MathRenderer content={selectedQuestion.question_text} />
-                </div>
+                {containsLatex(selectedQuestion.question_text) && (
+                  <div className="mt-2 p-2 border rounded bg-muted/50">
+                    <p className="text-xs text-muted-foreground mb-1 font-semibold uppercase">Preview:</p>
+                    <MathRenderer content={selectedQuestion.question_text} />
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -462,9 +464,11 @@ export default function QuestionReview() {
                       option_a: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                    <MathRenderer content={selectedQuestion.option_a} />
-                  </div>
+                  {containsLatex(selectedQuestion.option_a) && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                      <MathRenderer content={selectedQuestion.option_a} />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Option B</Label>
@@ -475,9 +479,11 @@ export default function QuestionReview() {
                       option_b: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                    <MathRenderer content={selectedQuestion.option_b} />
-                  </div>
+                  {containsLatex(selectedQuestion.option_b) && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                      <MathRenderer content={selectedQuestion.option_b} />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Option C</Label>
@@ -488,9 +494,11 @@ export default function QuestionReview() {
                       option_c: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                    <MathRenderer content={selectedQuestion.option_c} />
-                  </div>
+                  {containsLatex(selectedQuestion.option_c) && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                      <MathRenderer content={selectedQuestion.option_c} />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Option D</Label>
@@ -501,9 +509,11 @@ export default function QuestionReview() {
                       option_d: e.target.value
                     })}
                   />
-                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                    <MathRenderer content={selectedQuestion.option_d} />
-                  </div>
+                  {containsLatex(selectedQuestion.option_d) && (
+                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                      <MathRenderer content={selectedQuestion.option_d} />
+                    </div>
+                  )}
                 </div>
               </div>
 
