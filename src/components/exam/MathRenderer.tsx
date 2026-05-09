@@ -138,32 +138,14 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
 
 /**
  * Renders text that contains naked LaTeX (no delimiters).
- * Strategy: try to render the entire string as KaTeX first.
- * If it fails or produces garbage, fall back to segment-by-segment rendering.
+ * Only the LaTeX fragments are rendered as math; surrounding text stays plain.
  */
 function NakedMathText({ text }: { text: string }) {
   const containerRef = useRef<HTMLSpanElement>(null);
-  const fallbackRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
-
-    const cleaned = fixCommonTypos(text);
-
-    // First attempt: render the whole string as inline math
-    try {
-      katex.render(cleaned, containerRef.current, {
-        displayMode: false,
-        throwOnError: true, // We WANT it to throw so we can fall back
-        strict: false,
-        trust: true,
-      });
-      fallbackRef.current = false;
-    } catch {
-      // KaTeX couldn't parse the whole thing — fall back to segment rendering
-      fallbackRef.current = true;
-      renderSegments(containerRef.current, text);
-    }
+    renderSegments(containerRef.current, text);
   }, [text]);
 
   return <span ref={containerRef} />;
