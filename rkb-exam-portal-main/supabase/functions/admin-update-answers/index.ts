@@ -22,13 +22,9 @@ Deno.serve(async (req) => {
   try {
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
 
-    const useExternal = !!(externalUrl && externalKey && externalUrl !== internalUrl);
-    const primaryClient = useExternal 
-      ? createClient(externalUrl, externalKey) 
-      : createClient(internalUrl, internalKey);
+    const primaryClient = createClient(internalUrl, internalKey);
+    console.log('[admin-update-answers] Using Portal Database');
 
     // 1) Validate caller
     const authHeader = req.headers.get('Authorization') || '';

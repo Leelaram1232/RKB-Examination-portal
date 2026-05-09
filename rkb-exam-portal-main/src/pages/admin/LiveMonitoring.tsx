@@ -22,9 +22,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase as externalSupabase } from '@/lib/supabase';
 import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 interface ActiveSession {
@@ -720,3 +720,4 @@ const LiveMonitoring = () => {
 };
 
 export default LiveMonitoring;
+

@@ -1065,29 +1065,14 @@ Deno.serve(async (req) => {
       if (!exam_id) {
         throw new Error('exam_id is required for exam quality audit');
       }
-      const supabaseUrl = Deno.env.get('SUPABASE_URL');
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured');
-      }
-      const extUrl = Deno.env.get('EXTERNAL_SUPABASE_URL')?.trim();
-      const extKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')?.trim();
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      
+      const auditClient = createClient(supabaseUrl, supabaseKey);
+      const questionFetch = 'primary';
+      console.log('[Audit] Using Portal Database for questions table');
 
-      let auditClient = createClient(supabaseUrl, supabaseKey);
-      let questionFetch: 'primary' | 'external' | 'primary_fallback' = 'primary';
-      if (extUrl && extKey) {
-        auditClient = createClient(extUrl, extKey);
-        questionFetch = 'external';
-        console.log('[Audit] Using EXTERNAL_SUPABASE_* for questions table');
-      }
-
-      let audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
-      if (audit.total_questions === 0 && questionFetch === 'external') {
-        console.warn('[Audit] 0 rows from external; retrying primary SUPABASE_URL');
-        auditClient = createClient(supabaseUrl, supabaseKey);
-        questionFetch = 'primary_fallback';
-        audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
-      }
+      const audit = await runExamQualityAudit(auditClient, exam_id, { groqKey, geminiKey, llmMode: llm_mode });
 
       const BUILD_MARKER = 'ai-question-assistant@2026-05-04.audit';
       return new Response(
@@ -1140,6 +1125,8 @@ Deno.serve(async (req) => {
     }
 
     let ocrContext = '';
+    let ocrChunks: string[] = [];
+    let bestRawTextForUi = '';
     let processedPagesCount = 0;
     let ocrError: string | null = null;
     const lastUserMessage =
@@ -1177,7 +1164,7 @@ Deno.serve(async (req) => {
           // Any range support:
           // - If total pages requested is small, OCR page-by-page (robust vs image-only pages).
           // - If total pages requested is large, OCR in safe chunks (reduces timeouts).
-          const ocrChunks: string[] = [];
+          ocrChunks = [];
           let totalReadable = 0;
           let pagesWithText = 0;
           let processedTotal = 0;
@@ -1428,6 +1415,7 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
 
     if (isLargeExtraction && ocrChunks && ocrChunks.length > 1) {
       console.log('[Assistant] Chunked extraction loop starting. Chunks:', ocrChunks.length);
+      bestRawTextForUi = '';
       for (let i = 0; i < ocrChunks.length; i++) {
         const chunk = ocrChunks[i];
         console.log(`[Assistant] Processing chunk ${i+1}/${ocrChunks.length}...`);
@@ -1450,12 +1438,15 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
         if (readablePart) assistantContent += `\n\n[CHUNK ${i+1}]:\n${readablePart}`;
       }
       assistantContent = `### Full Extraction Results\nExtracted **${allExtractedQuestions.length}** questions from ${processedPagesCount} pages.\n\n` + assistantContent;
+      bestRawTextForUi = assistantContent;
     } else {
       if (llm_mode === 'groq') {
         const groqData = await callGroq(groqMessages, 0.2);
         assistantContent = groqData.choices?.[0]?.message?.content ?? '';
       } else if (llm_mode === 'gemini') {
-        try { assistantContent = await callGeminiRaw(geminiKey, systemPrompt, trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n'), false, 8192); } catch {
+        try { 
+          assistantContent = await callGeminiRaw(geminiKey, systemPrompt, trimmedMessages.map((m) => `${m.role}: ${m.content}`).join('\n\n'), false, 8192); 
+        } catch {
           if (groqKey) {
             const groqData = await callGroq(groqMessages, 0.2);
             assistantContent = `[NOTICE: Gemini Fallback]\n\n` + (groqData.choices?.[0]?.message?.content ?? '');
@@ -1467,8 +1458,11 @@ Your task is to SOLVE each question and verify if the options and 'correct_optio
         try {
           const merged = await callGeminiRaw(geminiKey, systemPrompt, `Improve this assistant output (fix JSON if needed):\n${draft}`, false, 8192);
           assistantContent = merged.trim() ? merged : draft;
-        } catch { assistantContent = draft; }
+        } catch { 
+          assistantContent = draft; 
+        }
       }
+      bestRawTextForUi = assistantContent;
       const parsed = extractQuestionsFromText(assistantContent);
       if (Array.isArray(parsed)) allExtractedQuestions = parsed;
     }

@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { CalendarIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -107,7 +107,7 @@ export default function ExamRegistration() {
       if (!examId) return;
 
       // Fetch exam from external Supabase
-      const { data, error } = await externalSupabase
+      const { data, error } = await supabase
         .from('exams')
         .select('id, exam_name, exam_code, description, exam_date, exam_time, duration_minutes, eligibility_class, eligibility_category, registration_end, registration_type, registration_amount')
         .eq('id', examId)
@@ -143,17 +143,21 @@ export default function ExamRegistration() {
     
     setIsSubmitting(true);
     try {
-      const response = await invokeExternalFunction('register-for-exam', {
-        ...formData,
-        exam_id: exam.id,
-        date_of_birth: format(formData.date_of_birth, 'yyyy-MM-dd'),
+      const { data: responseData, error: functionError } = await supabase.functions.invoke('register-for-exam', {
+        body: {
+          ...formData,
+          exam_id: exam.id,
+          date_of_birth: format(formData.date_of_birth, 'yyyy-MM-dd'),
+        }
       });
 
-      if (response.error) {
-        throw new Error(response.error);
+      if (functionError) {
+        throw new Error(functionError.message || 'Registration failed');
       }
 
-      const result = response.data;
+      const result = responseData;
+      console.log('[ExamRegistration] onConfirm result:', result);
+      console.log('[ExamRegistration] Exam type before check:', exam.registration_type);
       
       // If exam is paid, redirect to payment page
       if (exam.registration_type === 'paid') {

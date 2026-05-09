@@ -20,21 +20,13 @@ Deno.serve(async (req) => {
       throw new Error('Registration ID is required');
     }
 
-    // Use EXTERNAL Supabase credentials (data is in external database)
-    const externalSupabaseUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalSupabaseServiceKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     
-    // Lovable Cloud URL for webhook (function is deployed here)
-    const lovableCloudUrl = Deno.env.get('SUPABASE_URL');
+    // Webhook URL (function is deployed here)
+    const lovableCloudUrl = supabaseUrl;
     
-    if (!externalSupabaseUrl || !externalSupabaseServiceKey) {
-      throw new Error('External database credentials not configured');
-    }
-    
-    console.log('External Supabase URL:', externalSupabaseUrl);
-    console.log('Lovable Cloud URL for webhook:', lovableCloudUrl);
-    
-    const supabase = createClient(externalSupabaseUrl, externalSupabaseServiceKey);
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Step 1: Fetch registration from 'registrations' table
     console.log('Fetching registration...');

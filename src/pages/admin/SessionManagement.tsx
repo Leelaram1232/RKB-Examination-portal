@@ -52,7 +52,6 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Json } from '@/integrations/supabase/types';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 
 interface ExamSession {
   id: string;
@@ -131,102 +130,46 @@ const SessionManagement = () => {
         .eq('id', examId)
         .maybeSingle();
 
-      if (examData) {
-        setExam(examData);
-      } else {
-        const { data: extExamData } = await externalSupabase
-          .from('exams')
-          .select('id, exam_name, exam_code, max_violations, auto_submit_on_violations')
-          .eq('id', examId)
-          .maybeSingle();
-        if (extExamData) setExam(extExamData);
-      }
+      if (examError) throw examError;
+      if (examData) setExam(examData);
 
-      // 2. Fetch registrations from both DBs
-      const fetchRegsAndProfiles = async (client: any, dbName: string) => {
-        try {
-          const { data: regs, error: regErr } = await client
-            .from('registrations')
-            .select('id, registration_number, student_id, exam_id')
-            .eq('exam_id', examId);
+      // 2. Fetch registrations and profiles
+      const { data: regs, error: regErr } = await supabase
+        .from('registrations')
+        .select('id, registration_number, student_id, exam_id')
+        .eq('exam_id', examId);
 
-          if (regErr || !regs) {
-            console.error(`[SessionManagement] Error fetching registrations from ${dbName}:`, regErr);
-            return { regs: [], profiles: [] };
-          }
-
-          const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
-          const { data: profiles, error: profErr } = await client
-            .from('profiles')
-            .select('id, full_name, email')
-            .in('id', studentIds);
-
-          return { regs, profiles: profiles || [] };
-        } catch (err) {
-          console.error(`[SessionManagement] Unexpected error in ${dbName}:`, err);
-          return { regs: [], profiles: [] };
-        }
-      };
-
-      const [internalData, externalData] = await Promise.all([
-        fetchRegsAndProfiles(supabase, 'INTERNAL'),
-        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
-      ]);
-
-      const regMap = new Map<string, any>();
-      const profileMap = new Map<string, any>();
-
-      [...internalData.regs, ...externalData.regs].forEach(r => {
-        if (!regMap.has(r.id)) regMap.set(r.id, r);
-      });
-
-      [...internalData.profiles, ...externalData.profiles].forEach(p => {
-        if (!profileMap.has(p.id)) profileMap.set(p.id, p);
-      });
-
-      const regIds = Array.from(regMap.keys());
-      console.log(`[SessionManagement] Found ${regIds.length} total registrations.`);
-
-      if (regIds.length === 0) {
+      if (regErr) throw regErr;
+      if (!regs || regs.length === 0) {
         setSessions([]);
         setIsLoading(false);
         return;
       }
 
-      // 3. Fetch sessions from both DBs
-      const fetchSessions = async (client: any, dbName: string) => {
-        try {
-          const { data, error } = await client
-            .from('exam_sessions')
-            .select('id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at')
-            .in('registration_id', regIds);
+      const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
+      const { data: profiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', studentIds);
 
-          if (error) {
-            console.error(`[SessionManagement] Error fetching sessions from ${dbName}:`, error);
-            return [];
-          }
-          return data || [];
-        } catch (err) {
-          console.error(`[SessionManagement] Unexpected error fetching sessions from ${dbName}:`, err);
-          return [];
-        }
-      };
+      if (profErr) throw profErr;
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
 
-      const [internalSessions, externalSessions] = await Promise.all([
-        fetchSessions(supabase, 'INTERNAL'),
-        fetchSessions(externalSupabase, 'EXTERNAL')
-      ]);
+      // 3. Fetch sessions
+      const { data: activeSessions, error: sessErr } = await supabase
+        .from('exam_sessions')
+        .select('id, registration_id, start_time, end_time, is_completed, is_auto_submitted, violation_count, proctoring_violations, exam_status, submitted_at')
+        .in('registration_id', regs.map(r => r.id));
 
-      console.log(`[SessionManagement] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
+      if (sessErr) throw sessErr;
 
-      // 4. Merge sessions
-      const mergedSessionsMap = new Map<string, any>();
-      
-      const processSession = (s: any) => {
+      const regMap = new Map(regs.map(r => [r.id, r]));
+
+      const finalSessions = (activeSessions || []).map((s: any) => {
         const reg = regMap.get(s.registration_id);
         const profile = reg ? profileMap.get(reg.student_id) : null;
         
-        const session: ExamSession = {
+        return {
           ...s,
           registration: {
             registration_number: reg?.registration_number || 'N/A',
@@ -235,27 +178,16 @@ const SessionManagement = () => {
               email: profile?.email || 'N/A',
             }
           }
-        };
+        } as ExamSession;
+      });
 
-        const existing = mergedSessionsMap.get(s.id);
-        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
-          mergedSessionsMap.set(s.id, session);
-        }
-      };
-
-      internalSessions.forEach(processSession);
-      externalSessions.forEach(processSession);
-
-      const finalSessions = Array.from(mergedSessionsMap.values())
-        .sort((a, b) => {
-          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
-          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
-          return bt - at;
-        });
-
-      setSessions(finalSessions);
+      setSessions(finalSessions.sort((a, b) => {
+        const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+        const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+        return bt - at;
+      }));
     } catch (error) {
-      console.error('[SessionManagement] Fatal error in fetchData:', error);
+      console.error('[SessionManagement] Error in fetchData:', error);
       toast.error('Failed to load exam sessions');
     } finally {
       setIsLoading(false);
@@ -271,14 +203,8 @@ const SessionManagement = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
       .subscribe();
 
-    const externalChannel = externalSupabase
-      .channel('session-mgmt-realtime-ext')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_sessions' }, () => fetchData())
-      .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
-      externalSupabase.removeChannel(externalChannel);
     };
   }, [examId, navigate]);
 
@@ -298,39 +224,22 @@ const SessionManagement = () => {
       // Keep violation_count for tracking
     };
 
-    // Update both internal and external to guarantee the student can resume.
-    const [internalSessionRes, externalSessionRes] = await Promise.all([
-      supabase
-        .from('exam_sessions')
-        .update(resumePayload)
-        .eq('id', selectedSession.id),
-      externalSupabase
-        .from('exam_sessions')
-        .update(resumePayload)
-        .eq('id', selectedSession.id),
-    ]);
+    const { error } = await supabase
+      .from('exam_sessions')
+      .update(resumePayload)
+      .eq('id', selectedSession.id);
 
-    if (internalSessionRes.error || externalSessionRes.error) {
-      console.error('Failed to reset session:', internalSessionRes.error, externalSessionRes.error);
+    if (error) {
+      console.error('Failed to reset session:', error);
       toast.error('Failed to reset session');
     } else {
-      await Promise.all([
-        // Re-enable exam login for the student (both DBs)
-        supabase
-          .from('registrations')
-          .update({ exam_login_enabled: true })
-          .eq('id', selectedSession.registration_id),
-        externalSupabase
-          .from('registrations')
-          .update({ exam_login_enabled: true })
-          .eq('id', selectedSession.registration_id),
-      ]);
+      await supabase
+        .from('registrations')
+        .update({ exam_login_enabled: true })
+        .eq('id', selectedSession.registration_id);
 
       // Also delete old result if exists (for resumed exams)
-      await Promise.all([
-        supabase.from('results').delete().eq('session_id', selectedSession.id),
-        externalSupabase.from('results').delete().eq('session_id', selectedSession.id),
-      ]);
+      await supabase.from('results').delete().eq('session_id', selectedSession.id);
 
       toast.success('Student can now continue the exam. They will resume from where they left off.');
       fetchData();
@@ -348,10 +257,12 @@ const SessionManagement = () => {
 
     try {
       // Call the edge function to properly grade and end the exam, instead of just updating the table
-      const { data, error } = await invokeExternalFunction<any>('submit-exam', {
-        session_id: selectedSession.id,
-        is_auto_submit: false, 
-        is_terminated_by_admin: true,
+      const { data, error } = await supabase.functions.invoke<any>('submit-exam', {
+        body: {
+          session_id: selectedSession.id,
+          is_auto_submit: false, 
+          is_terminated_by_admin: true,
+        }
       });
 
       if (error) {

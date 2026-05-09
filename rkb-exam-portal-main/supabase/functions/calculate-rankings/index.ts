@@ -17,28 +17,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const internalUrl = Deno.env.get('SUPABASE_URL');
-    const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    if (!internalUrl || !internalKey) {
-      console.error('[CALCULATE-RANKINGS] Missing internal Supabase secrets');
-      return new Response(
-        JSON.stringify({ error: 'Backend secrets not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const internalSupabase = createClient(internalUrl, internalKey);
-    
-    // Support external project if configured
-    const useExternal = !!(externalUrl && externalKey && externalUrl !== internalUrl);
-    const supabase = useExternal 
-      ? createClient(externalUrl, externalKey) 
-      : internalSupabase;
-
-    console.log('[CALCULATE-RANKINGS] Target Project:', useExternal ? 'EXTERNAL' : 'INTERNAL');
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    console.log('[CALCULATE-RANKINGS] Using Portal Database');
 
     const data: CalculateRankingsData = await req.json();
     console.log('[CALCULATE-RANKINGS] Data:', data);

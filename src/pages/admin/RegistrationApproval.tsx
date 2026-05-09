@@ -7,8 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { supabase as internalSupabase } from '@/integrations/supabase/client';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   Table,
@@ -125,7 +124,7 @@ const RegistrationApproval = () => {
         return data || [];
       };
 
-      const internalExams = await fetchExams(internalSupabase);
+      const internalExams = await fetchExams(supabase);
       setExams(internalExams);
 
       const examsMap = new Map<string, any>();
@@ -147,7 +146,7 @@ const RegistrationApproval = () => {
         return { data: data || [], error };
       };
 
-      const internalRegs = await fetchRegs(internalSupabase);
+      const internalRegs = await fetchRegs(supabase);
       const allRegs = internalRegs.data;
       const studentIds = Array.from(new Set(allRegs.map(r => r.student_id).filter(Boolean)));
 
@@ -160,7 +159,7 @@ const RegistrationApproval = () => {
         return data || [];
       };
 
-      const internalProfiles = await fetchProfiles(internalSupabase);
+      const internalProfiles = await fetchProfiles(supabase);
       const profilesMap = new Map<string, any>();
       internalProfiles.forEach(p => {
         if (!profilesMap.has(p.id)) profilesMap.set(p.id, p);
@@ -223,7 +222,7 @@ const RegistrationApproval = () => {
       }
 
       // Update internal DB
-      const { error } = await internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
+      const { error } = await supabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
 
       if (error) {
         toast.error(`Failed to ${actionType} registration`);
@@ -243,9 +242,11 @@ const RegistrationApproval = () => {
             `[APPROVAL] Triggering approval email for ${selectedRegistration.full_name} (${selectedRegistration.id})`
           );
 
-          const emailPromise = invokeExternalFunction('finalize-registration', {
-            type: 'registration_approved',
-            registration_id: selectedRegistration.id,
+          const emailPromise = supabase.functions.invoke('finalize-registration', {
+            body: {
+              type: 'registration_approved',
+              registration_id: selectedRegistration.id,
+            }
           });
 
           const timeoutPromise = new Promise<{ data: unknown; error: Error }>((resolve) =>
@@ -290,7 +291,7 @@ const RegistrationApproval = () => {
       updateData.exam_login_enabled = true;
     }
 
-    const { error } = await internalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
+    const { error } = await supabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
 
     if (error) {
       setIsProcessing(false);
@@ -310,9 +311,11 @@ const RegistrationApproval = () => {
         if (!shouldNotify) return { regId, success: true, skipped: true };
         
         try {
-          const { data, error } = await invokeExternalFunction('finalize-registration', {
-            type: 'registration_approved',
-            registration_id: regId,
+          const { data, error } = await supabase.functions.invoke('finalize-registration', {
+            body: {
+              type: 'registration_approved',
+              registration_id: regId,
+            }
           });
           return { regId, success: !error, error, skipped: false };
         } catch (err) {
@@ -346,7 +349,7 @@ const RegistrationApproval = () => {
   const toggleExamLogin = async (registration: Registration) => {
     const newStatus = !registration.exam_login_enabled;
     
-    const { error } = await internalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
+    const { error } = await supabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to toggle exam login');
@@ -366,7 +369,7 @@ const RegistrationApproval = () => {
     const dob = new Date(registration.date_of_birth);
     const newPassword = format(dob, 'ddMMyy');
 
-    const { error } = await internalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
+    const { error } = await supabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to regenerate password');
@@ -381,10 +384,12 @@ const RegistrationApproval = () => {
     setIsProcessing(true);
     toast.info(`Sending approval email to ${registration.full_name}...`);
     try {
-      const { error } = await invokeExternalFunction('finalize-registration', {
-        type: 'registration_approved',
-        registration_id: registration.id,
-        force_resend: true
+      const { error } = await supabase.functions.invoke('finalize-registration', {
+        body: {
+          type: 'registration_approved',
+          registration_id: registration.id,
+          force_resend: true
+        }
       });
       if (error) throw error;
       toast.success('Approval email sent successfully!');
@@ -400,9 +405,11 @@ const RegistrationApproval = () => {
     setIsProcessing(true);
     toast.info(`Sending exam reminder to ${registration.full_name}...`);
     try {
-      const { error } = await invokeExternalFunction('finalize-registration', {
-        type: 'exam_reminder',
-        registration_id: registration.id,
+      const { error } = await supabase.functions.invoke('finalize-registration', {
+        body: {
+          type: 'exam_reminder',
+          registration_id: registration.id,
+        }
       });
       if (error) throw error;
       toast.success('Exam reminder sent successfully!');

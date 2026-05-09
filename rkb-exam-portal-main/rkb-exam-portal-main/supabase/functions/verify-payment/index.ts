@@ -61,14 +61,8 @@ Deno.serve(async (req) => {
       ? "https://sandbox.cashfree.com"
       : "https://api.cashfree.com";
 
-    const externalUrl = Deno.env.get("EXTERNAL_SUPABASE_URL");
-    const externalKey = Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY");
-    const internalUrl = Deno.env.get("SUPABASE_URL");
-    const internalKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    // Use external if available, otherwise fallback to internal
-    const supabaseUrl = externalUrl || internalUrl;
-    const supabaseKey = externalKey || internalKey;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !supabaseKey) {
       throw new Error("Supabase credentials not configured");
@@ -110,8 +104,25 @@ Deno.serve(async (req) => {
       console.log("Extracted regId from orderId:", regId);
     }
 
+    const fetchWithTimeout = async (url: string, options: any, timeout = 10000) => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      try {
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal,
+        });
+        clearTimeout(id);
+        return response;
+      } catch (e) {
+        clearTimeout(id);
+        throw e;
+      }
+    };
+
     async function fetchOrder(baseUrl: string) {
-      const res = await fetch(`${baseUrl}/pg/orders/${orderId}`, {
+      console.log(`Fetching order from ${baseUrl}...`);
+      const res = await fetchWithTimeout(`${baseUrl}/pg/orders/${orderId}`, {
         method: "GET",
         headers: {
           "x-client-id": appId,
@@ -129,24 +140,67 @@ Deno.serve(async (req) => {
       return { res, text, json };
     }
 
-    // Fetch order status from Cashfree (try both prod & sandbox to avoid env mismatch)
-    console.log("Fetching Cashfree order:", orderId, { primaryBaseUrl });
-    let cf = await fetchOrder(primaryBaseUrl);
-    console.log("Cashfree response (primary):", cf.res.status, cf.text);
-
-    if (!cf.res.ok) {
-      console.log("Retrying Cashfree order on secondary base URL:", {
-        secondaryBaseUrl,
+    async function fetchPayments(baseUrl: string) {
+      console.log(`Fetching payments from ${baseUrl}...`);
+      const payRes = await fetchWithTimeout(`${baseUrl}/pg/orders/${orderId}/payments`, {
+        method: "GET",
+        headers: {
+          "x-client-id": appId,
+          "x-client-secret": secretKey,
+          "x-api-version": "2023-08-01",
+        },
       });
-      const cf2 = await fetchOrder(secondaryBaseUrl);
-      console.log("Cashfree response (secondary):", cf2.res.status, cf2.text);
-      if (cf2.res.ok) {
-        cf = cf2;
+      let json: any = null;
+      try {
+        json = await payRes.json();
+      } catch {
+        // ignore
       }
+      return { payRes, json };
     }
 
-    const orderData = cf.json;
-    if (!cf.res.ok || !orderData) {
+    // Fetch order status and payments from Cashfree in parallel
+    console.log("Fetching Cashfree data for order:", orderId);
+    let orderData: any = null;
+    let paymentsList: any[] = [];
+    let cfStatus = 0;
+
+    try {
+      const [cf, pay] = await Promise.all([
+        fetchOrder(primaryBaseUrl),
+        fetchPayments(primaryBaseUrl)
+      ]);
+
+      if (cf.res.ok) {
+        orderData = cf.json;
+        paymentsList = Array.isArray(pay.json)
+          ? pay.json
+          : Array.isArray(pay.json?.payments)
+            ? pay.json.payments
+            : [];
+        cfStatus = cf.res.status;
+      } else {
+        console.log("Primary URL failed, retrying with secondary...");
+        const [cf2, pay2] = await Promise.all([
+          fetchOrder(secondaryBaseUrl),
+          fetchPayments(secondaryBaseUrl)
+        ]);
+        if (cf2.res.ok) {
+          orderData = cf2.json;
+          paymentsList = Array.isArray(pay2.json)
+            ? pay2.json
+            : Array.isArray(pay2.json?.payments)
+              ? pay2.json.payments
+              : [];
+          cfStatus = cf2.res.status;
+        }
+      }
+    } catch (e) {
+      console.error("Cashfree fetch error:", e);
+    }
+
+    if (!orderData) {
+      console.log("No order data found from Cashfree");
       // Don't hard-fail to "failed" if gateway verification is temporarily unavailable.
       // If DB already has completed, trust it. Otherwise treat as pending.
       if (regId) {
@@ -164,9 +218,7 @@ Deno.serve(async (req) => {
         success: true,
         order_id: orderId,
         payment_status: "pending",
-        error:
-          (orderData?.message as string) ||
-          "Payment verification temporarily unavailable",
+        error: "Payment verification temporarily unavailable (Gateway Timeout)",
       });
     }
 
@@ -185,59 +237,34 @@ Deno.serve(async (req) => {
     if (regId) {
       const updateData: Record<string, unknown> = {};
 
-      // Fetch transaction ID from payments endpoint
-      try {
-        async function fetchPayments(baseUrl: string) {
-          const payRes = await fetch(`${baseUrl}/pg/orders/${orderId}/payments`, {
-            method: "GET",
-            headers: {
-              "x-client-id": appId,
-              "x-client-secret": secretKey,
-              "x-api-version": "2023-08-01",
-            },
-          });
-          let json: any = null;
-          try {
-            json = await payRes.json();
-          } catch {
-            // ignore
-          }
-          return { payRes, json };
+      if (paymentsList.length > 0) {
+        const success = paymentsList.find((p: any) => p.payment_status === "SUCCESS");
+        const failed = paymentsList.find((p: any) =>
+          ["FAILED", "CANCELLED", "USER_DROPPED"].includes(p.payment_status)
+        );
+
+        if (success) {
+          updateData.transaction_id = success.cf_payment_id?.toString();
+          paymentStatus = "completed";
+        } else if (paymentStatus !== "completed" && failed && orderStatus !== "PAID") {
+          paymentStatus = "failed";
         }
-
-        let pay = await fetchPayments(primaryBaseUrl);
-        if (!pay.payRes.ok) {
-          pay = await fetchPayments(secondaryBaseUrl);
-        }
-
-        const paymentsList = Array.isArray(pay.json)
-          ? pay.json
-          : Array.isArray(pay.json?.payments)
-            ? pay.json.payments
-            : [];
-
-        if (paymentsList.length > 0) {
-          const success = paymentsList.find((p: any) => p.payment_status === "SUCCESS");
-          const failed = paymentsList.find((p: any) =>
-            ["FAILED", "CANCELLED", "USER_DROPPED"].includes(p.payment_status)
-          );
-
-          if (success) {
-            updateData.transaction_id = success.cf_payment_id?.toString();
-            paymentStatus = "completed";
-          } else if (paymentStatus !== "completed" && failed && orderStatus !== "PAID") {
-            // Only mark failed when gateway clearly says so
-            paymentStatus = "failed";
-          }
-        }
-      } catch (e) {
-        console.log("Could not fetch payment details:", e);
       }
 
       // Ensure DB update matches the FINAL derived status
-      updateData.payment_status = paymentStatus;
+      updateData.payment_status = paymentStatus === 'completed' ? 'success' : paymentStatus;
       if (paymentStatus === "completed") {
         updateData.payment_time = new Date().toISOString();
+        
+        // Auto-approve if exam doesn't require manual approval (treating null as false/auto-approve)
+        const regWithExam = await fetchRegistrationDetails(supabase, regId);
+        if (regWithExam?.exams?.approval_required !== true) {
+          console.log("Auto-approving registration", regId);
+          updateData.approval_status = 'approved';
+          updateData.exam_login_enabled = true;
+          updateData.approved_at = new Date().toISOString();
+          updateData.approval_remarks = 'Auto-approved upon successful payment';
+        }
       }
 
       console.log("Updating registration", regId, updateData);
@@ -250,15 +277,17 @@ Deno.serve(async (req) => {
         console.error("DB update error:", updateErr);
       }
 
-      // Trigger email on success
+      // Trigger email on success - NON-BLOCKING
       if (paymentStatus === "completed") {
-        try {
-          await supabase.functions.invoke("send-notification-email", {
-            body: { type: "payment_success", registration_id: regId },
-          });
-        } catch (e) {
-          console.error("Email error:", e);
-        }
+        console.log("Triggering confirmation email (async)...");
+        // We don't await this to ensure the user gets a response quickly
+        supabase.functions.invoke("finalize-registration", {
+          body: { type: "payment_success", registration_id: regId },
+        }).then(({ data, error }) => {
+           console.log("Async email trigger result:", { success: !error, error });
+        }).catch(e => {
+           console.error("Async email trigger exception:", e);
+        });
       }
     }
 
@@ -281,26 +310,16 @@ Deno.serve(async (req) => {
 
     // Fallback: if DB already shows completed payment, still return success
     try {
-      const externalUrl = Deno.env.get("EXTERNAL_SUPABASE_URL");
-      const externalKey = Deno.env.get("EXTERNAL_SUPABASE_SERVICE_ROLE_KEY");
-
-      if (externalUrl && externalKey && (order_id || registration_id)) {
-        const supabase = createClient(externalUrl, externalKey);
-
+      if (order_id || registration_id) {
         let regId = registration_id;
         if (!regId && order_id) {
           regId = extractRegistrationId(order_id);
-          console.log("Fallback extracted regId from orderId:", regId);
         }
 
         if (regId) {
           const registration = await fetchRegistrationDetails(supabase, regId);
 
-          // If DB already has completed payment, trust that state
           if (registration && registration.payment_status === "completed") {
-            console.log(
-              "Fallback: registration already marked completed in DB, returning success"
-            );
             return jsonResponse({
               success: true,
               order_id: order_id ?? registration.cashfree_order_id ?? null,
@@ -325,9 +344,9 @@ async function fetchRegistrationDetails(supabase: any, regId: string) {
     const { data, error } = await supabase
       .from("registrations")
       .select(
-        `id, registration_number, payment_amount, payment_time, transaction_id, payment_status, cashfree_order_id,
+        `id, registration_number, payment_amount, payment_time, transaction_id, payment_status, cashfree_order_id, approval_status, approval_required,
          profiles:student_id(full_name, email, mobile),
-         exams:exam_id(exam_name, exam_code, exam_date)`
+         exams:exam_id(exam_name, exam_code, exam_date, approval_required)`
       )
       .eq("id", regId)
       .single();

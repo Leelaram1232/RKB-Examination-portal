@@ -21,21 +21,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Create clients
-    const internalSupabase = createClient(internalUrl, internalKey);
-    let externalSupabase = null;
-    if (externalUrl && externalKey) {
-      externalSupabase = createClient(externalUrl, externalKey);
-    }
-
-    // Determine primary client (where registrations live)
-    const primaryClient = externalSupabase || internalSupabase;
-    console.log('[save-answer] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+    // Create primary client (where registrations live)
+    const primaryClient = createClient(internalUrl, internalKey);
+    console.log('[save-answer] Using Portal Database');
 
     const body: SaveAnswerRequest = await req.json();
     
@@ -100,12 +91,12 @@ Deno.serve(async (req) => {
 
     // Step 2: Check if answer already exists
     console.log('[save-answer] Step 2: Checking for existing answer...');
-    const { data: existingAnswer, error: existingError } = await primaryClient
+    const { data: existingAnswers, error: existingError } = await primaryClient
       .from('student_answers')
       .select('id')
       .eq('session_id', body.session_id)
       .eq('question_id', body.question_id)
-      .maybeSingle();
+      .limit(1);
 
     if (existingError) {
       console.error('ERROR: Existing answer query failed:', existingError);
@@ -114,6 +105,8 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const existingAnswer = existingAnswers && existingAnswers.length > 0 ? existingAnswers[0] : null;
 
     const now = new Date().toISOString();
 

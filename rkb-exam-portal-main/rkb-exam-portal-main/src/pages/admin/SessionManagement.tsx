@@ -44,7 +44,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Json } from '@/integrations/supabase/types';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase as externalSupabase, invokeExternalFunction } from '@/lib/supabase';
 
 interface ExamSession {
   id: string;
@@ -742,3 +742,4 @@ const SessionManagement = () => {
 };
 
 export default SessionManagement;
+

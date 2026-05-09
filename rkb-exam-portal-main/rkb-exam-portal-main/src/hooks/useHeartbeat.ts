@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase as externalSupabase } from '@/lib/supabase';
 
 interface UseHeartbeatOptions {
   sessionId: string | undefined;
@@ -42,3 +42,4 @@ export const useHeartbeat = ({
     };
   }, [sessionId, interval, enabled]);
 };
+

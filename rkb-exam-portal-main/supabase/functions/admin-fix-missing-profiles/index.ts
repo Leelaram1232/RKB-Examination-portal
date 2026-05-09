@@ -11,15 +11,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // External Supabase credentials (where the actual data and auth lives)
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL')!;
-    const externalAnonKey = Deno.env.get('EXTERNAL_SUPABASE_ANON_KEY')!;
-    const externalServiceKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY')!;
+    const internalUrl = Deno.env.get('SUPABASE_URL')!;
+    const internalAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const internalServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    if (!externalUrl || !externalServiceKey) {
-      console.error('Missing external Supabase credentials');
+    if (!internalUrl || !internalServiceKey) {
+      console.error('Missing Supabase credentials');
       return new Response(
-        JSON.stringify({ error: 'External database not configured' }),
+        JSON.stringify({ error: 'Database not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
@@ -27,7 +26,7 @@ Deno.serve(async (req) => {
     // 1) Validate caller using external Supabase auth
     const authHeader = req.headers.get('Authorization') || '';
 
-    const authClient = createClient(externalUrl, externalAnonKey, {
+    const authClient = createClient(internalUrl, internalAnonKey, {
       global: {
         headers: {
           Authorization: authHeader,
@@ -46,8 +45,8 @@ Deno.serve(async (req) => {
 
     const userId = userData.user.id;
 
-    // 2) Use external service client for privileged ops (bypass RLS)
-    const service = createClient(externalUrl, externalServiceKey);
+    // 2) Use service client for privileged ops (bypass RLS)
+    const service = createClient(internalUrl, internalServiceKey);
 
     // Check admin role on external Supabase
     const { data: isAdmin, error: roleError } = await service.rpc('has_role', {

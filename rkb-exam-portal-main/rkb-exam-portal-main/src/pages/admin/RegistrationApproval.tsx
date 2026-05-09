@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { externalSupabase as supabase, invokeExternalFunction } from '@/lib/supabase';
 import { toast } from 'sonner';
 import {
   Table,
@@ -1108,3 +1108,4 @@ const RegistrationApproval = () => {
 };
 
 export default RegistrationApproval;
+

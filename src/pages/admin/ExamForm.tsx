@@ -45,6 +45,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { CalendarIcon } from 'lucide-react';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 interface Subject {
   id: string;
@@ -260,6 +261,7 @@ const ExamForm = () => {
   }, [id, form, navigate]);
 
   const onSubmit = async (data: ExamFormData) => {
+    console.log('[ExamForm] Raw form data:', data);
     setIsLoading(true);
 
     const examData = {
@@ -294,11 +296,11 @@ const ExamForm = () => {
       screen_recording_enabled: data.screen_recording_enabled,
       liberty_level: data.liberty_level,
       registration_type: data.registration_type,
-      registration_amount: data.registration_amount,
+      registration_amount: data.registration_type === 'paid' ? Number(data.registration_amount) : 0,
     };
 
     console.log('[ExamForm] Submitting examData:', examData);
-    console.log('[ExamForm] Type:', examData.registration_type, 'Amount:', examData.registration_amount);
+    console.log('[ExamForm] Registration Type:', examData.registration_type, 'Amount:', examData.registration_amount);
     let error;
     let examId = id;
 
@@ -306,7 +308,8 @@ const ExamForm = () => {
       const result = await supabase
         .from('exams')
         .update(examData)
-        .eq('id', id);
+        .eq('id', id)
+        .select();
       console.log('[ExamForm] Update result:', result);
       error = result.error;
     } else {
@@ -610,7 +613,12 @@ const ExamForm = () => {
                             <FormItem>
                               <FormLabel>Amount (₹)</FormLabel>
                               <FormControl>
-                                <Input type="number" min={0} {...field} />
+                                <Input 
+                                  type="number" 
+                                  min={0} 
+                                  {...field} 
+                                  onChange={(e) => field.onChange(e.target.value === '' ? 0 : Number(e.target.value))}
+                                />
                               </FormControl>
                               <FormMessage />
                             </FormItem>

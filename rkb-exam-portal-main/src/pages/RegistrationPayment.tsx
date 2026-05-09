@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase as externalSupabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Loader2, CreditCard, IndianRupee, Shield, CheckCircle2, ArrowLeft } from 'lucide-react';
@@ -337,3 +337,4 @@ const RegistrationPayment = () => {
 };
 
 export default RegistrationPayment;
+

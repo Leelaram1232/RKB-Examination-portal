@@ -22,9 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { externalSupabase } from '@/lib/externalSupabase';
 import { Room, RemoteParticipant, RemoteTrackPublication } from 'livekit-client';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
 import { cn } from '@/lib/utils';
 
 interface ActiveSession {
@@ -77,123 +75,57 @@ const LiveMonitoring = () => {
     console.log('[LiveMonitoring] Starting robust data fetch for exam:', examId);
 
     try {
-      // 1. Fetch exam details first
+      // 1. Fetch exam details
       const { data: examData, error: examError } = await supabase
         .from('exams')
         .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
         .eq('id', examId)
         .maybeSingle();
 
-      if (examData) {
-        setExam(examData);
-      } else {
-        // Try external
-        const { data: extExamData } = await externalSupabase
-          .from('exams')
-          .select('id, exam_name, exam_code, max_violations, proctoring_enabled, duration_minutes')
-          .eq('id', examId)
-          .maybeSingle();
-        if (extExamData) setExam(extExamData);
-      }
+      if (examError) throw examError;
+      if (examData) setExam(examData);
 
-      // 2. Load registrations and profiles from both databases
-      const fetchRegsAndProfiles = async (client: any, dbName: string) => {
-        try {
-          const { data: regs, error: regErr } = await client
-            .from('registrations')
-            .select('id, registration_number, student_id, exam_id')
-            .eq('exam_id', examId);
+      // 2. Fetch registrations and profiles
+      const { data: regs, error: regErr } = await supabase
+        .from('registrations')
+        .select('id, registration_number, student_id, exam_id')
+        .eq('exam_id', examId);
 
-          if (regErr) {
-            console.error(`[LiveMonitoring] Error fetching registrations from ${dbName}:`, regErr);
-            return { regs: [], profiles: [] };
-          }
-
-          if (!regs || regs.length === 0) {
-            console.log(`[LiveMonitoring] No registrations found in ${dbName}`);
-            return { regs: [], profiles: [] };
-          }
-
-          const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
-          const { data: profiles, error: profErr } = await client
-            .from('profiles')
-            .select('id, full_name, photo_url, email')
-            .in('id', studentIds);
-
-          if (profErr) {
-            console.error(`[LiveMonitoring] Error fetching profiles from ${dbName}:`, profErr);
-            return { regs, profiles: [] };
-          }
-
-          return { regs, profiles };
-        } catch (err) {
-          console.error(`[LiveMonitoring] Unexpected error fetching from ${dbName}:`, err);
-          return { regs: [], profiles: [] };
-        }
-      };
-
-      const [internalData, externalData] = await Promise.all([
-        fetchRegsAndProfiles(supabase, 'INTERNAL'),
-        fetchRegsAndProfiles(externalSupabase, 'EXTERNAL')
-      ]);
-
-      // Merge registrations and profiles
-      const regMap = new Map<string, any>();
-      const profileMap = new Map<string, any>();
-
-      [...internalData.regs, ...externalData.regs].forEach(r => {
-        if (!regMap.has(r.id)) regMap.set(r.id, r);
-      });
-
-      [...internalData.profiles, ...externalData.profiles].forEach(p => {
-        if (!profileMap.has(p.id)) profileMap.set(p.id, p);
-      });
-
-      const allRegIds = Array.from(regMap.keys());
-      console.log(`[LiveMonitoring] Found ${allRegIds.length} total registrations for this exam across both databases.`);
-
-      if (allRegIds.length === 0) {
+      if (regErr) throw regErr;
+      if (!regs || regs.length === 0) {
         setSessions([]);
         setIsLoading(false);
         return;
       }
 
-      // 2. Fetch sessions for these registrations from both databases
-      const fetchSessions = async (client: any, dbName: string) => {
-        try {
-          const { data, error } = await client
-            .from('exam_sessions')
-            .select('id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at')
-            .in('registration_id', allRegIds);
+      const studentIds = Array.from(new Set(regs.map((r: any) => r.student_id)));
+      const { data: profiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, photo_url, email')
+        .in('id', studentIds);
 
-          if (error) {
-            console.error(`[LiveMonitoring] Error fetching sessions from ${dbName}:`, error);
-            return [];
-          }
+      if (profErr) throw profErr;
+      const profileMap = new Map(profiles?.map(p => [p.id, p]));
 
-          // Filter for active/recent sessions
-          return (data || []).filter((s: any) => !s.is_completed || s.is_auto_submitted === true);
-        } catch (err) {
-          console.error(`[LiveMonitoring] Unexpected error fetching sessions from ${dbName}:`, err);
-          return [];
-        }
-      };
+      // 3. Fetch active sessions
+      const { data: activeSessions, error: sessErr } = await supabase
+        .from('exam_sessions')
+        .select('id, registration_id, start_time, is_completed, is_auto_submitted, violation_count, latest_snapshot_url, snapshot_updated_at, latest_screen_url, camera_status, camera_heartbeat_at')
+        .in('registration_id', regs.map(r => r.id))
+        .filter('is_completed', 'eq', false);
 
-      const [internalSessions, externalSessions] = await Promise.all([
-        fetchSessions(supabase, 'INTERNAL'),
-        fetchSessions(externalSupabase, 'EXTERNAL')
-      ]);
+      if (sessErr) throw sessErr;
 
-      console.log(`[LiveMonitoring] Sessions found: Internal=${internalSessions.length}, External=${externalSessions.length}`);
+      const regMap = new Map(regs.map(r => [r.id, r]));
 
-      // 3. Merge and map sessions to final format
-      const mergedSessionsMap = new Map<string, any>();
-      
-      const processSession = (s: any) => {
+      const finalSessions = await Promise.all((activeSessions || []).map(async (s: any) => {
         const reg = regMap.get(s.registration_id);
         const profile = reg ? profileMap.get(reg.student_id) : null;
         
-        const session: ActiveSession = {
+        const snapshotUrl = s.latest_snapshot_url ? await getSignedUrl(supabase, s.latest_snapshot_url) : null;
+        const screenUrl = s.latest_screen_url ? await getSignedUrl(supabase, s.latest_screen_url) : null;
+
+        return {
           id: s.id,
           registration_id: s.registration_id,
           registration: {
@@ -212,42 +144,19 @@ const LiveMonitoring = () => {
           snapshot_updated_at: s.snapshot_updated_at,
           latest_screen_url: s.latest_screen_url,
           camera_status: s.camera_status || 'offline',
-          camera_heartbeat_at: s.camera_heartbeat_at
-        };
-
-        // If duplicate (same session ID in both DBs), prefer the one with more information
-        const existing = mergedSessionsMap.get(s.id);
-        if (!existing || (s.violation_count || 0) >= (existing.violation_count || 0)) {
-          mergedSessionsMap.set(s.id, session);
-        }
-      };
-
-      internalSessions.forEach(processSession);
-      externalSessions.forEach(processSession);
-
-      const finalSessions = Array.from(mergedSessionsMap.values())
-        .sort((a, b) => {
-          const at = a.start_time ? new Date(a.start_time).getTime() : 0;
-          const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
-          return bt - at; // Latest first
-        });
-
-      console.log(`[LiveMonitoring] Final merged active sessions: ${finalSessions.length}`);
-      
-      // 4. Get signed URLs for snapshots/screens
-      const sessionsWithSignedUrls = await Promise.all(finalSessions.map(async (s) => {
-        try {
-          const snapshotUrl = s.latest_snapshot_url ? await getSignedUrl(externalSupabase as any, s.latest_snapshot_url) : null;
-          const screenUrl = s.latest_screen_url ? await getSignedUrl(externalSupabase as any, s.latest_screen_url) : null;
-          return { ...s, snapshotUrl, screenUrl };
-        } catch (e) {
-          return s;
-        }
+          camera_heartbeat_at: s.camera_heartbeat_at,
+          snapshotUrl,
+          screenUrl
+        } as ActiveSession;
       }));
 
-      setSessions(sessionsWithSignedUrls);
+      setSessions(finalSessions.sort((a, b) => {
+        const at = a.start_time ? new Date(a.start_time).getTime() : 0;
+        const bt = b.start_time ? new Date(b.start_time).getTime() : 0;
+        return bt - at;
+      }));
     } catch (error) {
-      console.error('[LiveMonitoring] Fatal error in fetchData:', error);
+      console.error('[LiveMonitoring] Error in fetchData:', error);
       toast.error('Failed to load live sessions');
     } finally {
       setIsLoading(false);
@@ -269,10 +178,12 @@ const LiveMonitoring = () => {
       try {
         if (livekitRoomRef.current) return;
 
-        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
-          exam_id: examId,
-          session_id: `admin-${Date.now()}`,
-          role: 'admin',
+        const { data, error } = await supabase.functions.invoke<any>('get-stream-token', {
+          body: {
+            exam_id: examId,
+            session_id: `admin-${Date.now()}`,
+            role: 'admin',
+          }
         });
         if (error || !data || cancelled) {
           console.error('[LiveKit] get-stream-token error (admin):', error);
@@ -330,33 +241,17 @@ const LiveMonitoring = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'exam_sessions' },
         (payload) => {
-          console.log('Internal Realtime update:', payload);
+          console.log('Realtime update:', payload);
           fetchData();
         }
       )
       .subscribe((status) => {
-        console.log('Internal subscription status:', status);
-        if (status === 'SUBSCRIBED') setIsConnected(true);
-      });
-
-    const externalChannel = externalSupabase
-      .channel('exam-sessions-realtime-ext')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'exam_sessions' },
-        (payload) => {
-          console.log('External Realtime update:', payload);
-          fetchData();
-        }
-      )
-      .subscribe((status) => {
-        console.log('External subscription status:', status);
+        console.log('Subscription status:', status);
         if (status === 'SUBSCRIBED') setIsConnected(true);
       });
 
     return () => {
       supabase.removeChannel(channel);
-      externalSupabase.removeChannel(externalChannel);
     };
   }, [examId]);
 
@@ -385,33 +280,20 @@ const LiveMonitoring = () => {
     const objectPath = extractObjectPath(path, bucket);
     if (!objectPath) return null;
 
-    // Helper to try a specific Supabase client (internal or external) for this object.
-    const tryClient = async (c: typeof supabase | typeof externalSupabase | null) => {
-      if (!c) return null;
-      try {
-        const { data, error } = await (c as any).storage
-          .from(bucket)
-          .createSignedUrl(objectPath, 60 * 5); // 5 minutes
-        if (!error && data?.signedUrl) return data.signedUrl as string;
+    try {
+      const { data, error } = await client.storage
+        .from(bucket)
+        .createSignedUrl(objectPath, 60 * 5); // 5 minutes
+      if (!error && data?.signedUrl) return data.signedUrl as string;
 
-        if (error) {
-          console.warn('Signed URL error for client:', error);
-          const { data: publicData } = (c as any).storage.from(bucket).getPublicUrl(objectPath);
-          return (publicData && (publicData as any).publicUrl) || null;
-        }
-      } catch (e) {
-        console.warn('Signed URL exception for client:', e);
+      if (error) {
+        const { data: publicData } = client.storage.from(bucket).getPublicUrl(objectPath);
+        return publicData?.publicUrl || null;
       }
-      return null;
-    };
-
-    // First try the provided client, then fall back to the "other" Supabase project.
-    const primary = await tryClient(client);
-    if (primary) return primary;
-
-    const isPrimaryExternal = (client as any) === (externalSupabase as any);
-    const secondary = await tryClient(isPrimaryExternal ? supabase : (externalSupabase as any));
-    return secondary;
+    } catch (e) {
+      console.warn('Signed URL exception:', e);
+    }
+    return null;
   };
 
   const getViolationColor = (count: number, max: number) => {

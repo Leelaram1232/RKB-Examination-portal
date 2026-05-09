@@ -27,7 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
 import { parseQuestionText } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
+import { invokeExternalFunction } from '@/lib/supabase';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -1286,3 +1286,4 @@ export default function AIQuestionAssistant() {
     </AdminLayout>
   );
 }
+

@@ -109,21 +109,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Create clients
-    const internalSupabase = createClient(internalUrl, internalKey);
-    let externalSupabase = null;
-    if (externalUrl && externalKey) {
-      externalSupabase = createClient(externalUrl, externalKey);
-    }
-
-    // Determine primary client (where registrations live)
-    const primaryClient = externalSupabase || internalSupabase;
-    console.log('[exam-login] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+    // Create client
+    const primaryClient = createClient(internalUrl, internalKey);
+    console.log('[exam-login] Using Portal Database');
 
     const rawBody = await req.text();
     if (!rawBody) throw new Error('Empty request body');
@@ -194,8 +185,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch exam details from external DB (or primary if not split)
-    const examClient = externalSupabase || primaryClient;
+    // Fetch exam details from primary DB
+    const examClient = primaryClient;
     const { data: exam, error: examError } = await examClient
       .from('exams')
       .select(`
@@ -262,8 +253,8 @@ Deno.serve(async (req) => {
       .eq('registration_id', registration.id)
       .maybeSingle();
 
-    // Fetch questions from External DB (or primary if not split)
-    const questionsClient = externalSupabase || primaryClient;
+    // Fetch questions from primary DB
+    const questionsClient = primaryClient;
     const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
       .select('id, question_number, question_text, option_a, option_b, option_c, option_d, section_name, marks, image_url, subject_id, question_type, correct_answer, subjects(id, name, code)')

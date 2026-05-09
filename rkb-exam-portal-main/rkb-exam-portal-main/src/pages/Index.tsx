@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PublicLayout } from '@/components/layout/PublicLayout';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase as externalSupabase } from '@/lib/supabase';
 
 interface Exam {
   id: string;
@@ -340,3 +340,4 @@ const Index = () => {
 };
 
 export default Index;
+

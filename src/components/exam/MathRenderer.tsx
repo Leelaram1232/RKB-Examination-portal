@@ -20,36 +20,61 @@ export function containsLatex(text: string): boolean {
 
 // Parse and render text with LaTeX
 export function MathRenderer({ content, className = '' }: MathRendererProps) {
+  if (!content) return null;
+
   // If LaTeX came through JSON, some commands like `\frac` (`\f`) or `\rho` (`\r`)
   // can be converted into control characters. Map them back so KaTeX can parse.
-  const normalizedContent = (content || '')
+  const normalizedContent = content
     .replace(/\u0008/g, '\\b')
     .replace(/\u000c/g, '\\f')
     .replace(/\u000d/g, '\\r')
     .replace(/\u0009/g, '\\t')
     .replace(/\u000b/g, '\\v');
 
-  // Check for block math first
-  if (normalizedContent.includes('$$')) {
-    const parts = normalizedContent.split(/(\$\$[^$]+\$\$)/g);
-    return (
-      <span className={className}>
-        {parts.map((part, index) => {
-          if (part.startsWith('$$') && part.endsWith('$$')) {
-            const math = part.slice(2, -2);
-            try {
-              return <BlockMath key={index} math={math} />;
-            } catch (e) {
-              return <span key={index}>{part}</span>;
-            }
-          }
-          return <InlineTextWithMath key={index} text={part} />;
-        })}
-      </span>
-    );
+  // Regex to match various LaTeX delimiters:
+  // 1. $$ ... $$ (display math)
+  // 2. \[ ... \] (display math)
+  // 3. $ ... $ (inline math)
+  // 4. \( ... \) (inline math)
+  const regex = /(\$\$(?:[^\$]|\$[^$])+\$\$|\\\[[\s\S]*?\\\]|\$(?:[^\$]|\$[^$])+\$|\\\x28[\s\S]*?\\\x29)/g;
+  
+  const parts = normalizedContent.split(regex);
+  
+  if (parts.length <= 1) {
+    // If no delimiters found, try the legacy InlineTextWithMath for naked commands/powers
+    return <InlineTextWithMath text={normalizedContent} className={className} />;
   }
 
-  return <InlineTextWithMath text={normalizedContent} className={className} />;
+  return (
+    <span className={className}>
+      {parts.map((part, index) => {
+        if (!part) return null;
+
+        // Display math: $$...$$ or \[...\]
+        if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\[') && part.endsWith('\\]'))) {
+          let math = part.startsWith('$$') ? part.slice(2, -2) : part.slice(2, -2);
+          try {
+            return <BlockMath key={index} math={math} />;
+          } catch (e) {
+            return <span key={index}>{part}</span>;
+          }
+        }
+
+        // Inline math: $...$ or \(...\)
+        if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\(') && part.endsWith('\\)'))) {
+          let math = part.startsWith('$') ? part.slice(1, -1) : part.slice(2, -2);
+          try {
+            return <InlineMath key={index} math={math} />;
+          } catch (e) {
+            return <span key={index}>{part}</span>;
+          }
+        }
+
+        // Plain text (still check for naked commands)
+        return <InlineTextWithMath key={index} text={part} />;
+      })}
+    </span>
+  );
 }
 
 // Render inline math within text
@@ -57,14 +82,13 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
   if (!text) return null;
 
   // Split by:
-  // 1. $...$ (standard inline math)
-  // 2. word^word or word_word (naked powers/subscripts)
-  // 3. LaTeX commands starting with \
+  // 1. word^word or word_word (naked powers/subscripts)
+  // 2. LaTeX commands starting with \ (e.g. \alpha, \sqrt{...})
   const parts: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   
-  // This regex finds math-like segments
-  const regex = /(\$[^$]+\$|(?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b)|(?:\\[a-zA-Z]+(?:\{[^}]*\})?))/g;
+  // This regex finds math-like segments that aren't wrapped in delimiters
+  const regex = /((?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b)|(?:\\[a-zA-Z]+(?:\{[^}]*\})?))/g;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
@@ -73,12 +97,7 @@ function InlineTextWithMath({ text, className = '' }: { text: string; className?
       parts.push(text.slice(lastIndex, match.index));
     }
     
-    let math = match[0];
-    const isWrapped = math.startsWith('$') && math.endsWith('$');
-    
-    if (isWrapped) {
-      math = math.slice(1, -1);
-    }
+    const math = match[0];
     
     try {
       parts.push(<InlineMath key={match.index} math={math} />);

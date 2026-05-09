@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { CalendarIcon, ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase as externalSupabase, invokeExternalFunction } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -630,3 +630,4 @@ export default function ExamRegistration() {
     </PublicLayout>
   );
 }
+

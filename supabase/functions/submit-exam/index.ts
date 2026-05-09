@@ -22,21 +22,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Create clients
+    // Create client
     const supabase = createClient(internalUrl, internalKey);
-    let null = null;
-    if (externalUrl && externalKey) {
-      null = createClient(externalUrl, externalKey);
-    }
-
-    // Determine primary client (where registrations live)
-    const supabase = null || supabase;
-    console.log('[submit-exam] Using Database:', null ? 'EXTERNAL' : 'INTERNAL');
+    console.log('[submit-exam] Using Portal Database');
 
     const data: SubmitExamData = await req.json();
     console.log('[submit-exam] Parsed Data:', { 
@@ -154,7 +145,7 @@ Deno.serve(async (req) => {
     }
 
     // Get all questions for this exam with section_name for section-wise scoring
-    const questionsClient = null || supabase;
+    const questionsClient = supabase;
     const { data: questions, error: questionsError } = await questionsClient
       .from('questions')
       .select('id, correct_option, correct_answer, marks, section_name, question_type')

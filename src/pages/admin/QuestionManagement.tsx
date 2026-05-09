@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image, ListOrdered } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowLeft, Save, Loader2, Upload, CheckSquare, Settings2, BrainCircuit, Image, ListOrdered, GripVertical } from 'lucide-react';
+import { Reorder, useDragControls } from 'framer-motion';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -9,7 +11,6 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { invokeExternalFunction } from '@/lib/externalSupabase';
 import {
   Table,
   TableBody,
@@ -142,6 +143,8 @@ const QuestionManagement = () => {
   const mouseYRef = useRef<number>(0);
   const [isReordering, setIsReordering] = useState(false);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const [hasOrderChanged, setHasOrderChanged] = useState(false);
+
 
   // AI Review state
   const [isReviewingAI, setIsReviewingAI] = useState(false);
@@ -476,6 +479,42 @@ const QuestionManagement = () => {
     }
   };
 
+  const handleSaveNewOrder = async () => {
+    if (!selectedExamId) return;
+    
+    setIsReordering(true);
+    try {
+      // Update each question's number based on its index in the current state
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        const newNumber = i + 1;
+        
+        // Only update if the number actually changed
+        if (q.question_number !== newNumber) {
+          const { error } = await supabase
+            .from('questions')
+            .update({ question_number: newNumber })
+            .eq('id', q.id);
+            
+          if (error) {
+            console.error(`Error updating question ${q.id}:`, error);
+            throw error;
+          }
+        }
+      }
+      
+      toast.success('New order saved successfully');
+      setHasOrderChanged(false);
+      // Refresh to ensure everything is in sync
+      await fetchExamAndQuestions(selectedExamId);
+    } catch (error) {
+      console.error('Save order error:', error);
+      toast.error('Failed to save the new order');
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
   const handleAIReview = async () => {
     if (questions.length === 0) {
       toast.error('No questions to review');
@@ -497,15 +536,17 @@ const QuestionManagement = () => {
         correct_answer: q.correct_answer,
       }));
 
-      const { data, error } = await invokeExternalFunction<any>('ai-question-assistant', {
-        action: 'review',
-        messages: [
-          {
-            role: 'user',
-            content: `Please review these questions for mistakes based on the system prompt instructions.\n\n${JSON.stringify(payload)}`
-          }
-        ],
-        exam_id: selectedExamId
+      const { data, error } = await supabase.functions.invoke<any>('ai-question-assistant', {
+        body: {
+          action: 'review',
+          messages: [
+            {
+              role: 'user',
+              content: `Please review these questions for mistakes based on the system prompt instructions.\n\n${JSON.stringify(payload)}`
+            }
+          ],
+          exam_id: selectedExamId
+        }
       });
 
       if (error) throw error;
@@ -937,7 +978,13 @@ const QuestionManagement = () => {
                     {questions.length > 0 && (
                       <Button variant="outline" onClick={handleManualReorder} disabled={isReordering} className="flex-1 xl:flex-none">
                         {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ListOrdered className="w-4 h-4 mr-2" />}
-                        Reorder
+                        Auto-Fix Numbers
+                      </Button>
+                    )}
+                    {hasOrderChanged && (
+                      <Button onClick={handleSaveNewOrder} disabled={isReordering} className="flex-1 xl:flex-none bg-green-600 hover:bg-green-700">
+                        {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                        Save Order
                       </Button>
                     )}
                     <Button onClick={openAddDialog} className="flex-1 xl:flex-none">
@@ -960,6 +1007,7 @@ const QuestionManagement = () => {
                       <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-10"></TableHead>
                           <TableHead className="w-12">
                             <Checkbox
                               checked={selectedQuestionIds.size === questions.length && questions.length > 0}
@@ -975,99 +1023,36 @@ const QuestionManagement = () => {
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
-                      <TableBody>
+                      <Reorder.Group 
+                        axis="y" 
+                        values={questions} 
+                        onReorder={(newOrder) => {
+                          setQuestions(newOrder);
+                          setHasOrderChanged(true);
+                        }} 
+                        as="tbody"
+                        className="[&_tr:last-child]:border-0"
+                      >
                         {questions.map((question, index) => {
                           const questionSubject = subjects.find(s => s.id === question.subject_id);
                           return (
-                            <TableRow 
+                            <QuestionRow 
                               key={question.id}
-                              className={cn(
-                                "transition-colors cursor-default select-none",
-                                selectedQuestionIds.has(question.id) ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/50'
-                              )}
-                              onMouseEnter={() => onMouseEnterRow(question.id, index)}
-                            >
-                              <TableCell className="w-12">
-                                <div 
-                                  className="flex items-center justify-center h-full w-full py-3"
-                                  onMouseDown={(e) => {
-                                    // Don't start drag if clicking the checkbox directly (let handleSelectQuestion handle it)
-                                    // but we want to allow dragging from the cell
-                                    startDragSelection(question.id, selectedQuestionIds.has(question.id), index);
-                                  }}
-                                >
-                                  <Checkbox
-                                    checked={selectedQuestionIds.has(question.id)}
-                                    onCheckedChange={(checked) => {
-                                      // Note: native Event is not available in onCheckedChange, 
-                                      // so we might need a workaround for shift-click or just use onMouseDown
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleSelectQuestion(question.id, !selectedQuestionIds.has(question.id), index, e.shiftKey);
-                                    }}
-                                  />
-                                </div>
-                              </TableCell>
-                              <TableCell className="font-medium">{question.question_number}</TableCell>
-                              <TableCell className="max-w-md">
-                                <MathRenderer content={question.question_text} />
-                              </TableCell>
-                              <TableCell>
-                                {questionSubject ? (
-                                  <span className="text-xs bg-secondary px-2 py-1 rounded">
-                                    {questionSubject.name}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">-</span>
-                                )}
-                              </TableCell>
-                              <TableCell>{question.section_name}</TableCell>
-                              <TableCell>
-                                <span className="font-mono bg-primary/10 text-primary px-2 py-1 rounded">
-                                  {question.question_type === 'NUMERICAL'
-                                    ? (question.correct_answer ?? '-')
-                                    : question.correct_option}
-                                </span>
-                              </TableCell>
-                              <TableCell>{question.marks}</TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex justify-end gap-2">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleEditQuestion(question)}
-                                  >
-                                    <Edit className="w-4 h-4" />
-                                  </Button>
-                                  <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="text-destructive">
-                                        <Trash2 className="w-4 h-4" />
-                                      </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                      <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Question</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          Are you sure you want to delete question #{question.question_number}?
-                                        </AlertDialogDescription>
-                                      </AlertDialogHeader>
-                                      <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction onClick={() => handleDeleteQuestion(question.id)}>
-                                          Delete
-                                        </AlertDialogAction>
-                                      </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                  </AlertDialog>
-                                </div>
-                              </TableCell>
-                            </TableRow>
+                              question={question}
+                              index={index}
+                              questionSubject={questionSubject}
+                              selectedQuestionIds={selectedQuestionIds}
+                              onMouseEnterRow={onMouseEnterRow}
+                              startDragSelection={startDragSelection}
+                              handleSelectQuestion={handleSelectQuestion}
+                              handleEditQuestion={handleEditQuestion}
+                              handleDeleteQuestion={handleDeleteQuestion}
+                            />
                           );
                         })}
-                      </TableBody>
+                      </Reorder.Group>
                     </Table>
+
                   </div>
                   )}
                 </CardContent>
@@ -1681,4 +1666,155 @@ const QuestionManagement = () => {
   );
 };
 
+interface QuestionRowProps {
+  question: Question;
+  index: number;
+  questionSubject: Subject | undefined;
+  selectedQuestionIds: Set<string>;
+  onMouseEnterRow: (id: string, index: number) => void;
+  startDragSelection: (id: string, currentlySelected: boolean, index: number) => void;
+  handleSelectQuestion: (id: string, checked: boolean, index: number, isShiftKey?: boolean) => void;
+  handleEditQuestion: (question: Question) => void;
+  handleDeleteQuestion: (id: string) => void;
+}
+
+const QuestionRow = ({
+  question,
+  index,
+  questionSubject,
+  selectedQuestionIds,
+  onMouseEnterRow,
+  startDragSelection,
+  handleSelectQuestion,
+  handleEditQuestion,
+  handleDeleteQuestion
+}: QuestionRowProps) => {
+  const controls = useDragControls();
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isLongPressed, setIsLongPressed] = useState(false);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Only trigger for primary button
+    if (e.button !== 0) return;
+
+    // Start a timer for long press
+    timerRef.current = setTimeout(() => {
+      setIsLongPressed(true);
+      controls.start(e);
+      // Vibrate if supported for tactile feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(50);
+      }
+    }, 400); // 400ms for long press
+  };
+
+  const handlePointerUp = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    setIsLongPressed(false);
+  };
+
+  return (
+    <Reorder.Item
+      value={question}
+      as="tr"
+      dragListener={false}
+      dragControls={controls}
+      className={cn(
+        "border-b transition-colors cursor-default select-none",
+        selectedQuestionIds.has(question.id) ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/50',
+        isLongPressed && "bg-primary/10 shadow-md scale-[1.01] z-50 relative border-primary/50"
+      )}
+      onMouseEnter={() => onMouseEnterRow(question.id, index)}
+    >
+      <TableCell className="w-10">
+        <div 
+          className="cursor-grab active:cursor-grabbing p-2 text-muted-foreground hover:text-primary transition-colors flex items-center justify-center"
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          title="Long press and drag to reorder"
+        >
+          <GripVertical className="w-4 h-4" />
+        </div>
+      </TableCell>
+      <TableCell className="w-12">
+        <div 
+          className="flex items-center justify-center h-full w-full py-3"
+          onMouseDown={(e) => {
+            // Only start drag selection if it's a left click and not a drag start
+            if (e.button === 0) {
+              startDragSelection(question.id, selectedQuestionIds.has(question.id), index);
+            }
+          }}
+        >
+          <Checkbox
+            checked={selectedQuestionIds.has(question.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelectQuestion(question.id, !selectedQuestionIds.has(question.id), index, e.shiftKey);
+            }}
+          />
+        </div>
+      </TableCell>
+      <TableCell className="font-medium">{question.question_number}</TableCell>
+      <TableCell className="max-w-md">
+        <MathRenderer content={question.question_text} />
+      </TableCell>
+      <TableCell>
+        {questionSubject ? (
+          <span className="text-xs bg-secondary px-2 py-1 rounded">
+            {questionSubject.name}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell>{question.section_name}</TableCell>
+      <TableCell>
+        <span className="font-mono bg-primary/10 text-primary px-2 py-1 rounded">
+          {question.question_type === 'NUMERICAL'
+            ? (question.correct_answer ?? '-')
+            : question.correct_option}
+        </span>
+      </TableCell>
+      <TableCell>{question.marks}</TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => handleEditQuestion(question)}
+          >
+            <Edit className="w-4 h-4" />
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="icon" className="text-destructive">
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete Question</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete question #{question.question_number}?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => handleDeleteQuestion(question.id)}>
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </TableCell>
+    </Reorder.Item>
+  );
+};
+
 export default QuestionManagement;
+

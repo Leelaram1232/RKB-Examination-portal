@@ -208,27 +208,11 @@ Deno.serve(async (req) => {
       throw new Error('Missing type or registration_id');
     }
 
-    // 1. Identify which Supabase client to use as primary (where registrations live)
-    // If EXTERNAL_SUPABASE_URL is provided, we use that for the database
-    const externalUrl = Deno.env.get('EXTERNAL_SUPABASE_URL');
-    const externalKey = Deno.env.get('EXTERNAL_SUPABASE_SERVICE_ROLE_KEY');
-    
     const internalUrl = Deno.env.get('SUPABASE_URL')!;
     const internalKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    const internalSupabase = createClient(internalUrl, internalKey);
-    
-    // Create external client if credentials exist
-    let externalSupabase = null;
-    if (externalUrl && externalKey) {
-      externalSupabase = createClient(externalUrl, externalKey);
-    }
-
-    // Determine primary client for registrations table
-    // Most users move registrations to the external DB
-    const primaryClient = externalSupabase || internalSupabase;
-    
-    console.log('[EMAIL] Using Database:', externalSupabase ? 'EXTERNAL' : 'INTERNAL');
+    const primaryClient = createClient(internalUrl, internalKey);
+    console.log('[EMAIL] Using Portal Database');
 
     // Fetch registration data from primary database
     const registration = await fetchRegistrationData(primaryClient, registration_id);
@@ -272,8 +256,8 @@ Deno.serve(async (req) => {
     let exam: { exam_name: string; exam_date: string; exam_time: string } | null = null;
     
     if (registration.exam_id) {
-      // Use external client if available, otherwise primary
-      const examClient = externalSupabase || primaryClient;
+      // Use primary client
+      const examClient = primaryClient;
       
       const { data: examData, error: examError } = await examClient
         .from('exams')

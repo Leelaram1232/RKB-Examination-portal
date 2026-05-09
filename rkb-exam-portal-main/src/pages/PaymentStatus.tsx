@@ -4,7 +4,7 @@ import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase as externalSupabase, invokeExternalFunction } from '@/lib/supabase';
 import { Loader2, CheckCircle2, XCircle, AlertCircle, Home, RefreshCw, Receipt, Calendar, Mail, Phone, User } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -319,3 +319,4 @@ const PaymentStatus = () => {
 };
 
 export default PaymentStatus;
+

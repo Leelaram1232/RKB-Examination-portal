@@ -7,7 +7,7 @@ import { StepIndicator } from '@/components/registration/StepIndicator';
 import { Step1Details } from '@/components/registration/Step1Details';
 import { Step2PhotoUpload } from '@/components/registration/Step2PhotoUpload';
 import { Step4Confirmation } from '@/components/registration/Step4Confirmation';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase as externalSupabase, invokeExternalFunction } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Loader2, CheckCircle2 } from 'lucide-react';
@@ -429,3 +429,4 @@ const ExamRegistrationWizard = () => {
 };
 
 export default ExamRegistrationWizard;
+

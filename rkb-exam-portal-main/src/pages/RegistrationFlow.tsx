@@ -20,7 +20,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase as externalSupabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { useParams, useNavigate } from 'react-router-dom';
 
@@ -539,3 +539,4 @@ const RegistrationFlow = () => {
 };
 
 export default RegistrationFlow;
+
