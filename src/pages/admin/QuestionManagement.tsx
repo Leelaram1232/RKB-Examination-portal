@@ -1167,12 +1167,10 @@ const QuestionManagement = () => {
                   })}
                   placeholder="Enter the question..."
                 />
-                {containsLatex(currentQuestion.question_text || '') && (
-                  <div className="mt-2 p-2 border rounded bg-muted/50">
-                    <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase">LaTeX Preview:</p>
-                    <MathRenderer content={currentQuestion.question_text || ''} />
-                  </div>
-                )}
+                <div className="mt-2 p-2 border rounded bg-muted/50">
+                  <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase">Preview:</p>
+                  <MathRenderer content={currentQuestion.question_text || ''} />
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -1235,11 +1233,9 @@ const QuestionManagement = () => {
                       option_a: e.target.value
                     })}
                   />
-                  {containsLatex(currentQuestion.option_a || '') && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                      <MathRenderer content={currentQuestion.option_a || ''} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                    <MathRenderer content={currentQuestion.option_a || ''} />
+                  </div>
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1293,11 +1289,9 @@ const QuestionManagement = () => {
                       option_b: e.target.value
                     })}
                   />
-                  {containsLatex(currentQuestion.option_b || '') && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                      <MathRenderer content={currentQuestion.option_b || ''} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                    <MathRenderer content={currentQuestion.option_b || ''} />
+                  </div>
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1351,11 +1345,9 @@ const QuestionManagement = () => {
                       option_c: e.target.value
                     })}
                   />
-                  {containsLatex(currentQuestion.option_c || '') && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                      <MathRenderer content={currentQuestion.option_c || ''} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                    <MathRenderer content={currentQuestion.option_c || ''} />
+                  </div>
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"
@@ -1409,11 +1401,9 @@ const QuestionManagement = () => {
                       option_d: e.target.value
                     })}
                   />
-                  {containsLatex(currentQuestion.option_d || '') && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
-                      <MathRenderer content={currentQuestion.option_d || ''} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm mt-1">
+                    <MathRenderer content={currentQuestion.option_d || ''} />
+                  </div>
                   <Label className="text-xs text-muted-foreground">Image (optional)</Label>
                   <Input
                     type="file"

@@ -446,7 +446,7 @@ export default function QuestionReview() {
                     question_text: e.target.value
                   })}
                 />
-                {containsLatex(selectedQuestion.question_text) && (
+                {selectedQuestion.question_text && (
                   <div className="mt-2 p-2 border rounded bg-muted/50">
                     <p className="text-xs text-muted-foreground mb-1 font-semibold uppercase">Preview:</p>
                     <MathRenderer content={selectedQuestion.question_text} />
@@ -464,11 +464,9 @@ export default function QuestionReview() {
                       option_a: e.target.value
                     })}
                   />
-                  {containsLatex(selectedQuestion.option_a) && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                      <MathRenderer content={selectedQuestion.option_a} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_a} />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Option B</Label>
@@ -479,11 +477,9 @@ export default function QuestionReview() {
                       option_b: e.target.value
                     })}
                   />
-                  {containsLatex(selectedQuestion.option_b) && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                      <MathRenderer content={selectedQuestion.option_b} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_b} />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Option C</Label>
@@ -494,11 +490,9 @@ export default function QuestionReview() {
                       option_c: e.target.value
                     })}
                   />
-                  {containsLatex(selectedQuestion.option_c) && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                      <MathRenderer content={selectedQuestion.option_c} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_c} />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Option D</Label>
@@ -509,11 +503,9 @@ export default function QuestionReview() {
                       option_d: e.target.value
                     })}
                   />
-                  {containsLatex(selectedQuestion.option_d) && (
-                    <div className="p-1.5 border rounded bg-muted/30 text-sm">
-                      <MathRenderer content={selectedQuestion.option_d} />
-                    </div>
-                  )}
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_d} />
+                  </div>
                 </div>
               </div>
 
