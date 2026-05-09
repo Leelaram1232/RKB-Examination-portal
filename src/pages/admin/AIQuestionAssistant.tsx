@@ -27,6 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { ParsedQuestion } from '@/lib/questionParser';
 import { parseQuestionText } from '@/lib/questionParser';
 import { QuestionPreviewCard } from '@/components/admin/QuestionPreviewCard';
+import { invokeExternalFunction } from '@/lib/supabase';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -469,14 +470,12 @@ export default function AIQuestionAssistant() {
       const conversationHistory = messages.map(m => ({ role: m.role, content: m.content }));
       conversationHistory.push({ role: 'user', content: userMessage });
 
-      const { data, error } = await supabase.functions.invoke<any>('ai-question-assistant', {
-        body: {
-          messages: conversationHistory,
-          file_url: fileUrl || undefined,
-          exam_id: selectedExam,
-          subject_id: selectedSubject,
-          llm_mode: llmMode,
-        }
+      const { data, error } = await invokeExternalFunction<any>('ai-question-assistant', {
+        messages: conversationHistory,
+        file_url: fileUrl || undefined,
+        exam_id: selectedExam,
+        subject_id: selectedSubject,
+        llm_mode: llmMode,
       });
 
       if (error) throw error;
@@ -658,7 +657,7 @@ export default function AIQuestionAssistant() {
     }
     setAuditLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke<{
+      const { data, error } = await invokeExternalFunction<{
         content?: string;
         audit?: AuditReport;
         meta?: {
@@ -671,12 +670,10 @@ export default function AIQuestionAssistant() {
           questions_count?: number;
         };
       }>('ai-question-assistant', {
-        body: {
-          messages: [{ role: 'user', content: 'Run full exam quality audit.' }],
-          exam_id: selectedExam,
-          action: 'audit_exam',
-          llm_mode: llmMode,
-        }
+        messages: [{ role: 'user', content: 'Run full exam quality audit.' }],
+        exam_id: selectedExam,
+        action: 'audit_exam',
+        llm_mode: llmMode,
       });
       if (error) throw error;
       if (!data?.audit) {

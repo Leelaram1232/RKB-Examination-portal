@@ -49,7 +49,7 @@ const App = () => (
             {/* Public Routes */}
             <Route path="/" element={<Index />} />
             <Route path="/admin/login" element={<AdminLogin />} />
-            <Route path="/exam/:examId/register" element={<RegistrationFlow />} />
+            <Route path="/exam/:examId/register" element={<ExamRegistration />} />
             <Route path="/exam/:examId/login" element={<ExamLogin />} />
             <Route path="/exam/:examId/instructions" element={<ExamInstructions />} />
             <Route path="/exam/:examId/take" element={<ExamInterface />} />

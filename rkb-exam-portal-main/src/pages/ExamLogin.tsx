@@ -13,7 +13,6 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { PublicLayout } from '@/components/layout/PublicLayout';
-import { invokeExternalFunction } from '@/lib/supabase';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -117,10 +116,12 @@ export default function ExamLogin() {
 
     try {
       console.log(`[ExamLogin] Attempting login for exam: ${examId} with email: ${data.email}`);
-      const { data: result, error: invocationError } = await invokeExternalFunction<any>('exam-login', {
-        exam_id: examId,
-        email: data.email.toLowerCase(),
-        password: data.password,
+      const { data: result, error: invocationError } = await supabase.functions.invoke<any>('exam-login', {
+        body: {
+          exam_id: examId,
+          email: data.email.toLowerCase(),
+          password: data.password,
+        }
       });
 
       if (invocationError) {
@@ -274,4 +275,3 @@ export default function ExamLogin() {
     </PublicLayout>
   );
 }
-

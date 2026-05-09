@@ -20,7 +20,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
-import { supabase as externalSupabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { useParams, useNavigate } from 'react-router-dom';
 
@@ -110,8 +109,8 @@ const RegistrationFlow = () => {
         console.log(`[Verification] Checking RKB App DB for: ${searchEmail} / ${searchPhone}`);
         
         const [extEmailRes, extPhoneRes] = await Promise.all([
-          externalSupabase.from('profiles').select('id, full_name').ilike('email', searchEmail).maybeSingle(),
-          externalSupabase.from('profiles').select('id, full_name').eq('mobile', searchPhone).maybeSingle()
+          supabase.from('profiles').select('id, full_name').ilike('email', searchEmail).maybeSingle(),
+          supabase.from('profiles').select('id, full_name').eq('mobile', searchPhone).maybeSingle()
         ]);
         
         if (extEmailRes.error) console.error('[Verification] RKB Email Search Error:', JSON.stringify(extEmailRes.error));
@@ -539,4 +538,3 @@ const RegistrationFlow = () => {
 };
 
 export default RegistrationFlow;
-

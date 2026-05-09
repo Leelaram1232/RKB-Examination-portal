@@ -83,7 +83,7 @@ export default function AIQuestionAssistant() {
     {
       role: 'assistant',
       content:
-        "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both (Groq draft + Gemini merge). I can:\n\n• Generate MCQs with four solid options and one correct key\n• Extract from PDFs / diagrams\n• **Quality check (all questions)** — loads every saved row (paginated), rules + AI per small batch\n\nUpload a PDF or type a request to start.",
+        "Hello! I'm your Advanced Exam Question Generator. I can generate high-quality, non-repeating questions following strict exam standards:\n\n• **MCQs**: Exactly 4 realistic options with one correct key\n• **Fill in the Blanks**: Questions with blanks and separate answers\n• **Exam-Level Quality**: Clear, grammatically correct, and mixed difficulty levels (Easy, Medium, Hard)\n• **PDF/OCR Support**: Extract and generate questions directly from your uploads\n\nHow can I help you today? Choose a model and upload a PDF or type your topic.",
     },
   ]);
   const [input, setInput] = useState('');
@@ -102,7 +102,7 @@ export default function AIQuestionAssistant() {
   const [llmMode, setLlmMode] = useState<LlmMode>('groq');
 
   /** Bump when you ship frontend changes so production visibly differs from stale CDN. */
-  const UI_ASSISTANT_REV = '2026-05-04';
+  const UI_ASSISTANT_REV = '2026-05-05';
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -113,7 +113,7 @@ export default function AIQuestionAssistant() {
       {
         role: 'assistant',
         content:
-          "Hello! I'm your AI Question Assistant. Choose **Model**: Groq, Gemini, or Both. I can generate MCQs, extract from PDFs, and run a **quality check on every saved question** for the exam.\n\nUpload a PDF or type a request to start.",
+          "Hello! I'm your Advanced Exam Question Generator. I can generate high-quality, non-repeating MCQs and Fill in the Blanks with strict quality controls and mixed difficulty levels.\n\nUpload a PDF or type a request to start.",
       },
     ]);
     setInput('');

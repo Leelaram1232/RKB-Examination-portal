@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, CheckCircle, XCircle, Minus, RefreshCw, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -170,12 +171,10 @@ export default function StudentAnswerReview() {
 
     const fetchUsingProxy = async () => {
       try {
-        const { data: response, error: proxyError } = await supabase.functions.invoke<any>(
+        const { data: response, error: proxyError } = await invokeExternalFunction<any>(
           'admin-update-answers', 
-          { 
-            body: { session_id: sessionId },
-            method: 'GET' 
-          }
+          { session_id: sessionId }, 
+          { method: 'GET' }
         );
 
         if (proxyError || !response?.success) {
@@ -254,11 +253,9 @@ export default function StudentAnswerReview() {
     // Recalculation MUST be done via backend function because it triggers complex DB changes
     // AND it bypasses RLS policies that prevent direct browser-side updates by admins
     try {
-      const { data, error: proxyError } = await supabase.functions.invoke<any>('admin-update-answers', {
-        body: {
-          session_id: sessionId,
-          changes: changedAnswers,
-        }
+      const { data, error: proxyError } = await invokeExternalFunction<any>('admin-update-answers', {
+        session_id: sessionId,
+        changes: changedAnswers,
       });
 
       if (proxyError || !data?.success) {
@@ -283,9 +280,7 @@ export default function StudentAnswerReview() {
   const invokeRecalculate = async () => {
     if (!sessionId) return;
 
-    const { data: result, error } = await supabase.functions.invoke<any>('recalculate-result', { 
-      body: { session_id: sessionId } 
-    });
+    const { data: result, error } = await invokeExternalFunction<any>('recalculate-result', { session_id: sessionId });
 
     if (error) {
       throw error;
@@ -313,9 +308,7 @@ export default function StudentAnswerReview() {
 
       setIsRecalculating(true);
       // Recalculation MUST be done via backend function because it triggers complex DB changes
-      const { data: result, error: recErr } = await supabase.functions.invoke<any>('recalculate-result', { 
-        body: { session_id: sessionId } 
-      });
+      const { data: result, error: recErr } = await invokeExternalFunction<any>('recalculate-result', { session_id: sessionId });
 
       if (recErr || !result?.success) {
         throw new Error(recErr?.message || result?.error || 'Recalculation failed but answers were saved.');

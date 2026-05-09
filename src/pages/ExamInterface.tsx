@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare, Eye, RefreshCw, User, Clock, Shield, CheckSquare, Check, Cloud, Loader2, WifiOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -152,7 +153,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           violation_count: count,
@@ -169,7 +170,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await supabase
+      await externalSupabase
         .from('exam_sessions')
         .update({
           is_blocked: true,
@@ -201,54 +202,6 @@ export default function ExamInterface() {
       }
 
       const parsedSession: ExamSession = JSON.parse(sessionData);
-      
-      // --- ACCESS CONTROL GUARD ---
-      try {
-        const { data: examData } = await supabase
-          .from('exams')
-          .select('access_type, internal_free_access, payment_required')
-          .eq('id', parsedSession.exam.id)
-          .single();
-
-        const { data: registration } = await supabase
-          .from('registrations')
-          .select('student_type, payment_status, registration_status')
-          .eq('id', parsedSession.registration_id)
-          .single();
-
-        if (examData && registration) {
-          const isInternal = registration.student_type === 'internal';
-          const isFreeAccess = isInternal && examData.internal_free_access;
-          
-          // 1. Check Approval
-          if (registration.registration_status !== 'approved') {
-            toast({
-              title: 'Registration Pending',
-              description: 'Your registration has not been approved by the administrator yet.',
-              variant: 'destructive',
-            });
-            navigate(`/exam/${examId}/login`);
-            return;
-          }
-
-          // 2. Check Payment
-          if (examData.payment_required && !isFreeAccess) {
-            if (registration.payment_status !== 'completed') {
-              toast({
-                title: 'Payment Required',
-                description: 'Please complete your exam fee payment to access the examination.',
-                variant: 'destructive',
-              });
-              navigate(`/exam/${examId}/registration`);
-              return;
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[GUARD] Failed to verify access status, proceeding with caution:', err);
-      }
-      // --- END GUARD ---
-
       setSession(parsedSession);
 
       // Calculate end time - handle resumed sessions properly
@@ -304,7 +257,7 @@ export default function ExamInterface() {
       }
 
       // Check if session is blocked
-      const { data: sessionStatus } = await supabase
+      const { data: sessionStatus } = await externalSupabase
         .from('exam_sessions')
         .select('is_blocked, violation_count, proctoring_violations')
         .eq('id', parsedSession.session_id)
@@ -443,12 +396,10 @@ export default function ExamInterface() {
         // Avoid creating multiple rooms if effect re-runs
         if (livekitRoomRef.current) return;
 
-        const { data, error } = await supabase.functions.invoke<any>('get-stream-token', {
-          body: {
-            exam_id: session.exam.id,
-            session_id: session.session_id,
-            role: 'student',
-          }
+        const { data, error } = await invokeExternalFunction<any>('get-stream-token', {
+          exam_id: session.exam.id,
+          session_id: session.session_id,
+          role: 'student',
         });
         if (error || !data || cancelled) {
           console.error('get-stream-token error:', error);
@@ -477,7 +428,7 @@ export default function ExamInterface() {
         livekitRoomRef.current = null;
       }
     };
-  }, [session?.session_id, session?.exam?.id]);
+  }, [session?.session_id, session?.exam?.id, invokeExternalFunction]);
 
   // Sync numerical answer when question changes
   useEffect(() => {
@@ -523,7 +474,7 @@ export default function ExamInterface() {
     return () => clearInterval(interval);
   }, [unsyncedAnswers, answers]);
 
-  // Save answer to database
+  // Save answer to database via edge function with retry logic
   const saveAnswer = useCallback(
     async (
       questionId: string, 
@@ -535,67 +486,44 @@ export default function ExamInterface() {
     ) => {
       if (!session) return;
 
-      const maxRetries = isBackgroundSync ? 0 : 3;
+      const maxRetries = isBackgroundSync ? 0 : 3; // Don't chain retries during background sync
       
+      // Update local state and backup immediately
+      setAnswers((prev) => {
+        const newMap = new Map(prev);
+        const ans = {
+          question_id: questionId,
+          selected_option: selectedOption,
+          text_answer: textAnswer,
+          is_marked_for_review: !!isMarkedForReview,
+        };
+        newMap.set(questionId, ans);
+        
+        // Save full map to localStorage for persistence across reloads
+        const backupData = Object.fromEntries(newMap);
+        localStorage.setItem(`exam_backup_${session.session_id}`, JSON.stringify(backupData));
+        
+        return newMap;
+      });
+
+      if (!isBackgroundSync) {
+        setUnsyncedAnswers(prev => new Set(prev).add(questionId));
+        setSyncStatus('syncing');
+      }
+
       try {
-        // Update local state and backup immediately
-        setAnswers((prev) => {
-          const newMap = new Map(prev);
-          const ans = {
-            question_id: questionId,
-            selected_option: selectedOption,
-            text_answer: textAnswer,
-            is_marked_for_review: !!isMarkedForReview,
-          };
-          newMap.set(questionId, ans);
-          
-          // Save full map to localStorage for persistence across reloads
-          const backupData = Object.fromEntries(newMap);
-          localStorage.setItem(`exam_backup_${session.session_id}`, JSON.stringify(backupData));
-          
-          return newMap;
-        });
+        const payload = {
+          session_id: session.session_id,
+          question_id: questionId,
+          selected_option: selectedOption,
+          text_answer: textAnswer,
+          is_marked_for_review: !!isMarkedForReview,
+        };
+        
+        const { data: result, error: invocationError } = await invokeExternalFunction<any>('save-answer', payload);
 
-        if (!isBackgroundSync) {
-          setUnsyncedAnswers(prev => new Set(prev).add(questionId));
-          setSyncStatus('syncing');
-        }
-
-        // Try upsert first
-        const { error } = await supabase
-          .from('student_answers')
-          .upsert({
-            session_id: session.session_id,
-            question_id: questionId,
-            selected_option: selectedOption,
-            text_answer: textAnswer,
-            is_marked_for_review: !!isMarkedForReview,
-            answered_at: new Date().toISOString()
-          }, { onConflict: 'session_id,question_id' });
-
-        if (error) {
-          console.error(`[SAVE_ANSWER] Upsert error on question ${questionId}:`, error);
-          
-          if (retryCount < maxRetries) {
-            setTimeout(() => {
-              saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1, false);
-            }, (retryCount + 1) * 1000);
-            return;
-          } else {
-            // Final fallback: try simple insert
-            const { error: insertError } = await supabase
-              .from('student_answers')
-              .insert({
-                session_id: session.session_id,
-                question_id: questionId,
-                selected_option: selectedOption,
-                text_answer: textAnswer,
-                is_marked_for_review: !!isMarkedForReview,
-                answered_at: new Date().toISOString()
-              });
-            
-            if (insertError) throw insertError;
-          }
+        if (invocationError || !result?.success) {
+          throw new Error(invocationError?.message || result?.error || 'Save failed');
         }
 
         // Success!
@@ -606,8 +534,57 @@ export default function ExamInterface() {
           return next;
         });
       } catch (err: any) {
-        console.error(`[SAVE_ANSWER] All attempts failed for question ${questionId}:`, err);
-        setSyncStatus(navigator.onLine ? 'error' : 'offline');
+        console.error(`[SAVE_ANSWER] Error on question ${questionId}:`, err);
+        
+        if (retryCount < maxRetries) {
+          setTimeout(() => {
+            saveAnswer(questionId, selectedOption, textAnswer, isMarkedForReview, retryCount + 1, false);
+          }, (retryCount + 1) * 1000);
+        } else {
+          // If all retries failed (or it was a background sync), try the direct DB fallback
+          try {
+            // Try upsert first (most efficient)
+            const { error: fallbackError } = await externalSupabase
+              .from('student_answers')
+              .upsert({
+                session_id: session.session_id,
+                question_id: questionId,
+                selected_option: selectedOption,
+                text_answer: textAnswer,
+                is_marked_for_review: !!isMarkedForReview,
+                answered_at: new Date().toISOString()
+              }, { onConflict: 'session_id,question_id' });
+
+            if (fallbackError) {
+              console.warn('[SAVE_ANSWER] Upsert fallback failed, trying simple insert:', fallbackError);
+              // If upsert fails (likely due to missing unique constraint), try simple insert
+              // This might create duplicates but is better than losing data
+              const { error: insertError } = await externalSupabase
+                .from('student_answers')
+                .insert({
+                  session_id: session.session_id,
+                  question_id: questionId,
+                  selected_option: selectedOption,
+                  text_answer: textAnswer,
+                  is_marked_for_review: !!isMarkedForReview,
+                  answered_at: new Date().toISOString()
+                });
+              
+              if (insertError) throw insertError;
+            }
+
+            // If we got here, one of the fallbacks worked
+            setUnsyncedAnswers(prev => {
+              const next = new Set(prev);
+              next.delete(questionId);
+              if (next.size === 0) setSyncStatus('synced');
+              return next;
+            });
+          } catch (e) {
+            console.error('[SAVE_ANSWER] All fallbacks failed:', e);
+            setSyncStatus(navigator.onLine ? 'error' : 'offline');
+          }
+        }
       }
     },
     [session]
@@ -703,12 +680,10 @@ export default function ExamInterface() {
 
       try {
         console.log('[SUBMIT] Invoking submit-exam via external backend...');
-        const { data: result, error: invocationError } = await supabase.functions.invoke<any>('submit-exam', {
-          body: {
-            session_id: session.session_id,
-            is_auto_submit: isAutoSubmit,
-            is_terminated_by_admin: isTerminatedByAdmin,
-          }
+        const { data: result, error: invocationError } = await invokeExternalFunction<any>('submit-exam', {
+          session_id: session.session_id,
+          is_auto_submit: isAutoSubmit,
+          is_terminated_by_admin: isTerminatedByAdmin,
         });
 
         if (invocationError) {
@@ -721,9 +696,7 @@ export default function ExamInterface() {
           throw new Error(result?.error || 'Submission failed');
         }
 
-        // Store result for display
-        sessionStorage.setItem('examResult', JSON.stringify(result));
-        console.log('[SUBMIT] Success! Result stored.');
+        console.log('[SUBMIT] Success! Redirecting...');
       } catch (error: any) {
         console.error('[SUBMIT] Main submission failed:', error);
         
@@ -732,7 +705,7 @@ export default function ExamInterface() {
         // so the student can "come out" of the exam.
         try {
           console.log('[SUBMIT] Attempting emergency database fallback...');
-          await supabase
+          await externalSupabase
             .from('exam_sessions')
             .update({
               is_completed: true,
@@ -755,14 +728,9 @@ export default function ExamInterface() {
         }
       } finally {
         // ALWAYS let the student out of the interface if they clicked submit
+        // This prevents them from being held "hostage" by a server error
         sessionStorage.removeItem('examSession');
-        
-        // If we have a result, go to result page, otherwise go to submitted success page
-        if (sessionStorage.getItem('examResult')) {
-          navigate(`/exam/${examId}/result`);
-        } else {
-          navigate(`/exam/${examId}/submitted`);
-        }
+        navigate(`/exam/${examId}/submitted`);
         setIsSubmitting(false);
       }
     },

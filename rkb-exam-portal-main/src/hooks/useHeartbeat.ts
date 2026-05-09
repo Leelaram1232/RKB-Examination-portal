@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { supabase as externalSupabase } from '@/lib/supabase';
 
 interface UseHeartbeatOptions {
   sessionId: string | undefined;
@@ -20,7 +19,7 @@ export const useHeartbeat = ({
 
     const sendHeartbeat = async () => {
       try {
-        await externalSupabase
+        await supabase
           .from('exam_sessions')
           .update({ heartbeat_at: new Date().toISOString() })
           .eq('id', sessionId);
@@ -42,4 +41,3 @@ export const useHeartbeat = ({
     };
   }, [sessionId, interval, enabled]);
 };
-

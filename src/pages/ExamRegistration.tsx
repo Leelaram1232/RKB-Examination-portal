@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { CalendarIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -143,21 +143,17 @@ export default function ExamRegistration() {
     
     setIsSubmitting(true);
     try {
-      const { data: responseData, error: functionError } = await supabase.functions.invoke('register-for-exam', {
-        body: {
-          ...formData,
-          exam_id: exam.id,
-          date_of_birth: format(formData.date_of_birth, 'yyyy-MM-dd'),
-        }
+      const response = await invokeExternalFunction('register-for-exam', {
+        ...formData,
+        exam_id: exam.id,
+        date_of_birth: format(formData.date_of_birth, 'yyyy-MM-dd'),
       });
 
-      if (functionError) {
-        throw new Error(functionError.message || 'Registration failed');
+      if (response.error) {
+        throw new Error(response.error);
       }
 
-      const result = responseData;
-      console.log('[ExamRegistration] onConfirm result:', result);
-      console.log('[ExamRegistration] Exam type before check:', exam.registration_type);
+      const result = response.data;
       
       // If exam is paid, redirect to payment page
       if (exam.registration_type === 'paid') {

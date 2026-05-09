@@ -7,7 +7,7 @@ import { StepIndicator } from '@/components/registration/StepIndicator';
 import { Step1Details } from '@/components/registration/Step1Details';
 import { Step2PhotoUpload } from '@/components/registration/Step2PhotoUpload';
 import { Step4Confirmation } from '@/components/registration/Step4Confirmation';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Loader2, CheckCircle2 } from 'lucide-react';
@@ -73,13 +73,13 @@ const ExamRegistrationWizard = () => {
     const steps = [{ id: 1, title: 'Details', description: 'Personal info' }];
     
     if (exam?.photo_required || exam?.signature_required) {
-      steps.push({ id: steps.length + 1, title: 'Documents', description: 'Upload photos' });
+      steps.push({ id: 2, title: 'Documents', description: 'Upload photos' });
     }
     
-    steps.push({ id: steps.length + 1, title: 'Review', description: 'Check details' });
-    
     if (isPaidExam) {
-      steps.push({ id: steps.length + 1, title: 'Payment', description: 'Pay fee' });
+      steps.push({ id: steps.length + 1, title: 'Payment', description: 'Pay & confirm' });
+    } else {
+      steps.push({ id: steps.length + 1, title: 'Confirm', description: 'Review & submit' });
     }
     
     return steps;
@@ -89,7 +89,6 @@ const ExamRegistrationWizard = () => {
   const getStepComponent = () => {
     const hasPhotoStep = exam?.photo_required || exam?.signature_required;
     
-    // Step 1: Details
     if (currentStep === 1) {
       return (
         <Step1Details 
@@ -113,37 +112,8 @@ const ExamRegistrationWizard = () => {
       );
     }
 
-    // Determine what Step 3 is based on photo step
-    const reviewStepIndex = hasPhotoStep ? 3 : 2;
-    const paymentStepIndex = reviewStepIndex + 1;
-
-    // Review / Confirmation Step
-    if (currentStep === reviewStepIndex) {
-      return (
-        <Step4Confirmation 
-          form={form}
-          exam={{
-            exam_name: exam?.exam_name || '',
-            exam_date: exam?.exam_date || '',
-            exam_time: exam?.exam_time || '',
-            registration_type: exam?.registration_type || 'free',
-            registration_amount: exam?.registration_amount || 0,
-          }}
-          onBack={() => setCurrentStep(currentStep - 1)}
-          onSubmit={() => {
-            if (isPaidExam) {
-              setCurrentStep(paymentStepIndex);
-            } else {
-              handleSubmit();
-            }
-          }}
-          isSubmitting={isSubmitting}
-        />
-      );
-    }
-
-    // Payment Step (Only for paid exams)
-    if (isPaidExam && currentStep === paymentStepIndex) {
+    // Last step: Payment (for paid exams) or Confirmation (for free exams)
+    if (isPaidExam) {
       return (
         <Step3PaymentInfo 
           form={form}
@@ -152,25 +122,39 @@ const ExamRegistrationWizard = () => {
             exam_date: exam?.exam_date || '',
             registration_amount: exam?.registration_amount || 0,
           }}
+          onNext={() => {}} 
           onBack={() => setCurrentStep(currentStep - 1)}
           onCreateAndPay={handleCreateAndPay}
           isSubmitting={isSubmitting}
-          onNext={() => {}}
         />
       );
     }
 
-    return null;
+    return (
+      <Step4Confirmation 
+        form={form}
+        exam={{
+          exam_name: exam?.exam_name || '',
+          exam_date: exam?.exam_date || '',
+          exam_time: exam?.exam_time || '',
+          registration_type: exam?.registration_type || 'free',
+          registration_amount: exam?.registration_amount || 0,
+        }}
+        onBack={() => setCurrentStep(currentStep - 1)}
+        onSubmit={handleSubmit}
+        isSubmitting={isSubmitting}
+      />
+    );
   };
 
   useEffect(() => {
-    if (!examId) {
-      navigate('/');
-      return;
-    }
-
     const fetchExam = async () => {
-      // Fetch exam from standard Supabase
+      if (!examId) {
+        navigate('/');
+        return;
+      }
+
+      // Fetch exam from external Supabase
       const { data, error } = await supabase
         .from('exams')
         .select('*')
@@ -226,31 +210,29 @@ const ExamRegistrationWizard = () => {
     const values = form.getValues();
 
     try {
-      const { data: response, error } = await supabase.functions.invoke<{
+      const { data: response, error } = await invokeExternalFunction<{
         success?: boolean;
         registration_id?: string;
         registration_number?: string;
         error?: string;
       }>('register-for-exam', {
-        body: {
-          exam_id: examId,
-          full_name: values.full_name,
-          email: values.email,
-          mobile: values.mobile,
-          date_of_birth: values.date_of_birth,
-          gender: values.gender,
-          address: values.address || null,
-          city: values.city,
-          state: values.state,
-          pincode: values.pincode || null,
-          class: values.class,
-          board: values.board,
-          school_name: values.school_name,
-          academic_year: values.academic_year || null,
-          percentage: values.percentage ? parseFloat(values.percentage) : null,
-          photo_url: values.photo_url || null,
-          signature_url: values.signature_url || null,
-        }
+        exam_id: examId,
+        full_name: values.full_name,
+        email: values.email,
+        mobile: values.mobile,
+        date_of_birth: values.date_of_birth,
+        gender: values.gender,
+        address: values.address || null,
+        city: values.city,
+        state: values.state,
+        pincode: values.pincode || null,
+        class: values.class,
+        board: values.board,
+        school_name: values.school_name,
+        academic_year: values.academic_year || null,
+        percentage: values.percentage ? parseFloat(values.percentage) : null,
+        photo_url: values.photo_url || null,
+        signature_url: values.signature_url || null,
       });
 
       if (error) {
@@ -295,32 +277,30 @@ const ExamRegistrationWizard = () => {
     const values = form.getValues();
 
     try {
-      // Call register-for-exam on standard Supabase
-      const { data: response, error } = await supabase.functions.invoke<{
+      // Call register-for-exam on external Supabase
+      const { data: response, error } = await invokeExternalFunction<{
         success?: boolean;
         registration_id?: string;
         registration_number?: string;
         error?: string;
       }>('register-for-exam', {
-        body: {
-          exam_id: examId,
-          full_name: values.full_name,
-          email: values.email,
-          mobile: values.mobile,
-          date_of_birth: values.date_of_birth,
-          gender: values.gender,
-          address: values.address || null,
-          city: values.city,
-          state: values.state,
-          pincode: values.pincode || null,
-          class: values.class,
-          board: values.board,
-          school_name: values.school_name,
-          academic_year: values.academic_year || null,
-          percentage: values.percentage ? parseFloat(values.percentage) : null,
-          photo_url: values.photo_url || null,
-          signature_url: values.signature_url || null,
-        }
+        exam_id: examId,
+        full_name: values.full_name,
+        email: values.email,
+        mobile: values.mobile,
+        date_of_birth: values.date_of_birth,
+        gender: values.gender,
+        address: values.address || null,
+        city: values.city,
+        state: values.state,
+        pincode: values.pincode || null,
+        class: values.class,
+        board: values.board,
+        school_name: values.school_name,
+        academic_year: values.academic_year || null,
+        percentage: values.percentage ? parseFloat(values.percentage) : null,
+        photo_url: values.photo_url || null,
+        signature_url: values.signature_url || null,
       });
 
       if (error) {

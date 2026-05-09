@@ -252,7 +252,7 @@ Deno.serve(async (req) => {
       }
 
       // Ensure DB update matches the FINAL derived status
-      updateData.payment_status = paymentStatus === 'completed' ? 'success' : paymentStatus;
+      updateData.payment_status = paymentStatus;
       if (paymentStatus === "completed") {
         updateData.payment_time = new Date().toISOString();
         
@@ -344,7 +344,7 @@ async function fetchRegistrationDetails(supabase: any, regId: string) {
     const { data, error } = await supabase
       .from("registrations")
       .select(
-        `id, registration_number, payment_amount, payment_time, transaction_id, payment_status, cashfree_order_id, approval_status, approval_required,
+        `id, registration_number, payment_amount, payment_time, transaction_id, payment_status, cashfree_order_id, approval_status,
          profiles:student_id(full_name, email, mobile),
          exams:exam_id(exam_name, exam_code, exam_date, approval_required)`
       )

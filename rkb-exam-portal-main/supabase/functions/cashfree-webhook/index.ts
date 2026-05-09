@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
     let transactionId = data.payment?.cf_payment_id?.toString() || null;
 
     if (data.payment?.payment_status === 'SUCCESS' || payload.type === 'PAYMENT_SUCCESS_WEBHOOK') {
-      paymentStatus = 'success';
+      paymentStatus = 'completed';
     } else if (['FAILED', 'CANCELLED', 'USER_DROPPED'].includes(data.payment?.payment_status) || payload.type === 'PAYMENT_FAILED_WEBHOOK') {
       paymentStatus = 'failed';
     }
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
     const updateData: Record<string, any> = { payment_status: paymentStatus };
     if (transactionId) updateData.transaction_id = transactionId;
 
-    if (paymentStatus === 'success') {
+    if (paymentStatus === 'completed') {
       updateData.payment_time = new Date().toISOString();
       try {
         const { data: regData } = await supabase.from('registrations').select('exam_id, exams(approval_required)').eq('id', registrationId).single();
@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
 
     await supabase.from('registrations').update(updateData).eq('id', registrationId);
 
-    if (paymentStatus === 'success') {
+    if (paymentStatus === 'completed') {
       await supabase.functions.invoke('finalize-registration', {
         body: { type: 'payment_success', registration_id: registrationId }
       }).catch(console.error);

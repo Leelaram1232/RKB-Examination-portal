@@ -835,22 +835,22 @@ const QuestionManagement = () => {
         {/* Tabs for Manual Entry and Upload */}
         {selectedExamId && (
           <Tabs defaultValue="questions" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <TabsList>
-                <TabsTrigger value="questions">Question List</TabsTrigger>
-                <TabsTrigger value="upload">
+            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+              <TabsList className="w-full lg:w-auto">
+                <TabsTrigger value="questions" className="flex-1 lg:flex-none">Question List</TabsTrigger>
+                <TabsTrigger value="upload" className="flex-1 lg:flex-none">
                   <Upload className="w-4 h-4 mr-2" />
-                  Upload Questions
+                  Upload
                 </TabsTrigger>
               </TabsList>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" asChild>
+              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                <Button variant="outline" asChild className="flex-1 lg:flex-none">
                   <Link to="/admin/questions/ai-assistant">
                     <BrainCircuit className="w-4 h-4 mr-2 text-primary" />
                     AI Assistant
                   </Link>
                 </Button>
-                <Button variant="outline" asChild>
+                <Button variant="outline" asChild className="flex-1 lg:flex-none">
                   <Link to="/admin/questions/smart-paste">
                     <Plus className="w-4 h-4 mr-2" />
                     Smart Paste
@@ -868,9 +868,9 @@ const QuestionManagement = () => {
 
             <TabsContent value="questions">
               <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle>Questions for {exam?.exam_name}</CardTitle>
+                <CardHeader className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
+                  <div className="w-full xl:w-auto">
+                    <CardTitle className="text-xl">Questions for {exam?.exam_name}</CardTitle>
                     <CardDescription>
                       {questions.length} question{questions.length !== 1 ? 's' : ''} in this exam
                       {selectedQuestionIds.size > 0 && (
@@ -880,11 +880,11 @@ const QuestionManagement = () => {
                       )}
                     </CardDescription>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
                     {selectedQuestionIds.size > 0 && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline">
+                          <Button variant="outline" className="flex-1 xl:flex-none">
                             <Settings2 className="w-4 h-4 mr-2" />
                             Bulk Actions ({selectedQuestionIds.size})
                           </Button>
@@ -928,24 +928,24 @@ const QuestionManagement = () => {
                       </DropdownMenu>
                     )}
                     {questions.length > 0 && (
-                      <Button variant="outline" onClick={handleAIReview} disabled={isReviewingAI}>
+                      <Button variant="outline" onClick={handleAIReview} disabled={isReviewingAI} className="flex-1 xl:flex-none">
                         {isReviewingAI ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <BrainCircuit className="w-4 h-4 mr-2" />}
-                        AI Quality Check
+                        Quality Check
                       </Button>
                     )}
                     {questions.length > 0 && (
-                      <Button variant="outline" onClick={handleManualReorder} disabled={isReordering}>
+                      <Button variant="outline" onClick={handleManualReorder} disabled={isReordering} className="flex-1 xl:flex-none">
                         {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ListOrdered className="w-4 h-4 mr-2" />}
-                        Rearrange Numbers
+                        Reorder
                       </Button>
                     )}
-                    <Button onClick={openAddDialog}>
+                    <Button onClick={openAddDialog} className="flex-1 xl:flex-none">
                       <Plus className="w-4 h-4 mr-2" />
                       Add Question
                     </Button>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="p-0 sm:p-6">
                   {questions.length === 0 ? (
                     <div className="text-center py-12">
                       <p className="text-muted-foreground mb-4">No questions added yet</p>
@@ -955,7 +955,8 @@ const QuestionManagement = () => {
                       </Button>
                     </div>
                   ) : (
-                    <Table>
+                    <div className="overflow-x-auto">
+                      <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-12">
@@ -1066,6 +1067,7 @@ const QuestionManagement = () => {
                         })}
                       </TableBody>
                     </Table>
+                  </div>
                   )}
                 </CardContent>
               </Card>

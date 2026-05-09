@@ -4,8 +4,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { CalendarIcon, ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { supabase as externalSupabase, invokeExternalFunction } from '@/lib/supabase';
+import { CalendarIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,14 +47,18 @@ interface Exam {
   eligibility_class: string | null;
   eligibility_category: string | null;
   registration_end: string;
+  registration_type: string | null;
+  registration_amount: number | null;
 }
 
 interface RegistrationSuccess {
+  registration_id: string;
   registration_number: string;
   exam_name: string;
   student_name: string;
   email: string;
   registration_date: string;
+  registration_type: string;
 }
 
 const states = [
@@ -77,6 +81,8 @@ export default function ExamRegistration() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState<RegistrationSuccess | null>(null);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [formData, setFormData] = useState<RegistrationFormData | null>(null);
 
   const form = useForm<RegistrationFormData>({
     resolver: zodResolver(registrationSchema),
@@ -101,12 +107,11 @@ export default function ExamRegistration() {
       if (!examId) return;
 
       // Fetch exam from external Supabase
-      const { data, error } = await externalSupabase
+      const { data, error } = await supabase
         .from('exams')
-        .select('*')
+        .select('id, exam_name, exam_code, description, exam_date, exam_time, duration_minutes, eligibility_class, eligibility_category, registration_end, registration_type, registration_amount')
         .eq('id', examId)
-        .eq('status', 'registration_open')
-        .maybeSingle();
+        .single();
 
       if (error || !data) {
         toast({
@@ -118,6 +123,8 @@ export default function ExamRegistration() {
         return;
       }
 
+      console.log('[ExamRegistration] Fetched exam:', data);
+      console.log('[ExamRegistration] Type:', data?.registration_type, 'Amount:', data?.registration_amount);
       setExam(data);
       setIsLoading(false);
     };
@@ -125,67 +132,73 @@ export default function ExamRegistration() {
     fetchExam();
   }, [examId, navigate, toast]);
 
-  const onSubmit = async (data: RegistrationFormData) => {
-    if (!examId) return;
+  const handleFormSubmit = (data: RegistrationFormData) => {
+    setFormData(data);
+    setShowConfirmation(true);
+    window.scrollTo(0, 0);
+  };
 
+  const onConfirm = async () => {
+    if (!formData || !exam) return;
+    
     setIsSubmitting(true);
-
     try {
-      // Call register-for-exam on external Supabase
-      const { data: response, error } = await invokeExternalFunction<{
-        success: boolean;
-        registration_number?: string;
-        exam_name?: string;
-        student_name?: string;
-        email?: string;
-        registration_date?: string;
-        error?: string;
-      }>('register-for-exam', {
-        exam_id: examId,
-        full_name: data.full_name,
-        email: data.email.toLowerCase(),
-        mobile: data.mobile,
-        gender: data.gender,
-        date_of_birth: format(data.date_of_birth, 'yyyy-MM-dd'),
-        class: data.class,
-        school_name: data.school_name,
-        board: data.board,
-        academic_year: data.academic_year,
-        address: data.address || '',
-        city: data.city,
-        state: data.state,
-        pincode: data.pincode,
-        percentage: data.percentage ? parseFloat(data.percentage) : undefined,
+      const { data: responseData, error: functionError } = await supabase.functions.invoke('register-for-exam', {
+        body: {
+          ...formData,
+          exam_id: exam.id,
+          date_of_birth: format(formData.date_of_birth, 'yyyy-MM-dd'),
+        }
       });
 
-      if (error) {
-        throw new Error(error.message || 'Registration failed');
+      if (functionError) {
+        throw new Error(functionError.message || 'Registration failed');
       }
 
-      const result = response;
-
-      if (!result.success) {
-        throw new Error(result.error || 'Registration failed');
+      const result = responseData;
+      console.log('[ExamRegistration] onConfirm result:', result);
+      console.log('[ExamRegistration] Exam type before check:', exam.registration_type);
+      
+      // If exam is paid, redirect to payment page
+      if (exam.registration_type === 'paid') {
+        navigate(`/registration-payment/${result.registration_id}`, {
+          state: {
+            registration: {
+              id: result.registration_id,
+              registration_number: result.registration_number,
+              payment_status: 'pending',
+              payment_amount: exam.registration_amount || 0,
+              exam: {
+                exam_name: exam.exam_name,
+                exam_date: exam.exam_date,
+              },
+              profile: {
+                full_name: formData.full_name,
+                email: formData.email,
+              },
+            }
+          }
+        });
+        return;
       }
 
       setRegistrationSuccess({
+        registration_id: result.registration_id,
         registration_number: result.registration_number,
         exam_name: result.exam_name,
         student_name: result.student_name,
         email: result.email,
         registration_date: result.registration_date,
+        registration_type: exam.registration_type
       });
-
       toast({
-        title: 'Registration Successful!',
-        description: `Your registration number is ${result.registration_number}`,
+        title: 'Registration Successful',
+        description: 'You have been registered for the exam.',
       });
-
     } catch (error: any) {
-      console.error('Registration error:', error);
       toast({
         title: 'Registration Failed',
-        description: error.message || 'Please try again later',
+        description: error.message || 'Something went wrong. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -266,6 +279,90 @@ export default function ExamRegistration() {
     );
   }
 
+  if (showConfirmation && formData) {
+    return (
+      <PublicLayout>
+        <div className="container max-w-2xl py-8 space-y-6">
+          <Button variant="ghost" onClick={() => setShowConfirmation(false)} className="mb-4">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Edit Details
+          </Button>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Confirm Registration Details</CardTitle>
+              <CardDescription>
+                Please review your information before final submission.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border-b pb-4">
+                  <span className="text-muted-foreground">Full Name</span>
+                  <span className="font-medium">{formData.full_name}</span>
+                  <span className="text-muted-foreground">Email</span>
+                  <span className="font-medium">{formData.email}</span>
+                  <span className="text-muted-foreground">Mobile</span>
+                  <span className="font-medium">{formData.mobile}</span>
+                  <span className="text-muted-foreground">Gender</span>
+                  <span className="font-medium capitalize">{formData.gender}</span>
+                  <span className="text-muted-foreground">Date of Birth</span>
+                  <span className="font-medium">{format(formData.date_of_birth, 'PPP')}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border-b pb-4">
+                  <span className="text-muted-foreground">Class</span>
+                  <span className="font-medium">{formData.class}</span>
+                  <span className="text-muted-foreground">School</span>
+                  <span className="font-medium">{formData.school_name}</span>
+                  <span className="text-muted-foreground">Board</span>
+                  <span className="font-medium">{formData.board}</span>
+                  <span className="text-muted-foreground">Academic Year</span>
+                  <span className="font-medium">{formData.academic_year}-{parseInt(formData.academic_year) + 1}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                  <span className="text-muted-foreground">City</span>
+                  <span className="font-medium">{formData.city}</span>
+                  <span className="text-muted-foreground">State</span>
+                  <span className="font-medium">{formData.state}</span>
+                  <span className="text-muted-foreground">Pincode</span>
+                  <span className="font-medium">{formData.pincode}</span>
+                </div>
+              </div>
+
+              {exam?.registration_type === 'paid' && (
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-primary">Registration Fee</p>
+                    <p className="text-xs text-muted-foreground">Online payment required via Cashfree</p>
+                  </div>
+                  <p className="text-xl font-bold text-primary">₹{exam.registration_amount}</p>
+                </div>
+              )}
+
+              <Button 
+                onClick={onConfirm} 
+                className="w-full" 
+                size="lg" 
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  exam?.registration_type === 'paid' ? 'Proceed to Payment' : 'Confirm & Register'
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </PublicLayout>
+    );
+  }
+
   return (
     <PublicLayout>
       <div className="container max-w-4xl py-8 space-y-6">
@@ -312,7 +409,7 @@ export default function ExamRegistration() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+              <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-8">
                 {/* Personal Details */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold border-b pb-2">Personal Details</h3>
@@ -620,7 +717,14 @@ export default function ExamRegistration() {
                 </div>
 
                 <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
-                  {isSubmitting ? 'Submitting...' : 'Submit Registration'}
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    'Review Details & Continue'
+                  )}
                 </Button>
               </form>
             </Form>
@@ -630,4 +734,3 @@ export default function ExamRegistration() {
     </PublicLayout>
   );
 }
-

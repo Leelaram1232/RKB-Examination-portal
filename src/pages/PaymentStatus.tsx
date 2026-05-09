@@ -4,6 +4,7 @@ import { PublicLayout } from '@/components/layout/PublicLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { Loader2, CheckCircle2, XCircle, AlertCircle, Home, RefreshCw, Receipt, Calendar, Mail, Phone, User } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -49,11 +50,9 @@ const PaymentStatus = () => {
     setIsVerifying(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke<any>('verify-payment', {
-        body: {
-          order_id: orderId,
-          registration_id: registrationId,
-        }
+      const { data, error } = await invokeExternalFunction<any>('verify-payment', {
+        order_id: orderId,
+        registration_id: registrationId,
       });
 
       console.log('[PaymentStatus] response:', { data, error });
@@ -74,6 +73,7 @@ const PaymentStatus = () => {
     } catch (error) {
       console.error('Payment verification error:', error);
 
+      // Fallback: try reading payment status directly from external Supabase
       try {
         if (registrationId) {
           const { data: reg, error: regError } = await supabase
@@ -258,6 +258,12 @@ const PaymentStatus = () => {
             <Loader2 className="h-16 w-16 animate-spin text-primary mx-auto" />
             <h2 className="text-xl font-semibold">Verifying Payment...</h2>
             <p className="text-muted-foreground">Please wait while we confirm your payment status.</p>
+            <div className="mt-8 animate-in fade-in duration-1000 delay-1000">
+               <p className="text-xs text-muted-foreground italic">
+                 Taking longer than expected? The payment might be still processing at the gateway. 
+                 You can try refreshing or clicking Verify Again if it stays like this.
+               </p>
+            </div>
           </div>
         );
       case 'success':
