@@ -604,135 +604,7 @@ const ExamForm = () => {
                         </FormItem>
                       )}
                     />
-<<<<<<< HEAD
-                  </CardContent>
-                </Card>
-
-                {/* Schedule */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Schedule</CardTitle>
-                    <CardDescription>Set the examination date, time, and duration</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="exam_date"
-                        render={({ field }) => {
-                          const value = field.value ? new Date(field.value) : undefined;
-                          return (
-                            <FormItem className="flex flex-col">
-                              <FormLabel>Exam Date</FormLabel>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <FormControl>
-                                    <Button
-                                      variant="outline"
-                                      className="justify-start text-left font-normal"
-                                    >
-                                      {value ? format(value, 'dd-MM-yyyy') : <span>Pick a date</span>}
-                                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                    </Button>
-                                  </FormControl>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start">
-                                  <Calendar
-                                    mode="single"
-                                    selected={value}
-                                    onSelect={(date) => {
-                                      if (!date) {
-                                        field.onChange('');
-                                      } else {
-                                        field.onChange(format(date, 'yyyy-MM-dd'));
-                                      }
-                                    }}
-                                  />
-                                </PopoverContent>
-                              </Popover>
-                              <FormMessage />
-                            </FormItem>
-                          );
-                        }}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="exam_time"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Start Time</FormLabel>
-                            <FormControl>
-                              <Input type="time" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="duration_minutes"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Duration (minutes)</FormLabel>
-                            <FormControl>
-                              <Input type="number" min={1} {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="registration_start"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Registration Opens</FormLabel>
-                            <Input type="date" {...field} />
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="registration_end"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Registration Closes</FormLabel>
-                            <Input type="date" {...field} />
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Registration Type */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Registration Settings</CardTitle>
-                    <CardDescription>Configure if this exam is free or paid</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <FormField
-                        control={form.control}
-                        name="registration_type"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Registration Type</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <FormField
                     control={form.control}
                     name="photo_required"
@@ -740,15 +612,10 @@ const ExamForm = () => {
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                         <div className="space-y-0.5">
                           <FormLabel className="text-base">Student Photo</FormLabel>
-                          <FormDescription>
-                            Require photo upload
-                          </FormDescription>
+                          <FormDescription>Require photo upload</FormDescription>
                         </div>
                         <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                       </FormItem>
                     )}
@@ -761,15 +628,10 @@ const ExamForm = () => {
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                         <div className="space-y-0.5">
                           <FormLabel className="text-base">Signature Photo</FormLabel>
-                          <FormDescription>
-                            Require signature upload
-                          </FormDescription>
+                          <FormDescription>Require signature upload</FormDescription>
                         </div>
                         <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                       </FormItem>
                     )}
@@ -782,15 +644,10 @@ const ExamForm = () => {
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                         <div className="space-y-0.5">
                           <FormLabel className="text-base">Approval Required</FormLabel>
-                          <FormDescription>
-                            Admin approval needed
-                          </FormDescription>
+                          <FormDescription>Admin approval needed</FormDescription>
                         </div>
                         <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                       </FormItem>
                     )}
@@ -803,15 +660,10 @@ const ExamForm = () => {
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                         <div className="space-y-0.5">
                           <FormLabel className="text-base">Notify on Approval</FormLabel>
-                          <FormDescription>
-                            Send email to student
-                          </FormDescription>
+                          <FormDescription>Send email to student</FormDescription>
                         </div>
                         <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                       </FormItem>
                     )}
