@@ -144,6 +144,7 @@ const LiveMonitoring = () => {
       [...internalData.regs, ...externalData.regs].forEach(r => {
         if (!regMap.has(r.id)) regMap.set(r.id, r);
       });
+      console.log(`[LiveMonitoring] Unified registrations map size: ${regMap.size}`);
 
       [...internalData.profiles, ...externalData.profiles].forEach(p => {
         if (!profileMap.has(p.id)) profileMap.set(p.id, p);

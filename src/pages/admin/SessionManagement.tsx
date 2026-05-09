@@ -246,6 +246,8 @@ const SessionManagement = () => {
       internalSessions.forEach(processSession);
       externalSessions.forEach(processSession);
 
+      console.log(`[SessionManagement] Merged sessions map size: ${mergedSessionsMap.size}`);
+
       const finalSessions = Array.from(mergedSessionsMap.values())
         .sort((a, b) => {
           const at = a.start_time ? new Date(a.start_time).getTime() : 0;

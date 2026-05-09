@@ -9,14 +9,50 @@ interface MathRendererProps {
 }
 
 // Patterns to detect LaTeX content
-const INLINE_MATH_PATTERN = /\$([^$]+)\$/;
-const BLOCK_MATH_PATTERN = /\$\$([^$]+)\$\$/;
-const LATEX_COMMANDS = /\\[a-zA-Z]+|\^|_/;
+const INLINE_MATH_PATTERN = /\$([^$]+)\$|\\\([\s\S]+?\\\)/;
+const BLOCK_MATH_PATTERN = /\$\$([^$]+)\$\$|\\\[[\s\S]+?\\\]/;
+const LATEX_COMMANDS = /\\[a-zA-Z]+/;
+const MATH_OPERATORS = /[\^_]\{[^}]*\}|[\^_][a-zA-Z0-9]/;
 
 // Check if text contains LaTeX
 export function containsLatex(text: string): boolean {
   if (!text) return false;
-  return INLINE_MATH_PATTERN.test(text) || BLOCK_MATH_PATTERN.test(text) || LATEX_COMMANDS.test(text);
+  return (
+    INLINE_MATH_PATTERN.test(text) ||
+    BLOCK_MATH_PATTERN.test(text) ||
+    LATEX_COMMANDS.test(text) ||
+    MATH_OPERATORS.test(text)
+  );
+}
+
+// Normalize control characters that may have been produced by JSON parsing
+function normalizeLatexString(text: string): string {
+  return text
+    .replace(/\u0008/g, '\\b')
+    .replace(/\u000c/g, '\\f')
+    .replace(/\u000d/g, '\\r')
+    .replace(/\u0009/g, '\\t')
+    .replace(/\u000b/g, '\\v');
+}
+
+// Strip delimiters from a math string
+function stripDelimiters(math: string): string {
+  let s = math.trim();
+  if (s.startsWith('$$') && s.endsWith('$$')) return s.slice(2, -2);
+  if (s.startsWith('\\[') && s.endsWith('\\]')) return s.slice(2, -2);
+  if (s.startsWith('$') && s.endsWith('$')) return s.slice(1, -1);
+  if (s.startsWith('\\(') && s.endsWith('\\)')) return s.slice(2, -2);
+  return s;
+}
+
+// Fix common typos found in database content
+function fixCommonTypos(math: string): string {
+  return math
+    .replace(/\\rightarrrow/g, '\\rightarrow')
+    .replace(/\\leftarrrow/g, '\\leftarrow')
+    .replace(/\\rightarow/g, '\\rightarrow')
+    .replace(/\\leftarow/g, '\\leftarrow')
+    .replace(/\\bold/g, '\\mathbf');
 }
 
 // Safe KaTeX renderer component
@@ -26,23 +62,19 @@ function SafeMath({ math, displayMode = false }: { math: string; displayMode?: b
   useEffect(() => {
     if (containerRef.current) {
       try {
-        // Fix common typos in data
-        const fixedMath = math
-          .replace(/\\rightarrrow/g, '\\rightarrow')
-          .replace(/\\leftarrrow/g, '\\leftarrow')
-          .replace(/\\rightarow/g, '\\rightarrow')
-          .replace(/\\leftarow/g, '\\leftarrow')
-          .replace(/\\bold/g, '\\mathbf');
-
-        katex.render(fixedMath, containerRef.current, {
+        const cleaned = fixCommonTypos(stripDelimiters(math));
+        katex.render(cleaned, containerRef.current, {
           displayMode,
           throwOnError: false,
-          errorColor: 'inherit', // Prevent red text for errors
+          errorColor: 'inherit',
           strict: false,
-          trust: true
+          trust: true,
         });
-      } catch (e) {
-        containerRef.current.textContent = math;
+      } catch {
+        // On any failure, show the original text
+        if (containerRef.current) {
+          containerRef.current.textContent = math;
+        }
       }
     }
   }, [math, displayMode]);
@@ -50,99 +82,138 @@ function SafeMath({ math, displayMode = false }: { math: string; displayMode?: b
   return <span ref={containerRef} />;
 }
 
+// The delimiter-based split regex
+// Matches: $$...$$, \[...\], $...$, \(...\)
+const DELIMITER_REGEX = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[\s\S]+?\$|\\\([\s\S]+?\\\))/g;
+
 // Parse and render text with LaTeX
 export function MathRenderer({ content, className = '' }: MathRendererProps) {
   if (!content) return null;
 
-  // If LaTeX came through JSON, some commands like `\frac` (`\f`) or `\rho` (`\r`)
-  // can be converted into control characters. Map them back so KaTeX can parse.
-  const normalizedContent = content
-    .replace(/\u0008/g, '\\b')
-    .replace(/\u000c/g, '\\f')
-    .replace(/\u000d/g, '\\r')
-    .replace(/\u0009/g, '\\t')
-    .replace(/\u000b/g, '\\v');
+  const normalizedContent = normalizeLatexString(content);
 
-  // Regex to match various LaTeX delimiters:
-  // 1. $$ ... $$ (display math)
-  // 2. \[ ... \] (display math)
-  // 3. $ ... $ (inline math)
-  // 4. \( ... \) (inline math)
-  const regex = /(\$\$(?:[^\$]|\$[^$])+\$\$|\\\[[\s\S]*?\\\]|\$(?:[^\$]|\$[^$])+\$|\\\x28[\s\S]*?\\\x29)/g;
-  
-  const parts = normalizedContent.split(regex);
-  
-  if (parts.length <= 1) {
-    // If no delimiters found, try the legacy InlineTextWithMath for naked commands/powers
-    return <InlineTextWithMath text={normalizedContent} className={className} />;
+  // First, try to split by standard math delimiters
+  const parts = normalizedContent.split(DELIMITER_REGEX);
+
+  if (parts.length > 1) {
+    // Delimiters were found — render each part accordingly
+    return (
+      <span className={className}>
+        {parts.map((part, index) => {
+          if (!part) return null;
+
+          // Display math: $$...$$ or \[...\]
+          if (part.startsWith('$$') || part.startsWith('\\[')) {
+            return <SafeMath key={index} math={part} displayMode={true} />;
+          }
+
+          // Inline math: $...$ or \(...\)
+          if (part.startsWith('$') || part.startsWith('\\(')) {
+            return <SafeMath key={index} math={part} displayMode={false} />;
+          }
+
+          // Plain text segment — still check for naked LaTeX within it
+          if (containsLatex(part)) {
+            return <NakedMathText key={index} text={part} />;
+          }
+
+          return <span key={index}>{part}</span>;
+        })}
+      </span>
+    );
   }
 
-  return (
-    <span className={className}>
-      {parts.map((part, index) => {
-        if (!part) return null;
+  // No delimiters found — check if the entire text has naked LaTeX
+  if (containsLatex(normalizedContent)) {
+    return (
+      <span className={className}>
+        <NakedMathText text={normalizedContent} />
+      </span>
+    );
+  }
 
-        // Display math: $$...$$ or \[...\]
-        if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\[') && part.endsWith('\\]'))) {
-          let math = part.startsWith('$$') ? part.slice(2, -2) : part.slice(2, -2);
-          return <SafeMath key={index} math={math} displayMode={true} />;
-        }
-
-        // Inline math: $...$ or \(...\)
-        if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\(') && part.endsWith('\\)'))) {
-          let math = part.startsWith('$') ? part.slice(1, -1) : part.slice(2, -2);
-          return <SafeMath key={index} math={math} displayMode={false} />;
-        }
-
-        // Plain text (still check for naked commands)
-        return <InlineTextWithMath key={index} text={part} />;
-      })}
-    </span>
-  );
+  // Plain text, no math at all
+  return <span className={className}>{normalizedContent}</span>;
 }
 
-// Render inline math within text
-function InlineTextWithMath({ text, className = '' }: { text: string; className?: string }) {
-  if (!text) return null;
+/**
+ * Renders text that contains naked LaTeX (no delimiters).
+ * Strategy: try to render the entire string as KaTeX first.
+ * If it fails or produces garbage, fall back to segment-by-segment rendering.
+ */
+function NakedMathText({ text }: { text: string }) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const fallbackRef = useRef<boolean>(false);
 
-  // Split by:
-  // 1. word^word or word_word (naked powers/subscripts)
-  // 2. LaTeX commands starting with \ (e.g. \alpha, \sqrt{...})
-  // 3. Environments like \begin{...}...\end{...}
-  const parts: (string | JSX.Element)[] = [];
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const cleaned = fixCommonTypos(text);
+
+    // First attempt: render the whole string as inline math
+    try {
+      katex.render(cleaned, containerRef.current, {
+        displayMode: false,
+        throwOnError: true, // We WANT it to throw so we can fall back
+        strict: false,
+        trust: true,
+      });
+      fallbackRef.current = false;
+    } catch {
+      // KaTeX couldn't parse the whole thing — fall back to segment rendering
+      fallbackRef.current = true;
+      renderSegments(containerRef.current, text);
+    }
+  }, [text]);
+
+  return <span ref={containerRef} />;
+}
+
+/**
+ * Segment-by-segment fallback: find LaTeX fragments within plain text
+ * and render them individually, keeping non-LaTeX as text nodes.
+ */
+function renderSegments(container: HTMLElement, text: string) {
+  container.innerHTML = '';
+
+  // Regex to find individual LaTeX-like segments:
+  // 1. LaTeX commands with any number of braced/bracketed arguments
+  // 2. Superscripts/subscripts with braces
+  // 3. Simple superscripts/subscripts
+  // 4. word^word or word_word patterns
+  const segmentRegex = /(\\[a-zA-Z]+(?:\{[^}]*\}|\[[^\]]*\])*(?:[\^_](?:\{[^}]*\}|[a-zA-Z0-9]))?|[\^_]\{[^}]*\}|(?:[a-zA-Z0-9]+[\^_]\{[^}]*\})|(?:[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+))/g;
+
   let lastIndex = 0;
-  
-  // This regex finds math-like segments that aren't wrapped in delimiters:
-  // 1. LaTeX commands with optional braced arguments: \sqrt{x}, \alpha
-  // 2. Superscripts/Subscripts with braces: ^{123}, _{abc}
-  // 3. Simple Superscripts/Subscripts: ^2, _i
-  // 4. Naked word-power-word: x^2, a_i
-  const regex = /((?:\\[a-zA-Z]+(?:\{[^}]*\})?)|(?:[\^_]\{[^}]*\})|(?:[\^_][a-zA-Z0-9])|(?:\b[a-zA-Z0-9]+[\^_][a-zA-Z0-9]+\b))/g;
-  let match;
+  let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = segmentRegex.exec(text)) !== null) {
     // Add text before the match
     if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
+      container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
     }
-    
-    const math = match[0];
-    parts.push(<SafeMath key={match.index} math={math} displayMode={false} />);
-    
+
+    // Render the matched math segment
+    const span = document.createElement('span');
+    try {
+      katex.render(fixCommonTypos(match[0]), span, {
+        displayMode: false,
+        throwOnError: false,
+        errorColor: 'inherit',
+        strict: false,
+        trust: true,
+      });
+    } catch {
+      span.textContent = match[0];
+    }
+    container.appendChild(span);
+
     lastIndex = match.index + match[0].length;
   }
 
   // Add remaining text
   if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
   }
-
-  // If no parts were found via the regex split, just render the text
-  if (parts.length === 0) {
-    return <span className={className}>{text}</span>;
-  }
-
-  return <span className={className}>{parts}</span>;
 }
 
 export default MathRenderer;

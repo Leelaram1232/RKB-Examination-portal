@@ -446,10 +446,14 @@ export default function QuestionReview() {
                     question_text: e.target.value
                   })}
                 />
+                <div className="mt-2 p-2 border rounded bg-muted/50">
+                  <p className="text-xs text-muted-foreground mb-1 font-semibold uppercase">Preview:</p>
+                  <MathRenderer content={selectedQuestion.question_text} />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label>Option A</Label>
                   <Input
                     value={selectedQuestion.option_a}
@@ -458,8 +462,11 @@ export default function QuestionReview() {
                       option_a: e.target.value
                     })}
                   />
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_a} />
+                  </div>
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label>Option B</Label>
                   <Input
                     value={selectedQuestion.option_b}
@@ -468,8 +475,11 @@ export default function QuestionReview() {
                       option_b: e.target.value
                     })}
                   />
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_b} />
+                  </div>
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label>Option C</Label>
                   <Input
                     value={selectedQuestion.option_c}
@@ -478,8 +488,11 @@ export default function QuestionReview() {
                       option_c: e.target.value
                     })}
                   />
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_c} />
+                  </div>
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label>Option D</Label>
                   <Input
                     value={selectedQuestion.option_d}
@@ -488,6 +501,9 @@ export default function QuestionReview() {
                       option_d: e.target.value
                     })}
                   />
+                  <div className="p-1.5 border rounded bg-muted/30 text-sm">
+                    <MathRenderer content={selectedQuestion.option_d} />
+                  </div>
                 </div>
               </div>
 
