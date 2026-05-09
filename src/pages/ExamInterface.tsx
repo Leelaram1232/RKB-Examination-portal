@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Flag, RotateCcw, Send, AlertTriangle, Maximize, MessageSquare, Eye, RefreshCw, User, Clock, Shield, CheckSquare, Check, Cloud, Loader2, WifiOff } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -153,7 +152,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           violation_count: count,
@@ -170,7 +169,7 @@ export default function ExamInterface() {
     if (!session) return;
 
     try {
-      await externalSupabase
+      await supabase
         .from('exam_sessions')
         .update({
           is_blocked: true,
@@ -257,7 +256,7 @@ export default function ExamInterface() {
       }
 
       // Check if session is blocked
-      const { data: sessionStatus } = await externalSupabase
+      const { data: sessionStatus } = await supabase
         .from('exam_sessions')
         .select('is_blocked, violation_count, proctoring_violations')
         .eq('id', parsedSession.session_id)
@@ -544,7 +543,7 @@ export default function ExamInterface() {
           // If all retries failed (or it was a background sync), try the direct DB fallback
           try {
             // Try upsert first (most efficient)
-            const { error: fallbackError } = await externalSupabase
+            const { error: fallbackError } = await supabase
               .from('student_answers')
               .upsert({
                 session_id: session.session_id,
@@ -559,7 +558,7 @@ export default function ExamInterface() {
               console.warn('[SAVE_ANSWER] Upsert fallback failed, trying simple insert:', fallbackError);
               // If upsert fails (likely due to missing unique constraint), try simple insert
               // This might create duplicates but is better than losing data
-              const { error: insertError } = await externalSupabase
+              const { error: insertError } = await supabase
                 .from('student_answers')
                 .insert({
                   session_id: session.session_id,
@@ -705,7 +704,7 @@ export default function ExamInterface() {
         // so the student can "come out" of the exam.
         try {
           console.log('[SUBMIT] Attempting emergency database fallback...');
-          await externalSupabase
+          await supabase
             .from('exam_sessions')
             .update({
               is_completed: true,

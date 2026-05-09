@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PublicLayout } from '@/components/layout/PublicLayout';
-import { externalSupabase } from '@/lib/externalSupabase';
+import { supabase } from '@/integrations/supabase/client';
 
 interface Exam {
   id: string;
@@ -44,7 +44,7 @@ const Index = () => {
       const today = nowIso.split('T')[0];
       
       // Broad debug fetch: Get everything from exams table to see what RLS allows us to see
-      const { data: allExams, error: debugError } = await externalSupabase
+      const { data: allExams, error: debugError } = await supabase
         .from('exams')
         .select('*');
 
@@ -67,7 +67,7 @@ const Index = () => {
       setRegistrationExams(filteredRegExams);
 
       // Fetch exams where exam date is today (for live exam filtering)
-      const { data: todayExams } = await externalSupabase
+      const { data: todayExams } = await supabase
         .from('exams')
         .select('*')
         .eq('is_active', true)

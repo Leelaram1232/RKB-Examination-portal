@@ -7,8 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AdminLayout } from '@/components/admin/AdminLayout';
-import { supabase as internalSupabase } from '@/integrations/supabase/client';
-import { externalSupabase, invokeExternalFunction } from '@/lib/externalSupabase';
+import { supabase, invokeExternalFunction } from '@/lib/supabase';
 import { toast } from 'sonner';
 import {
   Table,
@@ -125,7 +124,7 @@ const RegistrationApproval = () => {
         return data || [];
       };
 
-      const examsList = await fetchExams(internalSupabase);
+      const examsList = await fetchExams(supabase);
       const examsMap = new Map<string, any>();
       examsList.forEach(e => {
         if (!examsMap.has(e.id)) examsMap.set(e.id, e);
@@ -133,7 +132,7 @@ const RegistrationApproval = () => {
       setExams(Array.from(examsMap.values()));
 
       // 2. Fetch registrations
-      const { data: allRegs, error: regsError } = await internalSupabase
+      const { data: allRegs, error: regsError } = await supabase
         .from('registrations')
         .select(`
           id, exam_id, student_id, registration_number, created_at,
@@ -151,7 +150,7 @@ const RegistrationApproval = () => {
       const studentIds = Array.from(new Set(allRegs.map(r => r.student_id).filter(Boolean)));
 
       // 3. Fetch profiles
-      const { data: profilesList } = await internalSupabase
+      const { data: profilesList } = await supabase
         .from('profiles')
         .select('id, full_name, email, mobile, gender, date_of_birth, class, school_name, board, academic_year, address, city, state, pincode, percentage')
         .in('id', studentIds);
@@ -218,7 +217,7 @@ const RegistrationApproval = () => {
       }
 
       // Update registration status
-      const { error } = await internalSupabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
+      const { error } = await supabase.from('registrations').update(updateData).eq('id', selectedRegistration.id);
 
       if (error) {
         toast.error(`Failed to ${actionType} registration`);
@@ -285,7 +284,7 @@ const RegistrationApproval = () => {
       updateData.exam_login_enabled = true;
     }
 
-    const { error } = await internalSupabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
+    const { error } = await supabase.from('registrations').update(updateData).in('id', Array.from(selectedIds));
 
     if (error) {
       setIsProcessing(false);
@@ -341,7 +340,7 @@ const RegistrationApproval = () => {
   const toggleExamLogin = async (registration: Registration) => {
     const newStatus = !registration.exam_login_enabled;
     
-    const { error } = await internalSupabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
+    const { error } = await supabase.from('registrations').update({ exam_login_enabled: newStatus }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to toggle exam login');
@@ -361,7 +360,7 @@ const RegistrationApproval = () => {
     const dob = new Date(registration.date_of_birth);
     const newPassword = format(dob, 'ddMMyy');
 
-    const { error } = await internalSupabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
+    const { error } = await supabase.from('registrations').update({ exam_password: newPassword }).eq('id', registration.id);
 
     if (error) {
       toast.error('Failed to regenerate password');
